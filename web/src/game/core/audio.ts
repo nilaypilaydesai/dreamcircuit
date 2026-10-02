@@ -98,6 +98,12 @@ export class Sound {
   boost(): void { this.tone(300, 0.5, "sawtooth", 0.08, 0, 1200); this.noise(0.4, 0.06, 3000); }
   bump(): void { this.noise(0.18, 0.22, 400); this.tone(90, 0.15, "triangle", 0.15); }
   locked(): void { [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, 0.3, "triangle", 0.09, i * 0.07)); }
+  roll(): void { for (let i = 0; i < 12; i++) this.tone(520 + (i % 4) * 140, 0.05, "square", 0.045, i * 0.095); }
+  itemGet(): void { [988, 1319].forEach((f, i) => this.tone(f, 0.12, "square", 0.1, i * 0.08)); }
+  oil(): void { this.noise(0.25, 0.12, 500); this.tone(160, 0.2, "triangle", 0.1, 0, 90); }
+  orb(): void { this.tone(400, 0.35, "sawtooth", 0.07, 0, 1600); }
+  spin(): void { this.tone(700, 0.6, "triangle", 0.12, 0, 120); this.noise(0.3, 0.1, 1200); }
+  hit(): void { [1175, 1568].forEach((f, i) => this.tone(f, 0.1, "square", 0.09, i * 0.06)); }
   select(): void { this.tone(660, 0.07, "square", 0.08); }
   move(): void { this.tone(440, 0.04, "square", 0.05); }
 }

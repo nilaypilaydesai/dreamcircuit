@@ -9,6 +9,6 @@ body.game { display: grid; place-items: center; touch-action: none; user-select:
 @media (pointer: coarse) { .touch { display: flex; } }
 @media (max-width: 440px) {
   .touch { padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); }
-  .touch .pad { gap: 6px; }
-  .touch button { font-size: 9px; min-width: 52px; height: 52px; padding: 0 6px; }
+  .touch .pad { gap: 5px; }
+  .touch button { font-size: 8px; min-width: 50px; height: 52px; padding: 0 6px; }
 }

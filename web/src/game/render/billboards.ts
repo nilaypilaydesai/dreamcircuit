@@ -5,7 +5,15 @@ import { H, W, mix, type Screen, type Sprite } from "../core/gfx";
 import type { Kart } from "../race/kart";
 import type { Placed } from "../world/scenery";
 import type { Camera } from "./mode7";
-import { KART_VIEWS } from "./sprites";
+import { KART_VIEWS, type SceneryArt } from "./sprites";
+
+/** Moving or animated objects drawn like scenery: item boxes, oil slicks, dream orbs. */
+export interface WorldSprite {
+  x: number;
+  y: number;
+  art: SceneryArt;
+  lift?: number; // m above the ground (it casts a shadow when floating)
+}
 
 interface Item {
   z: number;
@@ -16,7 +24,8 @@ interface Item {
 }
 
 export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], karts: Kart[],
-                                 kartSprites: Sprite[][], fog: number, sparks: (k: Kart) => number): void {
+                                 kartSprites: Sprite[][], fog: number, sparks: (k: Kart) => number,
+                                 extras: WorldSprite[] = []): void {
   const fx = Math.cos(cam.heading), fy = Math.sin(cam.heading);
   const rx = Math.sin(cam.heading), ry = -Math.cos(cam.heading);
   const items: Item[] = [];
@@ -40,12 +49,27 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const w = (h * it.art.sprite.w) / it.art.sprite.h;
     items.push({ ...p, draw: () => scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h, w, h, it.flip, fog, fogAt(p.z)) });
   }
+  for (const it of extras) {
+    const p = project(it.x, it.y);
+    if (!p) continue;
+    const h = it.art.height * p.ppm;
+    if (h < 1) continue;
+    const w = (h * it.art.sprite.w) / it.art.sprite.h;
+    const lift = (it.lift ?? 0) * p.ppm;
+    items.push({
+      ...p,
+      draw: () => {
+        if (lift > 0) shadow(scr, p.sx, p.gy, w * 0.42, Math.max(1, w * 0.12));
+        scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h - lift, w, h, false, fog, fogAt(p.z));
+      },
+    });
+  }
   for (const k of karts) {
     const p = project(k.x, k.y);
     if (!p) continue;
     const sprites = kartSprites[k.livery % kartSprites.length];
     const view = Math.atan2(k.y - cam.y, k.x - cam.x); // camera -> kart, world frame
-    let rel = view - (k.heading + k.slip);
+    let rel = view - (k.heading + k.slip + k.spinAngle);
     if (k.isPlayer) rel -= k.steer * 0.18; // lean into the steer
     const vi = (((Math.round((rel / (Math.PI * 2)) * KART_VIEWS) % KART_VIEWS) + KART_VIEWS) % KART_VIEWS);
     const s = sprites[vi];

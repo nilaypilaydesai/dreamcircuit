@@ -144,6 +144,27 @@ per corner, held through it, released on exit), and rubber-band: far behind the 
 6%, far ahead they lift 7%. A headless test drives a rival around a twisty circuit and requires
 three clean laps, under 2% of the time on grass, and at least three drifts.
 
+**Items.** A row of four boxes spans the road every 210 m of committed road (the first one
+shortly after the start, none in the last 70 m before the line), so boxes appear as the road is
+dreamed. Driving through one gives an item; the player's slot spins for 1.2 s first. Odds are
+weighted by position: the leader gets 60% Oil Slick, 25% Dream Orb, 15% Turbo, and last place
+gets 55% Turbo, 40% Orb, 5% Oil. A slick spins out the first kart that drives through it (its
+owner is spared for a second); an orb travels up the centerline at the shooter's speed plus
+12 m/s, eases toward its target's lane, homes in directly within 22 m, and vanishes into the
+dream mist if it reaches road that does not exist yet. A spin-out takes control away for a
+second while the kart slides on, slowing. Items fire on the press of the button, never on the
+hold. Rivals fire turbos on straights, oil with a kart close behind and orbs with a kart in
+range ahead, after a reaction time that shortens with difficulty.
+
+**Bumps, and a bug the item tests found.** Karts change speed only along their heading. The
+first collision model exchanged the closing speed along the contact normal straight into each
+kart's speed, without projecting it onto the heading. In a side-on pile-up the same pair
+collides frame after frame, so speed was pumped into one kart, and a kart shoved into reverse
+read as still approaching and ran away backwards: one reached 88 m/s and another -55 m/s.
+Projecting the impulse onto each heading makes the exchange physical (a reversing kart is now
+slowed, not accelerated), and speeds are clamped and bled off above the class limit. A crowded
+8-kart race in the test suite holds every kart under 1.3 times the class top speed.
+
 **Race.** A state machine: dreaming, countdown, racing, done. Positions sort by race distance;
 laps count crossings of the start line by the sign change of the arc length past it, so backing
 over the line un-counts a lap. The results screen estimates finishing times for anyone still on

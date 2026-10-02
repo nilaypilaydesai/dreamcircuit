@@ -357,3 +357,66 @@ export function grandstand(rng: Rand): SceneryArt {
   outline(s, hex("#1d1f26"));
   return { sprite: s, height: 6, solid: true };
 }
+
+// ---------------------------------------------------------------------------------- items
+
+const QUESTION = [".###.", "#...#", "....#", "..##.", "..#..", ".....", "..#.."];
+
+/** Item boxes: a glossy crystal cube with a question mark, its rim cycling through colors. */
+export function itemBoxFrames(): SceneryArt[] {
+  const rims = [hex("#ff5fa2"), hex("#ffd23f"), hex("#5dff7a"), hex("#63c8ff"), hex("#c79bff")];
+  return rims.map((rim, f) => {
+    const s = makeSprite(18, 18);
+    rect(s, 0, 0, 18, 18, rim);
+    rect(s, 2, 2, 16, 16, mix(hex("#f4ecff"), rim, 0.22));
+    for (let k = 0; k < 9; k++) px(s, 3 + k, 3 + ((k + f) % 2), 0xffffffff); // gloss
+    rect(s, 2, 13, 16, 16, mix(hex("#d9c9ff"), rim, 0.35));
+    QUESTION.forEach((row, y) => {
+      for (let x = 0; x < row.length; x++) {
+        if (row[x] === "#") rect(s, 6 + x, 5 + y, 7 + x, 6 + y, hex("#3a1f6b"));
+      }
+    });
+    outline(s, hex("#1a1030"));
+    return { sprite: s, height: 1.15, solid: false };
+  });
+}
+
+/** An oil slick: a flat dark puddle with a rainbow sheen. */
+export function slickArt(): SceneryArt {
+  const s = makeSprite(30, 9);
+  for (let y = 0; y < 9; y++) {
+    for (let x = 0; x < 30; x++) {
+      const e = ((x - 14.5) / 14.5) ** 2 + ((y - 4) / 4.4) ** 2;
+      if (e <= 1) px(s, x, y, hex("#14121c"));
+    }
+  }
+  const sheen = [hex("#ff5fa2"), hex("#ffd23f"), hex("#5dff7a"), hex("#63c8ff")];
+  for (let k = 0; k < 12; k++) px(s, 8 + k, 3 + (k > 5 ? 1 : 0), sheen[k % 4]);
+  return { sprite: s, height: 0.32, solid: false };
+}
+
+/** A dream orb: a glowing violet sphere with a bright core. */
+export function orbArt(): SceneryArt {
+  const s = makeSprite(14, 14);
+  disc(s, 6.5, 6.5, 6.4, (x, y) => mix(hex("#ffffff"), hex("#7b3cff"), Math.min(1, Math.hypot(x - 5, y - 5) / 7)));
+  outline(s, hex("#2b0f5c"));
+  return { sprite: s, height: 0.9, solid: false };
+}
+
+/** 16x16 icons for the HUD's item slot. */
+export function itemIcons(): Record<"turbo" | "oil" | "orb", Sprite> {
+  const turbo = makeSprite(16, 16);
+  for (let k = 0; k < 2; k++) {
+    for (let y = 0; y < 12; y++) {
+      const x = 3 + k * 6 + (y < 6 ? y : 11 - y) / 1.5;
+      rect(turbo, Math.round(x), 2 + y, Math.round(x) + 3, 3 + y, k ? hex("#ffd23f") : hex("#ff7a1a"));
+    }
+  }
+  outline(turbo, hex("#2a1408"));
+  const oil = makeSprite(16, 16);
+  disc(oil, 7.5, 9.5, 5, () => hex("#14121c"));
+  for (let y = 2; y < 7; y++) rect(oil, 8 - Math.floor((y - 1) / 2), y, 8 + Math.ceil((y - 1) / 2), y + 1, hex("#14121c"));
+  [hex("#ff5fa2"), hex("#ffd23f"), hex("#63c8ff")].forEach((c, k) => px(oil, 5 + k, 8, c));
+  outline(oil, hex("#d9e1ea"));
+  return { turbo, oil, orb: orbArt().sprite };
+}

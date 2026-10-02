@@ -2,10 +2,11 @@
 // charge, standings, a minimap that shows the circuit being dreamed, and the big banners.
 
 import type { PixelFont } from "../core/font";
-import { H, W, hex, mix, type Screen } from "../core/gfx";
+import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
 import type { Kart } from "../race/kart";
 import { LAPS, type Race } from "../race/race";
-import { LIVERIES } from "../render/sprites";
+import { ITEM_KINDS, type ItemKind } from "../race/items";
+import { LIVERIES, itemIcons } from "../render/sprites";
 import { N, polarPoint } from "../world/track";
 
 const WHITE = 0xffffffff;
@@ -35,6 +36,7 @@ export interface Banner {
 export class Hud {
   banners: Banner[] = [];
   private mapBox: [number, number, number, number] | null = null;
+  private readonly icons: Record<ItemKind, Sprite> = itemIcons();
 
   constructor(private readonly font: PixelFont) {}
 
@@ -85,6 +87,7 @@ export class Hud {
 
     this.minimap(scr, race, now);
     this.dreamStatus(scr, race, now);
+    this.itemSlot(scr, p, now);
 
     // banners
     this.banners = this.banners.filter((b) => b.until > race.clock || race.phase === "countdown");
@@ -99,6 +102,22 @@ export class Hud {
       f.draw(scr, "WRONG WAY!", W / 2, 120, { scale: 2, color: RED, outline: INK, align: "center" });
     }
     if (race.phase === "countdown") this.countdown(scr, race);
+  }
+
+  /** The item slot: icons cycle while the roulette spins, then the item waits for E. */
+  private itemSlot(scr: Screen, p: Kart, now: number): void {
+    const x = W - 46, y = 44, size = 36;
+    const ready = !!p.item && p.roulette <= 0;
+    scr.fillRect(x - 1, y - 1, size + 2, size + 2, INK);
+    scr.fillRect(x, y, size, size, ready ? GOLD : DREAM);
+    scr.dimRect(x + 2, y + 2, size - 4, size - 4, INK, 0.82);
+    const kind = p.roulette > 0 ? ITEM_KINDS[Math.floor(now * 14) % ITEM_KINDS.length] : p.item;
+    if (kind) {
+      const icon = this.icons[kind];
+      const w = icon.w * 2, h = icon.h * 2;
+      scr.blitScaled(icon, x + (size - w) / 2, y + (size - h) / 2, w, h);
+    }
+    if (ready) this.font.draw(scr, "E", x + size / 2, y + size + 3, { color: SILVER, outline: INK, align: "center" });
   }
 
   private countdown(scr: Screen, race: Race): void {

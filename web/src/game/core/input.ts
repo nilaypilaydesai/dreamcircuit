@@ -8,6 +8,7 @@ const DRIVE: Record<string, string> = {
   ArrowUp: "gas", KeyW: "gas", ArrowDown: "brake", KeyS: "brake",
   ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right",
   ShiftLeft: "drift", ShiftRight: "drift", Space: "drift", KeyX: "gas", KeyZ: "brake",
+  KeyE: "item", KeyC: "item",
 };
 const MENU: Record<string, MenuEvent> = {
   ArrowUp: "up", KeyW: "up", ArrowDown: "down", KeyS: "down", ArrowLeft: "left", KeyA: "left",
@@ -67,7 +68,7 @@ export class GameInput {
     });
   }
 
-  private pollPad(): { steer: number; gas: number; brake: number; drift: boolean } | null {
+  private pollPad(): { steer: number; gas: number; brake: number; drift: boolean; item: boolean } | null {
     const pads = navigator.getGamepads?.() ?? [];
     for (const p of pads) {
       if (!p) continue;
@@ -89,23 +90,28 @@ export class GameInput {
         gas: Math.max(p.buttons[7]?.value ?? 0, p.buttons[0]?.pressed ? 1 : 0),
         brake: Math.max(p.buttons[6]?.value ?? 0, p.buttons[2]?.pressed ? 1 : 0),
         drift: !!(p.buttons[5]?.pressed || p.buttons[4]?.pressed),
+        item: !!p.buttons[3]?.pressed,
       };
     }
     return null;
   }
 
   /** Driving controls this frame. steer: + = left. */
-  drive(): { steer: number; throttle: number; brake: number; drift: boolean } {
+  drive(): { steer: number; throttle: number; brake: number; drift: boolean; item: boolean } {
     const pad = this.pollPad();
     const h = this.held;
     const steer = (h.has("left") ? 1 : 0) - (h.has("right") ? 1 : 0);
-    const k = { steer, throttle: h.has("gas") ? 1 : 0, brake: h.has("brake") ? 1 : 0, drift: h.has("drift") };
+    const k = {
+      steer, throttle: h.has("gas") ? 1 : 0, brake: h.has("brake") ? 1 : 0, drift: h.has("drift"),
+      item: h.has("item"),
+    };
     if (!pad) return k;
     return {
       steer: Math.abs(pad.steer) > Math.abs(k.steer) ? pad.steer : k.steer,
       throttle: Math.max(k.throttle, pad.gas),
       brake: Math.max(k.brake, pad.brake),
       drift: k.drift || pad.drift,
+      item: k.item || pad.item,
     };
   }
 

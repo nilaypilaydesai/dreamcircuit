@@ -3,7 +3,10 @@
 import { describe, expect, it } from "vitest";
 import { Rand } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
+import { BOX_SPACING, Items, ROULETTE, itemOdds } from "../src/game/race/items";
 import { CLASSES, Kart } from "../src/game/race/kart";
+import { Race } from "../src/game/race/race";
+import { THEMES } from "../src/game/themes";
 import { HALF_WIDTH, N, SCALE, SPACING, Track, checkGuess, crSegment, polarPoint } from "../src/game/world/track";
 import { CHUNK, INITIAL, smoothArc } from "../src/game/world/trackgen";
 
@@ -159,5 +162,131 @@ describe("rival drivers", () => {
     expect(grass / steps).toBeLessThan(0.02);
     expect(drifts).toBeGreaterThanOrEqual(3);
     expect(boosts).toBeGreaterThanOrEqual(1);
+  });
+});
+
+const twisty = () => Float64Array.from({ length: N },
+  (_, j) => 78 + 22 * Math.sin((2 * Math.PI * j) / N * 2 + 0.4) + 9 * Math.cos((2 * Math.PI * j) / N * 6));
+
+describe("items", () => {
+  it("favor defense at the front of the field and speed at the back", () => {
+    const lead = itemOdds(1, 8), last = itemOdds(8, 8);
+    for (const p of [lead, last, itemOdds(4, 8)]) {
+      expect(p.turbo + p.oil + p.orb).toBeCloseTo(1, 9);
+      for (const v of Object.values(p)) expect(v).toBeGreaterThan(0);
+    }
+    expect(lead.oil).toBeGreaterThan(lead.turbo);
+    expect(last.turbo).toBeGreaterThan(last.oil);
+  });
+
+  it("come in rows of boxes along the road, clear of the run to the line", () => {
+    const t = Track.fromRadii(circle(77));
+    const items = new Items(new Rand(1));
+    items.onCommit(t, 0, t.count);
+    expect(items.boxes.length % 4).toBe(0);
+    const rows = items.boxes.length / 4;
+    expect(rows).toBeGreaterThanOrEqual(Math.floor(t.length / BOX_SPACING) - 1);
+    for (const b of items.boxes) {
+      const s = t.fromStart(t.nearest(b.x, b.y, 0));
+      expect(s).toBeGreaterThan(BOX_SPACING * 0.5);
+      expect(s).toBeLessThan(t.length - 60);
+    }
+  });
+
+  it("hand rivals an item at once and give the player a roulette first", () => {
+    const t = Track.fromRadii(circle(77));
+    const items = new Items(new Rand(2));
+    items.onCommit(t, 0, t.count);
+    const rival = new Kart(1, "RIVAL", 1, false);
+    [rival.x, rival.y] = [items.boxes[0].x, items.boxes[0].y];
+    items.update(1 / 60, t, [rival], () => 1);
+    expect(rival.item).not.toBeNull();
+    expect(items.boxes[0].respawn).toBeGreaterThan(0);
+    const me = new Kart(0, "YOU", 0, true);
+    [me.x, me.y] = [items.boxes[1].x, items.boxes[1].y];
+    items.update(1 / 60, t, [me], () => 1);
+    expect(me.roulette).toBeGreaterThan(0);
+    expect(items.use(me, [me])).toBe(false); // not while the slot is still spinning
+    for (let i = 0; i < Math.ceil(ROULETTE * 60) + 2; i++) items.update(1 / 60, t, [me], () => 1);
+    expect(items.events.some((e) => e.kind === "got" && e.kart === me)).toBe(true);
+    expect(items.use(me, [me])).toBe(true);
+    expect(me.item).toBeNull();
+  });
+
+  it("oil spins out whoever drives through it, but spares its owner at first", () => {
+    const t = Track.fromRadii(circle(77));
+    const items = new Items(new Rand(3));
+    const owner = new Kart(1, "A", 1, false), other = new Kart(2, "B", 2, false);
+    owner.placeOn(t, t.startIndex + 50, 0);
+    owner.v = 20;
+    owner.item = "oil";
+    items.use(owner, [owner, other]);
+    const sl = items.slicks[0];
+    [owner.x, owner.y] = [sl.x, sl.y];
+    items.update(1 / 60, t, [owner], () => 1);
+    expect(owner.spin).toBe(0);
+    [other.x, other.y] = [sl.x, sl.y];
+    other.v = 25;
+    items.update(1 / 60, t, [owner, other], () => 1);
+    expect(other.spin).toBeGreaterThan(0);
+    expect(other.v).toBeLessThan(15);
+    expect(items.slicks.length).toBe(0);
+  });
+
+  it("send a dream orb up the road to catch the kart ahead", () => {
+    const t = Track.fromRadii(circle(77));
+    const items = new Items(new Rand(4));
+    const shooter = new Kart(1, "A", 1, false), target = new Kart(2, "B", 2, false);
+    shooter.placeOn(t, t.startIndex + 10, -2);
+    target.placeOn(t, t.startIndex + 10 + Math.round(45 / SPACING), 2.5);
+    for (const k of [shooter, target]) k.updateProgress(t);
+    shooter.item = "orb";
+    items.use(shooter, [shooter, target]);
+    expect(items.orbs[0].target).toBe(target);
+    for (let i = 0; i < 60 * 4 && target.spin <= 0; i++) items.update(1 / 60, t, [shooter, target], () => 1);
+    expect(target.spin).toBeGreaterThan(0);
+    expect(items.orbs.length).toBe(0);
+  });
+
+  it("fire on the press of the button, not while it is held, in a real race", async () => {
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: THEMES[0], seed: 7, replay: twisty() }, null, () => {});
+    await race.prepare();
+    const pilot = new RivalDriver(new Rand(9), race.player, 0);
+    let rivalUses = 0;
+    const use = race.items.use.bind(race.items);
+    race.items.use = (k, karts) => {
+      const ok = use(k, karts);
+      if (ok && !k.isPlayer) rivalUses++;
+      return ok;
+    };
+    let playerUses = 0, rolls = 0;
+    for (let i = 0; i < 60 * 70; i++) {
+      const c = pilot.act(1 / 60, race.track, race.cls, race.player, race.karts);
+      race.update(1 / 60, { ...c, item: true }); // the button is held the whole time
+      playerUses += race.events.filter((e) => e.kind === "use").length;
+      rolls += race.events.filter((e) => e.kind === "roll").length;
+      race.events = [];
+    }
+    expect(rolls).toBeGreaterThan(0); // the player drove through boxes
+    expect(playerUses).toBeLessThanOrEqual(1); // holding never re-fires
+    expect(rivalUses).toBeGreaterThan(0); // rivals use their items
+  });
+});
+
+describe("a crowded race", () => {
+  it("never flings a kart past its class's boosted top speed, even in pile-ups", async () => {
+    for (const seed of [7, 8, 9]) {
+      const race = new Race({ rivals: 7, difficulty: "pro", theme: THEMES[0], seed, replay: twisty() }, null, () => {});
+      await race.prepare();
+      const pilot = new RivalDriver(new Rand(9), race.player, 0);
+      let fastest = 0;
+      for (let i = 0; i < 60 * 60; i++) {
+        race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
+        race.events = [];
+        for (const k of race.karts) fastest = Math.max(fastest, Math.abs(k.v));
+      }
+      // before the fix, bumps at the start pumped one kart to 88 m/s and shoved another to -55
+      expect(fastest).toBeLessThan(race.cls.vmax * 1.3);
+    }
   });
 });

@@ -60,7 +60,28 @@ export class RivalDriver {
     if (Math.abs(k.offset) > HALF_WIDTH + 2) vt = Math.min(vt, 14);
     const throttle = v < vt ? 1 : 0;
     const brake = v > vt + 2 ? Math.min(1, (v - vt) / 6) : 0;
-    return { steer, throttle, brake, drift: this.drift(dt, track, cls, steer) };
+    return { steer, throttle, brake, drift: this.drift(dt, track, cls, steer), item: this.wantsItem(track, cls, others) };
+  }
+
+  /** When to fire the item: a turbo on a straight, oil with a kart close behind, an orb with a
+   * kart in range ahead; anything held too long gets used. Sharper classes react sooner. */
+  private wantsItem(track: Track, cls: ClassParams, others: Kart[]): boolean {
+    const k = this.kart;
+    if (!k.item || k.spin > 0) return false;
+    if (k.itemAge < 1.6 - cls.aiCorner) return false; // reaction time: 0.9 s rookie, 0.65 s legend
+    if (k.itemAge > 9) return true;
+    if (k.item === "turbo") {
+      const straight = [10, 25, 40].every((m) => Math.abs(track.curvature(track.ahead(k.idx, m))) < 1 / 90);
+      return straight && k.v > 0.5 * cls.vmax && k.surface === "road";
+    }
+    let behind = Infinity, ahead = Infinity;
+    for (const o of others) {
+      if (o === k) continue;
+      const gap = o.dist - k.dist;
+      if (gap > 0) ahead = Math.min(ahead, gap);
+      else behind = Math.min(behind, -gap);
+    }
+    return k.item === "oil" ? behind > 3 && behind < 28 : ahead > 6 && ahead < 90;
   }
 
   private drift(dt: number, track: Track, cls: ClassParams, steer: number): boolean {

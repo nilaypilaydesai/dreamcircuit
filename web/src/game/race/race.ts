@@ -8,6 +8,7 @@ import { WorldTexture } from "../world/texture";
 import { HALF_WIDTH, N, Track } from "../world/track";
 import { type CircuitDesigner, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
+import { type ItemKind, Items } from "./items";
 import { CLASSES, type Controls, type Difficulty, Kart, collideKarts } from "./kart";
 import { LIVERIES } from "../render/sprites";
 
@@ -21,7 +22,12 @@ export type RaceEvent =
   | { kind: "locked" }
   | { kind: "finish"; place: number }
   | { kind: "boost" }
-  | { kind: "bump" };
+  | { kind: "bump" }
+  | { kind: "roll" } // the player drove through an item box
+  | { kind: "item"; item: ItemKind } // the player's item slot settled
+  | { kind: "use"; item: ItemKind } // the player fired an item
+  | { kind: "spun" } // the player was spun out
+  | { kind: "hit" }; // the player's oil or orb spun out a rival
 
 export interface RaceSetup {
   rivals: number; // 0..7
@@ -37,6 +43,7 @@ export class Race {
   readonly live: LiveCircuit | null;
   readonly tex: WorldTexture;
   readonly scenery: Scenery;
+  readonly items: Items;
   readonly karts: Kart[] = [];
   readonly player: Kart;
   private readonly drivers: RivalDriver[] = [];
@@ -54,6 +61,7 @@ export class Race {
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
+    this.items = new Items(new Rand(setup.seed + 3));
     if (setup.replay) {
       this.live = null;
       this.track = new Track();
@@ -84,6 +92,7 @@ export class Race {
   private onCommit(from: number, to: number): void {
     this.tex.paintRoad(this.track, from, to);
     this.scenery.onCommit(this.track, from, to);
+    this.items.onCommit(this.track, from, to);
   }
 
   private onLock(): void {
@@ -125,12 +134,23 @@ export class Race {
       if (d.kart.finished && this.phase === "done") return;
       const c = d.act(dt, this.track, this.cls, this.player, this.karts);
       d.kart.update(dt, c, this.track, this.cls);
+      this.fire(d.kart, c);
     });
     const controls = this.player.finished ? { steer: 0, throttle: 0.3, brake: 0, drift: false } : playerControls;
     const { boosted } = this.player.update(dt, controls, this.track, this.cls);
     if (boosted) this.events.push({ kind: "boost" });
+    this.fire(this.player, controls);
+    this.items.update(dt, this.track, this.karts, (k) => k.place || 1);
+    for (const e of this.items.events) {
+      if (e.kind === "roll") this.events.push({ kind: "roll" });
+      else if (e.kind === "got" && e.kart.isPlayer) this.events.push({ kind: "item", item: e.item });
+      else if (e.kind === "used" && e.kart.isPlayer) this.events.push({ kind: "use", item: e.item });
+      else if (e.kind === "spun" && e.kart.isPlayer) this.events.push({ kind: "spun" });
+      else if (e.kind === "spun" && e.owner.isPlayer) this.events.push({ kind: "hit" });
+    }
+    this.items.events = [];
     if (!this.track.locked) this.holdAtFrontier();
-    const hits = collideKarts(this.karts);
+    const hits = collideKarts(this.karts, this.cls.vmax * 1.3);
     if (hits.includes(this.player)) this.events.push({ kind: "bump" });
     for (const k of this.karts) {
       if (this.scenery.collide(k) && k.isPlayer) this.events.push({ kind: "bump" });
@@ -147,6 +167,12 @@ export class Race {
       const allIn = this.karts.every((k) => k.finished);
       if (allIn || this.doneTimer > 12) this.phase = "done";
     }
+  }
+
+  /** Items fire on the press of the button, not while it is held. */
+  private fire(k: Kart, c: Controls): void {
+    if (c.item && !k.itemHeld) this.items.use(k, this.karts);
+    k.itemHeld = !!c.item;
   }
 
   /** Safety net for slow devices: nobody can drive past road that has not been dreamed yet.

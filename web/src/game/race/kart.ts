@@ -2,6 +2,7 @@
 // kart-to-kart bumps and a soft outer fence. Tuned for fun, not for the research simulator.
 
 import { HALF_WIDTH, type Track } from "../world/track";
+import type { ItemKind } from "./items";
 
 export type Difficulty = "rookie" | "pro" | "legend";
 
@@ -26,6 +27,7 @@ export interface Controls {
   throttle: number;
   brake: number;
   drift: boolean;
+  item?: boolean; // held: an item fires on the press
 }
 
 export type Surface = "road" | "kerb" | "shoulder" | "grass";
@@ -47,6 +49,13 @@ export class Kart {
   boostTime = 0;
   boostLevel = 0; // 1 = blue sparks, 2 = orange sparks
   bumpTime = 0;
+  // items (see items.ts)
+  item: ItemKind | null = null;
+  roulette = 0; // s left on the player's spinning item slot
+  itemAge = 0; // s since the current item arrived
+  itemHeld = false; // the item button was down last frame
+  spin = 0; // s left in a spin-out
+  spinAngle = 0; // the sprite's extra rotation while spinning
   // race bookkeeping
   crossings = 0; // times the start line has been crossed going forward
   dist = 0; // race distance used for positions
@@ -72,7 +81,16 @@ export class Kart {
     this.dist = this.lastFromStart;
   }
 
-  update(dt: number, c: Controls, track: Track, cls: ClassParams): { boosted: boolean } {
+  update(dt: number, input: Controls, track: Track, cls: ClassParams): { boosted: boolean } {
+    // spun out: no control while the kart slides on, slowing, and the sprite turns
+    let c = input;
+    if (this.spin > 0) {
+      this.spin -= dt;
+      this.spinAngle += dt * 13;
+      this.v *= Math.exp(-2.2 * dt);
+      c = { steer: 0, throttle: 0, brake: 0, drift: false };
+      if (this.spin <= 0) this.spinAngle = 0;
+    }
     this.idx = track.nearest(this.x, this.y, this.idx);
     this.offset = track.offset(this.x, this.y, this.idx);
     const a = Math.abs(this.offset);
@@ -84,13 +102,13 @@ export class Kart {
     // longitudinal
     if (c.throttle > 0 && this.v >= -0.5) {
       if (this.v < vmax) this.v += cls.accel * c.throttle * (1 - this.v / vmax) * dt * 1.6;
-      else this.v -= (this.v - vmax) * 2.2 * dt;
     } else if (c.brake > 0) {
       this.v -= (this.v > 0 ? 22 : 6) * c.brake * dt;
       this.v = Math.max(this.v, -6);
     } else {
       this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), 3.2 * dt);
     }
+    if (this.v > vmax) this.v -= (this.v - vmax) * 2.2 * dt; // over the limit (grass, a bump): bleed it off
     if (this.surface === "grass") this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), 5 * dt);
     if (this.boostTime > 0) {
       this.boostTime -= dt;
@@ -176,8 +194,8 @@ export class Kart {
   }
 }
 
-/** Resolve kart-kart overlaps with a springy bump. */
-export function collideKarts(karts: Kart[]): Kart[] {
+/** Resolve kart-kart overlaps with a springy bump. ``vmax`` bounds what a bump can do. */
+export function collideKarts(karts: Kart[], vmax = 45): Kart[] {
   const hits: Kart[] = [];
   const R = 1.05;
   for (let i = 0; i < karts.length; i++) {
@@ -189,13 +207,16 @@ export function collideKarts(karts: Kart[]): Kart[] {
       const nx = dx / d, ny = dy / d, push = (2 * R - d) / 2;
       a.x -= nx * push; a.y -= ny * push;
       b.x += nx * push; b.y += ny * push;
-      // exchange a share of the closing speed along the contact normal
-      const va = a.v * (Math.cos(a.heading) * nx + Math.sin(a.heading) * ny);
-      const vb = b.v * (Math.cos(b.heading) * nx + Math.sin(b.heading) * ny);
-      const closing = va - vb;
+      // An impulse along the contact normal, projected onto each kart's heading (karts only
+      // change speed along their heading). Without the projection, a side-on pile-up pumps
+      // speed into one kart frame after frame, and a kart shoved into reverse runs away.
+      const ha = Math.cos(a.heading) * nx + Math.sin(a.heading) * ny;
+      const hb = Math.cos(b.heading) * nx + Math.sin(b.heading) * ny;
+      const closing = a.v * ha - b.v * hb;
       if (closing > 0) {
-        a.v -= closing * 0.35;
-        b.v += closing * 0.35;
+        const j = closing * 0.35;
+        a.v = Math.max(-8, Math.min(vmax, a.v - j * ha));
+        b.v = Math.max(-8, Math.min(vmax, b.v + j * hb));
         a.bumpTime = b.bumpTime = 0.3;
         hits.push(a, b);
       }

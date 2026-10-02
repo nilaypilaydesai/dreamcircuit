@@ -10,10 +10,10 @@ import { GameInput, type MenuEvent } from "./core/input";
 import { RivalDriver } from "./race/ai";
 import { CLASSES, type Controls, type Difficulty } from "./race/kart";
 import { Race, type RaceEvent } from "./race/race";
-import { drawWorldSprites } from "./render/billboards";
+import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, makeCamera } from "./render/mode7";
 import { Sky } from "./render/sky";
-import { LIVERIES, bakeKart } from "./render/sprites";
+import { LIVERIES, type SceneryArt, bakeKart, itemBoxFrames, orbArt, slickArt } from "./render/sprites";
 import { THEMES } from "./themes";
 import { Hud, formatTime } from "./ui/hud";
 import { Menu } from "./ui/menus";
@@ -47,6 +47,9 @@ class Game {
   private designerReady: Promise<void> = Promise.resolve();
   private waitingForDesigner = false;
   private kartSprites: Sprite[][] = [];
+  private readonly boxArt: SceneryArt[] = itemBoxFrames();
+  private readonly slickArt: SceneryArt = slickArt();
+  private readonly orbArt: SceneryArt = orbArt();
   private mode: Mode = "boot";
   private race: Race | null = null;
   private sky: Sky | null = null;
@@ -233,6 +236,14 @@ class Game {
         this.hud.banner("FINISH!", now, HOT, 4, `YOU PLACED ${ord}`);
       } else if (e.kind === "boost") this.sound.boost();
       else if (e.kind === "bump") { this.sound.bump(); this.shake = 0.25; }
+      else if (e.kind === "roll") this.sound.roll();
+      else if (e.kind === "item") this.sound.itemGet();
+      else if (e.kind === "use") {
+        if (e.item === "turbo") this.sound.boost();
+        else if (e.item === "oil") this.sound.oil();
+        else this.sound.orb();
+      } else if (e.kind === "spun") { this.sound.spin(); this.shake = 0.35; }
+      else if (e.kind === "hit") this.sound.hit();
     }
   }
 
@@ -343,8 +354,17 @@ class Game {
       };
     }
     drawGround(this.scr, cam, race.tex, race.setup.theme.fog, mist);
+    const extras: WorldSprite[] = [];
+    const now = this.time;
+    race.items.boxes.forEach((b, i) => {
+      if (b.respawn > 0) return;
+      const art = this.boxArt[(Math.floor(now * 6) + i) % this.boxArt.length];
+      extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i) });
+    });
+    for (const sl of race.items.slicks) extras.push({ x: sl.x, y: sl.y, art: this.slickArt });
+    for (const o of race.items.orbs) extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9) });
     drawWorldSprites(this.scr, cam, race.scenery.items, race.karts, this.kartSprites, race.setup.theme.fog,
-                     (k) => (k.drifting ? Math.max(1, k.boostLevel) : 0));
+                     (k) => (k.drifting ? Math.max(1, k.boostLevel) : 0), extras);
   }
 
   private render(): void {
@@ -413,15 +433,19 @@ class Game {
   /** Dev only: advance n fixed steps with the given drive keys held, then render once. */
   debugStep(n: number, keys: string[]): void {
     const held = new Set(keys);
-    const c: Controls = {
+    const c = {
       steer: (held.has("left") ? 1 : 0) - (held.has("right") ? 1 : 0),
       throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"),
+      item: held.has("item"),
     };
     const original = this.input.drive.bind(this.input);
     const r = this.race;
     if (held.has("auto") && r) {
       if (this.debugPilot?.kart !== r.player) this.debugPilot = new RivalDriver(new Rand(5), r.player, 0);
-      this.input.drive = () => this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts);
+      this.input.drive = () => {
+        const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts);
+        return { ...a, item: !!a.item };
+      };
     } else {
       this.input.drive = () => c;
     }
@@ -459,12 +483,14 @@ class Game {
       ["DRIVE", "ARROWS OR W A S D"],
       ["DRIFT", "HOLD SHIFT OR SPACE IN A TURN"],
       ["", "RELEASE FOR A MINI-TURBO BOOST"],
+      ["ITEM", "E OR C: TURBO, OIL OR DREAM ORB"],
+      ["", "GRAB ONE FROM THE ? BOXES"],
       ["PAUSE", "ESC          SOUND  M"],
-      ["PAD", "STICK, A GAS, B BRAKE, RB DRIFT"],
+      ["PAD", "A GAS B BRAKE RB DRIFT Y ITEM"],
     ];
     lines.forEach(([k, v], i) => {
-      f.draw(scr, k, 40, 50 + i * 12, { color: DREAM });
-      f.draw(scr, v, 104, 50 + i * 12, { color: 0xffffffff });
+      f.draw(scr, k, 40, 46 + i * 10, { color: DREAM });
+      f.draw(scr, v, 104, 46 + i * 10, { color: 0xffffffff });
     });
     const story = [
       "NOBODY DESIGNED YOUR CIRCUIT.",
@@ -473,7 +499,7 @@ class Game {
       "WHEN THE LOOP CLOSES, IT LOCKS:",
       "LAPS 2 AND 3 RACE ON YOUR DREAM.",
     ];
-    story.forEach((s, i) => f.draw(scr, s, W / 2, 124 + i * 11, { color: i === 0 ? HOT : DIM, align: "center" }));
+    story.forEach((s, i) => f.draw(scr, s, W / 2, 128 + i * 10, { color: i === 0 ? HOT : DIM, align: "center" }));
     f.draw(scr, "PRESS ANY KEY", W / 2, H - 30, { color: 0xffffffff, align: "center" });
   }
 
