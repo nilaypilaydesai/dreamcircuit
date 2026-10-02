@@ -81,7 +81,15 @@ def _cmd_trackgen_data(a: argparse.Namespace) -> None:
 def _cmd_train_tracks(a: argparse.Namespace) -> None:
     from dreamcircuit.trackgen.train import train_tracks
 
-    print(json.dumps(train_tracks(a.data, a.out, a.steps, device_name=a.device)["evals"][-1]))
+    r = train_tracks(a.data, a.out, a.steps, device_name=a.device, init=a.init)
+    print(json.dumps(r["evals"][-1]))
+
+
+def _cmd_eval_tracks(a: argparse.Namespace) -> None:
+    from dreamcircuit.trackgen.train import evaluate_designer
+
+    r = evaluate_designer(a.checkpoint, a.out, n_whole=a.n, n_live=a.n_live, device_name=a.device)
+    print(json.dumps({k: v for k, v in r.items() if k not in ("dreamed", "real")}, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -142,7 +150,16 @@ def build_parser() -> argparse.ArgumentParser:
     tt.add_argument("--out", default="runs/trackgen")
     tt.add_argument("--steps", type=int, default=8000)
     tt.add_argument("--device", default="auto")
+    tt.add_argument("--init", default=None, help="continue from a checkpoint's weights")
     tt.set_defaults(func=_cmd_train_tracks)
+
+    et = sub.add_parser("eval-tracks", help="validity of dreamed circuits, and a gallery sample")
+    et.add_argument("--checkpoint", default="runs/trackgen/trackgen_8k.pt")
+    et.add_argument("--out", default="results/trackgen.json")
+    et.add_argument("--n", type=int, default=1000, help="whole circuits, sampled in one batch")
+    et.add_argument("--n-live", type=int, default=200, help="circuits built arc by arc, like lap 1")
+    et.add_argument("--device", default="cpu", help="cpu is fastest for this tiny 1-D model")
+    et.set_defaults(func=_cmd_eval_tracks)
     return p
 
 

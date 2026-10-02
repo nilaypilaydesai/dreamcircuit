@@ -30,6 +30,21 @@ from dreamcircuit.train.common import EMA, cosine_lr, pick_device, save_checkpoi
 INITIAL_KNOWN = (-12, 24)  # the start grid and first stretch, generated before the countdown
 CHUNK = 16  # angles generated per step during lap 1
 SMOOTH_M = 1.5
+SAMPLER_STEPS = 24  # Heun steps per arc (47 network calls)
+ARC_SMOOTH = 1.0  # Gaussian smoothing of newly generated radii, in angle samples
+
+
+def smooth_arc(u: np.ndarray, arc: np.ndarray, sigma: float = ARC_SMOOTH) -> np.ndarray:
+    """Circular Gaussian smoothing applied only to the samples in ``arc``; everything else
+    (road that already exists) is left untouched. Irons out the small high-frequency wiggles
+    that make a sampled corner a little too tight."""
+    k = np.arange(-3, 4)
+    w = np.exp(-0.5 * (k / sigma) ** 2)
+    w /= w.sum()
+    sm = sum(wi * np.roll(u, -ki) for wi, ki in zip(w, k, strict=True))
+    out = u.copy()
+    out[arc] = sm[arc]
+    return out
 
 
 def reconstruct(r: np.ndarray) -> np.ndarray:
@@ -54,7 +69,7 @@ def live_generate(
     model: TrackDenoiser,
     device: torch.device,
     rng: np.random.Generator,
-    steps: int = 12,
+    steps: int = SAMPLER_STEPS,
     retries: int = 3,
 ) -> tuple[np.ndarray, int]:
     """The game's lap-1 procedure. Returns the radii (meters) and how many arcs were retried."""
@@ -75,6 +90,7 @@ def live_generate(
             m = torch.from_numpy(mask)[None, None].to(device)
             kn = torch.from_numpy(known)[None, None].to(device)
             out = model.sample(m, kn, steps=steps, generator=g)[0, 0].cpu().numpy()
+            out = smooth_arc(out, arc)
             cand_known, cand_mask = known.copy(), mask.copy()
             cand_known[arc] = out[arc]
             cand_mask[arc] = 1.0
@@ -90,14 +106,25 @@ def live_generate(
 
 
 @torch.no_grad()
-def evaluate(model: TrackDenoiser, device: torch.device, n: int = 200, seed: int = 1) -> dict:
+def evaluate(
+    model: TrackDenoiser,
+    device: torch.device,
+    n: int = 200,
+    seed: int = 1,
+    n_live: int | None = None,
+) -> dict:
+    """Validity of ``n`` whole circuits (one batch) and ``n_live`` circuits built live, arc by arc
+    (default ``n // 4``)."""
     rng = np.random.default_rng(seed)
     model.eval()
     whole = 0
     reasons: dict[str, int] = {}
     g = torch.Generator().manual_seed(seed)
     zeros = torch.zeros(n, 1, model.cfg.n, device=device)
-    samples = destandardize(model.sample(zeros, zeros, steps=12, generator=g)[:, 0].cpu().numpy())
+    raw = model.sample(zeros, zeros, steps=SAMPLER_STEPS, generator=g)[:, 0].cpu().numpy()
+    every = np.arange(model.cfg.n)
+    samples = destandardize(np.stack([smooth_arc(u, every) for u in raw]))
+    whole_raw = sum(check(reconstruct(destandardize(u)), DEFAULT.track).ok for u in raw)
     lengths = []
     for r in samples:
         v = check(reconstruct(r), DEFAULT.track)
@@ -106,7 +133,7 @@ def evaluate(model: TrackDenoiser, device: torch.device, n: int = 200, seed: int
         if not v.ok:
             reasons[v.reason] = reasons.get(v.reason, 0) + 1
     live_ok, retried = 0, 0
-    n_live = n // 4
+    n_live = n // 4 if n_live is None else n_live
     for _ in range(n_live):
         r, k = live_generate(model, device, rng)
         live_ok += check(reconstruct(r), DEFAULT.track).ok
@@ -114,6 +141,7 @@ def evaluate(model: TrackDenoiser, device: torch.device, n: int = 200, seed: int
     model.train()
     return {
         "whole_valid": whole / n,
+        "whole_valid_unsmoothed": whole_raw / n,
         "whole_fail_reasons": reasons,
         "live_valid": live_ok / n_live,
         "live_retries_per_circuit": retried / n_live,
@@ -130,6 +158,7 @@ def train_tracks(
     device_name: str = "auto",
     channels: tuple[int, ...] = (32, 64, 128),
     seed: int = 0,
+    init: str | None = None,
 ) -> dict:
     dev = pick_device(device_name)
     run = Path(out)
@@ -140,6 +169,8 @@ def train_tracks(
     x_all = torch.from_numpy(standardize(radii).astype(np.float32))
     cfg = TrackModelConfig(n=N_ANGLES, channels=channels)
     model = TrackDenoiser(cfg).to(dev)
+    if init:  # continue from earlier weights with a fresh learning-rate schedule
+        model.load_state_dict(torch.load(init, map_location="cpu", weights_only=False)["ema"])
     ema = EMA(model, 0.999)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     log = []
@@ -195,3 +226,46 @@ def load_track_model(path: str | Path, device: torch.device | str = "cpu") -> Tr
     m = TrackDenoiser(TrackModelConfig(**cfg))
     m.load_state_dict(ck["ema"])
     return m.to(device).eval()
+
+
+def evaluate_designer(
+    checkpoint: str | Path,
+    out: str | Path = "results/trackgen.json",
+    n_whole: int = 1000,
+    n_live: int = 200,
+    device_name: str = "cpu",
+    data: str = "data/tracks",
+    web: str | Path | None = "web/public/results",
+) -> dict:
+    """The published numbers: validity at scale, plus circuits for the DATA page gallery.
+
+    Runs on the CPU by default: the 1-D model is tiny, and live generation is a long chain of
+    batch-1 calls that a GPU (especially one that is busy training) does not speed up."""
+    dev = pick_device(device_name)
+    model = load_track_model(checkpoint, dev)
+    t0 = time.time()
+    ev = evaluate(model, dev, n=n_whole, n_live=n_live)
+    g = torch.Generator().manual_seed(2026)
+    zeros = torch.zeros(24, 1, model.cfg.n, device=dev)
+    u = model.sample(zeros, zeros, steps=SAMPLER_STEPS, generator=g)[:, 0].cpu().numpy()
+    every = np.arange(model.cfg.n)
+    dreamed = [destandardize(smooth_arc(x, every)).round(2).tolist() for x in u]
+    real = np.load(Path(data) / "test.npy")[:12].round(2).tolist()
+    ck = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    result = {
+        **ev,
+        "n_whole": n_whole,
+        "n_live": n_live,
+        "train_steps": ck.get("step"),
+        "params": sum(p.numel() for p in model.parameters()),
+        "sampler_steps": SAMPLER_STEPS,
+        "arc_smoothing": ARC_SMOOTH,
+        "seconds": round(time.time() - t0, 1),
+        "dreamed": dreamed,
+        "real": real,
+    }
+    text = json.dumps(result)
+    for path in [Path(out)] + ([Path(web) / "trackgen.json"] if web else []):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return result

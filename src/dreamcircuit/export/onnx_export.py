@@ -26,6 +26,7 @@ import torch
 from torch import nn
 
 from dreamcircuit.model.edm import WorldModel
+from dreamcircuit.trackgen.model import TrackDenoiser
 
 
 class DenoiserGraph(nn.Module):
@@ -179,3 +180,53 @@ def export_policy(policy: nn.Module, out_dir: Path, name: str = "policy") -> dic
     err = check_parity(graph, inputs, final)
     tmp.unlink()
     return {"file": final.name, "bytes": final.stat().st_size, "max_abs_err_fp16_storage": err}
+
+
+class TrackGraph(nn.Module):
+    def __init__(self, model: TrackDenoiser):
+        super().__init__()
+        self.model = model
+
+    def forward(
+        self, x: torch.Tensor, sigma: torch.Tensor, mask: torch.Tensor, known: torch.Tensor
+    ) -> torch.Tensor:
+        return self.model.denoise(x, sigma, mask, known)
+
+
+def export_track_model(model: TrackDenoiser, out_dir: Path, name: str = "trackgen") -> dict:
+    """Export the circuit designer: D(x; sigma | mask, known) on (1, 1, N) polar profiles.
+    Tiny, so the browser runs it on the WASM backend."""
+    m = copy.deepcopy(model).cpu().eval()
+    m.set_export(True)
+    n = m.cfg.n
+    g = torch.Generator().manual_seed(0)
+    inputs = {
+        "x": torch.randn(1, 1, n, generator=g) * 3,
+        "sigma": torch.tensor([2.0]),
+        "mask": (torch.rand(1, 1, n, generator=g) > 0.5).float(),
+        "known": torch.randn(1, 1, n, generator=g),
+    }
+    graph = TrackGraph(m).eval()
+    tmp = out_dir / f"{name}.fp32.onnx"
+    final = out_dir / f"{name}.onnx"
+    _export(graph, inputs, tmp, "x0")
+    weights_to_fp16_storage(tmp, final)
+    tmp.unlink()
+    err = check_parity(graph, inputs, final)
+    c = m.cfg
+    from dreamcircuit.trackgen.polar import R_MEAN, R_STD
+
+    info = {
+        "file": final.name,
+        "bytes": final.stat().st_size,
+        "max_abs_err": err,
+        "n": n,
+        "sigma_min": c.sigma_min,
+        "sigma_max": c.sigma_max,
+        "rho": c.rho,
+        "sigma_data": c.sigma_data,
+        "r_mean": R_MEAN,
+        "r_std": R_STD,
+    }
+    (out_dir / f"{name}.json").write_text(json.dumps(info, indent=2))
+    return info

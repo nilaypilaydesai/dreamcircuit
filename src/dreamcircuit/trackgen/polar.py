@@ -72,15 +72,17 @@ def check(
 ) -> Validity:
     """The same constraints the procedural generator enforces, plus a length range."""
     min_radius = spec.min_radius * 0.92 if min_radius is None else min_radius
-    _, _, curv = _frames(center, spec.ds)
     length = len(center) * spec.ds
+    if not length_range[0] <= length <= length_range[1]:
+        # Decided already, and the clearance test is quadratic in length: a wild sample (an
+        # untrained model can dream a loop kilometers long) must not stall the check.
+        return Validity(length, float("nan"), float("nan"), False, "length")
+    _, _, curv = _frames(center, spec.ds)
     rmin = 1.0 / max(float(np.abs(curv).max()), 1e-9)
     clear = _min_clearance(center, spec.ds)
     need = 2 * spec.half_width + spec.clearance * 0.9
     reason = ""
-    if not length_range[0] <= length <= length_range[1]:
-        reason = "length"
-    elif rmin < min_radius:
+    if rmin < min_radius:
         reason = "too tight"
     elif clear < need:
         reason = "too close to itself"

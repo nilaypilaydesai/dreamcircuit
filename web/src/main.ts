@@ -1,8 +1,9 @@
 import "./style.css";
+import "@fontsource/press-start-2p/400.css";
 import { App, type MindDirection } from "./app";
 import { DreamEngine } from "./dream/engine";
 import { Policy } from "./dream/policy";
-import { renderSections } from "./sections";
+import { renderDesigner, renderSections } from "./sections";
 import type { SimConfig, SpriteData } from "./sim/config";
 import { Track } from "./sim/track";
 
@@ -28,6 +29,18 @@ function setOverlay(text: string | null, error = false): void {
 async function main(): Promise<void> {
   (document.getElementById("gh-link") as HTMLAnchorElement).href = REPO_URL;
   void renderSections();
+  void renderDesigner();
+  // The lab loads a 20 MB world model and runs it on the GPU: start it only when it is in view.
+  await new Promise<void>((resolve) => {
+    const lab = document.getElementById("lab")!;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        io.disconnect();
+        resolve();
+      }
+    }, { rootMargin: "200px" });
+    io.observe(lab);
+  });
   try {
     setOverlay("Loading the simulator...");
     const [cfg, sprite, index] = await Promise.all([

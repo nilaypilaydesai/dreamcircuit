@@ -1,11 +1,21 @@
 import * as ort from "onnxruntime-web/webgpu";
 
 const out = document.getElementById("log")!;
-const log = (s: string) => { out.insertAdjacentHTML("beforeend", `<div>${s}</div>`); console.log(s); };
+const log = (s: string) => {
+  const line = document.createElement("div");
+  line.textContent = s; // text only: the model name comes from the URL
+  out.append(line);
+  console.log(s);
+};
 
 (async () => {
   // ?model=debug_nopad reproduces the ONNX Runtime Web WebGPU Conv bug (no channel padding).
-  const name = new URLSearchParams(location.search).get("model") ?? "debug_padded";
+  const asked = new URLSearchParams(location.search).get("model") ?? "debug_padded";
+  if (!/^[a-z0-9_]{1,64}$/.test(asked)) {
+    log("model names are lowercase letters, digits and underscores, e.g. ?model=debug_nopad");
+    return;
+  }
+  const name = asked;
   log(`model: ${name}`);
   const order: { name: string; op: string; node: string; idx: number }[] =
     await (await fetch(`../diagnostics/${name}.json`)).json();

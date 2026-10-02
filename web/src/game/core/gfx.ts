@@ -1,0 +1,167 @@
+// The retro framebuffer: everything in the game is drawn into one 384x216 pixel buffer (16:9 at
+// SNES-like density), then scaled up with nearest-neighbor so every pixel stays crisp.
+
+export const W = 384;
+export const H = 216;
+
+/** Pack an opaque color for the little-endian Uint32 view of ImageData (0xAABBGGRR). */
+export const rgb = (r: number, g: number, b: number): number =>
+  (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
+
+export const hex = (s: string): number => {
+  const v = parseInt(s.replace("#", ""), 16);
+  return rgb((v >> 16) & 255, (v >> 8) & 255, v & 255);
+};
+
+export const channels = (c: number): [number, number, number] => [c & 255, (c >> 8) & 255, (c >> 16) & 255];
+
+/** Linear blend of two packed colors, t in [0, 1]. */
+export function mix(a: number, b: number, t: number): number {
+  const ar = a & 255, ag = (a >> 8) & 255, ab = (a >> 16) & 255;
+  const br = b & 255, bg = (b >> 8) & 255, bb = (b >> 16) & 255;
+  return rgb(ar + (br - ar) * t | 0, ag + (bg - ag) * t | 0, ab + (bb - ab) * t | 0);
+}
+
+export const shade = (c: number, f: number): number => {
+  const [r, g, b] = channels(c);
+  return rgb(Math.min(255, r * f) | 0, Math.min(255, g * f) | 0, Math.min(255, b * f) | 0);
+};
+
+export interface Sprite {
+  w: number;
+  h: number;
+  data: Uint32Array; // 0 = transparent
+}
+
+export function makeSprite(w: number, h: number): Sprite {
+  return { w, h, data: new Uint32Array(w * h) };
+}
+
+export class Screen {
+  readonly ctx: CanvasRenderingContext2D;
+  readonly image: ImageData;
+  readonly buf: Uint32Array;
+
+  constructor(readonly canvas: HTMLCanvasElement) {
+    canvas.width = W;
+    canvas.height = H;
+    this.ctx = canvas.getContext("2d", { alpha: false })!;
+    this.image = this.ctx.createImageData(W, H);
+    this.buf = new Uint32Array(this.image.data.buffer);
+    window.addEventListener("resize", () => this.fit());
+    this.fit();
+  }
+
+  /** Largest integer scale that fits the window (fractional on tiny screens). */
+  fit(): void {
+    const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    const scale = s >= 1 ? Math.floor(s) : s;
+    this.canvas.style.width = `${Math.round(W * scale)}px`;
+    this.canvas.style.height = `${Math.round(H * scale)}px`;
+  }
+
+  present(): void {
+    this.ctx.putImageData(this.image, 0, 0);
+  }
+
+  clear(color: number): void {
+    this.buf.fill(color);
+  }
+
+  fillRect(x: number, y: number, w: number, h: number, color: number): void {
+    const x0 = Math.max(0, x | 0), y0 = Math.max(0, y | 0);
+    const x1 = Math.min(W, (x + w) | 0), y1 = Math.min(H, (y + h) | 0);
+    for (let yy = y0; yy < y1; yy++) this.buf.fill(color, yy * W + x0, yy * W + x1);
+  }
+
+  /** Alpha-blend a rectangle (dims the scene behind HUD panels). */
+  dimRect(x: number, y: number, w: number, h: number, color: number, alpha: number): void {
+    const x0 = Math.max(0, x | 0), y0 = Math.max(0, y | 0);
+    const x1 = Math.min(W, (x + w) | 0), y1 = Math.min(H, (y + h) | 0);
+    for (let yy = y0; yy < y1; yy++) {
+      for (let xx = x0; xx < x1; xx++) {
+        const i = yy * W + xx;
+        this.buf[i] = mix(this.buf[i], color, alpha);
+      }
+    }
+  }
+
+  /** Blit a sprite at integer scale-free size (1:1) with transparency. */
+  blit(s: Sprite, x: number, y: number, flip = false): void {
+    x |= 0;
+    y |= 0;
+    for (let sy = 0; sy < s.h; sy++) {
+      const dy = y + sy;
+      if (dy < 0 || dy >= H) continue;
+      for (let sx = 0; sx < s.w; sx++) {
+        const dx = x + sx;
+        if (dx < 0 || dx >= W) continue;
+        const c = s.data[sy * s.w + (flip ? s.w - 1 - sx : sx)];
+        if (c) this.buf[dy * W + dx] = c;
+      }
+    }
+  }
+
+  /** Nearest-neighbor scaled blit; (x, y) is the destination top-left, (w, h) the size. */
+  blitScaled(s: Sprite, x: number, y: number, w: number, h: number, flip = false,
+             tint = 0, tintAmount = 0, clipBottom = H): void {
+    if (w < 1 || h < 1) return;
+    const x0 = Math.max(0, Math.floor(x)), x1 = Math.min(W, Math.ceil(x + w));
+    const y0 = Math.max(0, Math.floor(y)), y1 = Math.min(clipBottom, Math.ceil(y + h));
+    const kx = s.w / w, ky = s.h / h;
+    for (let dy = y0; dy < y1; dy++) {
+      const sy = Math.min(s.h - 1, ((dy - y + 0.5) * ky) | 0);
+      if (sy < 0) continue;
+      const row = sy * s.w;
+      for (let dx = x0; dx < x1; dx++) {
+        let sx = ((dx - x + 0.5) * kx) | 0;
+        if (sx < 0 || sx >= s.w) continue;
+        if (flip) sx = s.w - 1 - sx;
+        const c = s.data[row + sx];
+        if (c) this.buf[dy * W + dx] = tintAmount > 0 ? mix(c, tint, tintAmount) : c;
+      }
+    }
+  }
+}
+
+/** Small, fast, seedable PRNG (mulberry32). */
+export class Rand {
+  private s: number;
+  constructor(seed: number) {
+    this.s = seed >>> 0;
+  }
+  next(): number {
+    this.s = (this.s + 0x6d2b79f5) >>> 0;
+    let t = this.s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  range(a: number, b: number): number {
+    return a + (b - a) * this.next();
+  }
+  int(a: number, b: number): number {
+    return Math.floor(this.range(a, b));
+  }
+  pick<T>(xs: readonly T[]): T {
+    return xs[Math.floor(this.next() * xs.length)];
+  }
+}
+
+/** Cheap deterministic 2-D hash noise in [0, 1). */
+export function hash2(x: number, y: number, seed = 0): number {
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed, 2147483647)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Smooth value noise in [0, 1) at a given cell size. */
+export function valueNoise(x: number, y: number, cell: number, seed = 0): number {
+  const gx = x / cell, gy = y / cell;
+  const ix = Math.floor(gx), iy = Math.floor(gy);
+  const fx = gx - ix, fy = gy - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = hash2(ix, iy, seed), b = hash2(ix + 1, iy, seed);
+  const c = hash2(ix, iy + 1, seed), d = hash2(ix + 1, iy + 1, seed);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}

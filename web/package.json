@@ -3,7 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Browser front-end for DreamCircuit: a neural world model you can drive, on WebGPU.",
+  "description": "DREAM CIRCUIT: a retro kart racer whose circuits are dreamed live by a diffusion model, plus a neural world model you can drive, on WebGPU.",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -13,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource/press-start-2p": "^5.3.0",
     "onnxruntime-web": "^1.30.0"
   },
   "devDependencies": {

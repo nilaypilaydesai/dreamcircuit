@@ -2,6 +2,7 @@
 // It only ever sees frames, so it can drive inside the dream as well as in reality.
 
 import * as ort from "onnxruntime-web/webgpu";
+import { exclusive } from "../ort-queue";
 import { rgbToChw } from "./engine";
 
 export class Policy {
@@ -28,14 +29,18 @@ export class Policy {
     const n = 3 * 64 * 64;
     const x = new Float32Array(this.frames * n);
     frames.slice(-this.frames).forEach((f, i) => rgbToChw(f, 64, x.subarray(i * n, (i + 1) * n)));
-    const out = await this.session.run({ frames: new ort.Tensor("float32", x, [1, 3 * this.frames, 64, 64]) });
-    const a = out.action.data as Float32Array;
-    return [a[0], a[1]];
+    return this.run(x);
   }
 
-  /** Same, but from CHW floats (the dream's own frames). */
+  /** Same, but from CHW floats (the dream's own frames). Copied, because the run may wait in the
+   * inference queue while the dream slides its window. */
   async actCHW(frames: Float32Array): Promise<[number, number]> {
-    const out = await this.session.run({ frames: new ort.Tensor("float32", frames, [1, 3 * this.frames, 64, 64]) });
+    return this.run(Float32Array.from(frames));
+  }
+
+  private async run(x: Float32Array): Promise<[number, number]> {
+    const feeds = { frames: new ort.Tensor("float32", x, [1, 3 * this.frames, 64, 64]) };
+    const out = await exclusive(() => this.session.run(feeds));
     const a = out.action.data as Float32Array;
     return [a[0], a[1]];
   }

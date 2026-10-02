@@ -294,3 +294,18 @@ kbd { font-size: 11px; color: var(--muted); padding: 1px 6px; border: 1px solid 
 .chart table { width: 100%; border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
 .chart th, .chart td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
 .chart th { color: var(--dim); font-weight: 500; }
+
+/* ---------- data page additions ---------- */
+.brand .pixel { font: 13px "Press Start 2P", var(--mono); color: var(--warn); letter-spacing: 0.02em; }
+.brand .sub { font: 500 11px var(--mono); color: var(--dream); letter-spacing: 0.18em; margin-left: 4px; }
+.nav .play { color: #0b0420; background: var(--warn); padding: 5px 14px; border-radius: 999px; font-weight: 600; text-decoration: none; }
+.nav .play:hover { filter: brightness(1.08); }
+.section.first { border-top: 0; padding-top: 48px; }
+.gallery-wrap { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; margin-top: 28px; }
+.gallery-wrap h3 { font-size: 14px; color: var(--muted); font-weight: 500; margin: 0 0 12px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
+.gallery svg { width: 100%; aspect-ratio: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.gallery .circuit { fill: none; stroke: var(--dream); stroke-width: 2.4; stroke-linejoin: round; }
+#gallery-real .circuit { stroke: var(--muted); }
+.gallery .start { fill: var(--warn); stroke: #0e1119; stroke-width: 1.5; }
+@media (max-width: 760px) { .gallery-wrap { grid-template-columns: 1fr; } }

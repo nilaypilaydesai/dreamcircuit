@@ -48,6 +48,8 @@ export class App {
   private busy = false;
   private mind: { dir: MindDirection; value: number }[] = [];
   private turing = { round: 0, correct: 0, truth: "" as "" | "real" | "dream", playing: false };
+  private clipToken = 0; // bumped to cancel a Turing clip that is still being generated
+  private reseedSplit = false; // reality respawned: re-seed the dream once history refills
 
   constructor(private readonly engine: DreamEngine, private readonly tracks: Track[],
               private readonly cfg: SimConfig, private readonly sprite: SpriteData,
@@ -108,15 +110,19 @@ export class App {
     if (directions.length === 0) return;
     $("panel-mind").hidden = false;
     const root = $("mind-sliders");
-    root.innerHTML = "";
+    root.replaceChildren();
     this.mind = directions.map((dir) => ({ dir, value: 0 }));
     this.mind.forEach((m, k) => {
       const row = document.createElement("div");
       row.className = "row";
-      row.innerHTML = `<label>${m.dir.label} <output>0.0</output></label>
-        <input type="range" min="-3" max="3" step="0.1" value="0" aria-label="${m.dir.label}" />`;
-      const input = row.querySelector("input")!;
-      const out = row.querySelector("output")!;
+      const label = document.createElement("label");
+      const out = document.createElement("output");
+      out.textContent = "0.0";
+      label.append(document.createTextNode(`${m.dir.label} `), out);
+      const input = document.createElement("input");
+      Object.assign(input, { type: "range", min: "-3", max: "3", step: "0.1", value: "0" });
+      input.setAttribute("aria-label", m.dir.label);
+      row.append(label, input);
       input.addEventListener("input", () => {
         this.mind[k].value = Number(input.value);
         out.textContent = Number(input.value).toFixed(1);
@@ -142,6 +148,7 @@ export class App {
   }
 
   private onAction(a: string): void {
+    if (this.mode === "turing") return; // shortcuts would reseed the dream mid-clip
     if (a === "autopilot") this.toggleAutopilot();
     else if (a === "wake") this.wake();
     else if (a === "track") this.nextTrack();
@@ -163,7 +170,20 @@ export class App {
   }
 
   setMode(m: Mode): void {
+    const leaving = this.mode;
     this.mode = m;
+    // Cancel a clip in progress and give every mode a clean world: same circuit, no history
+    // recorded somewhere else.
+    this.clipToken += 1;
+    this.reseedSplit = false;
+    this.turing.playing = false;
+    $<HTMLButtonElement>("btn-turing-next").disabled = false;
+    $<HTMLButtonElement>("btn-guess-real").disabled = true;
+    $<HTMLButtonElement>("btn-guess-dream").disabled = true;
+    if (leaving === "turing" || this.env.track !== this.tracks[this.trackIdx]) {
+      this.env = new CarEnv(this.tracks[this.trackIdx], this.cfg, this.sprite);
+    }
+    this.history = { frames: [], actions: [] };
     $("screens").dataset.mode = m;
     document.querySelectorAll<HTMLButtonElement>(".tab").forEach((t) => {
       const on = t.dataset.mode === m;
@@ -274,6 +294,7 @@ export class App {
       if (this.env.lost) {
         this.env.reset(this.env.idx, 6);
         this.history = { frames: [], actions: [] };
+        this.reseedSplit = true; // the dream must restart from the respawned car
       }
       realFrame = this.env.render().slice();
       this.history.frames.push(realFrame);
@@ -284,9 +305,19 @@ export class App {
       }
       this.real.drawRGB(realFrame);
       if (this.history.frames.length < this.engine.L) return;
+      if (this.reseedSplit) {
+        // The window ends at the frame reality is showing now, so the dream joins it from the
+        // next tick on (stepping it now would put the dream one frame ahead).
+        this.engine.setContext(this.history.frames, this.history.actions);
+        this.reseedSplit = false;
+        this.divergence = [];
+        this.dream.drawRGB(realFrame);
+        return;
+      }
     }
 
     const x = await this.engine.step(steer, pedal);
+    if (!x) return; // re-seeded while this frame was being imagined
     const dreamRgb = chwToRgb(x, 64);
     this.dream.drawRGB(dreamRgb);
     this.drawStrip();
@@ -344,35 +375,51 @@ export class App {
     if (this.turing.round >= TURING_ROUNDS) {
       this.turing = { round: 0, correct: 0, truth: "", playing: false };
     }
+    const token = ++this.clipToken;
+    const live = () => token === this.clipToken && this.mode === "turing";
     this.turing.playing = true;
     $<HTMLButtonElement>("btn-turing-next").disabled = true;
     this.updateTuringText("Generating clip...");
-    this.env = new CarEnv(this.tracks[Math.floor(Math.random() * this.tracks.length)], this.cfg,
-                          this.sprite);
-    const seed = this.seedFromFreshReality();
-    const isDream = Math.random() < 0.5;
-    const frames: Uint8Array[] = [];
-    if (isDream) this.engine.setContext(seed.frames, seed.actions);
-    const aggr = 0.6 + Math.random() * 0.3;
-    for (let t = 0; t < CLIP_FRAMES; t++) {
-      const a = expertAction(this.env, aggr);
-      this.env.step(a[0], a[1]);
-      if (isDream) {
-        const act = this.policy ? await this.policy.actCHW(this.engine.contextFrames) : a;
-        frames.push(chwToRgb(await this.engine.step(act[0], act[1]), 64));
-      } else {
-        frames.push(this.env.render().slice());
+    try {
+      const env = new CarEnv(this.tracks[Math.floor(Math.random() * this.tracks.length)], this.cfg,
+                             this.sprite);
+      this.env = env;
+      const seed = this.seedFromFreshReality();
+      const isDream = Math.random() < 0.5;
+      const frames: Uint8Array[] = [];
+      if (isDream) this.engine.setContext(seed.frames, seed.actions);
+      const aggr = 0.6 + Math.random() * 0.3;
+      for (let t = 0; t < CLIP_FRAMES; t++) {
+        const a = expertAction(env, aggr);
+        env.step(a[0], a[1]);
+        if (isDream) {
+          const act = this.policy ? await this.policy.actCHW(this.engine.contextFrames) : a;
+          const x = await this.engine.step(act[0], act[1]);
+          if (!live()) return; // the visitor left the test: setMode already reset the panel
+          if (!x) throw new Error("the dream was re-seeded mid-clip");
+          frames.push(chwToRgb(x, 64));
+        } else {
+          frames.push(env.render().slice());
+        }
       }
+      this.updateTuringText("Watch closely. Real or dream?");
+      $("dream-canvas").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      for (const f of frames) {
+        if (!live()) return;
+        this.dream.drawRGB(f);
+        await new Promise((r) => setTimeout(r, 1000 / HZ));
+      }
+      if (!live()) return;
+      this.turing.truth = isDream ? "dream" : "real";
+      $<HTMLButtonElement>("btn-guess-real").disabled = false;
+      $<HTMLButtonElement>("btn-guess-dream").disabled = false;
+    } catch (e) {
+      console.error(e);
+      if (!live()) return;
+      this.turing.playing = false;
+      $<HTMLButtonElement>("btn-turing-next").disabled = false;
+      this.updateTuringText("That clip could not be generated. Press Play clip to try another.");
     }
-    this.turing.truth = isDream ? "dream" : "real";
-    this.updateTuringText("Watch closely. Real or dream?");
-    $("dream-canvas").scrollIntoView({ behavior: "smooth", block: "nearest" });
-    for (const f of frames) {
-      this.dream.drawRGB(f);
-      await new Promise((r) => setTimeout(r, 1000 / HZ));
-    }
-    $<HTMLButtonElement>("btn-guess-real").disabled = false;
-    $<HTMLButtonElement>("btn-guess-dream").disabled = false;
   }
 
   private guess(g: "real" | "dream"): void {

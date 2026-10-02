@@ -2,6 +2,7 @@
 // EDM Euler sampler around the exported denoiser D(x; sigma | context, actions).
 
 import * as ort from "onnxruntime-web/webgpu";
+import { exclusive } from "../ort-queue";
 
 export interface DenoiserInfo {
   file: string;
@@ -99,7 +100,11 @@ export class DreamEngine {
   }
 
   static async create(baseUrl: string, onStatus?: (s: string) => void): Promise<DreamEngine> {
-    const info = (await (await fetch(`${baseUrl}/denoiser.json`)).json()) as DenoiserInfo;
+    const meta = await fetch(`${baseUrl}/denoiser.json`);
+    if (!meta.ok || (meta.headers.get("content-type") ?? "").includes("html")) {
+      throw new Error("the world model is not bundled with this build");
+    }
+    const info = (await meta.json()) as DenoiserInfo;
     const hasGpu = "gpu" in navigator && !!(await (navigator as any).gpu?.requestAdapter());
     const order: Backend[] = hasGpu ? ["webgpu", "wasm"] : ["wasm"];
     let lastErr: unknown;
@@ -132,6 +137,7 @@ export class DreamEngine {
 
   /** Seed the dream with real frames (RGB bytes, oldest first) and the L-1 actions between them. */
   setContext(frames: Uint8Array[], actions: [number, number][]): void {
+    this.generation += 1; // any frame still being imagined belongs to the old dream
     const n = 3 * this.size * this.size;
     frames.slice(-this.L).forEach((f, i) => rgbToChw(f, this.size, this.context.subarray(i * n, (i + 1) * n)));
     actions.slice(-(this.L - 1)).forEach(([s, p], i) => {
@@ -150,26 +156,40 @@ export class DreamEngine {
       aug_sigma: new ort.Tensor("float32", Float32Array.of(this.augSigma), [1]),
       mid_bias: new ort.Tensor("float32", this.midBias, [1, this.midBias.length]),
     };
-    const out = await this.session.run(feeds);
+    const out = await exclusive(() => this.session.run(feeds));
     return out.x0.data as Float32Array;
   }
 
-  /** Imagine the frame that follows ``(steer, pedal)``; returns it as CHW floats in [-1, 1]. */
-  async step(steer: number, pedal: number): Promise<Float32Array> {
+  /** Imagine the frame that follows ``(steer, pedal)``; returns it as CHW floats in [-1, 1],
+   * or ``null`` if the dream was re-seeded while the frame was being imagined. Calls are
+   * serialized: ONNX Runtime Web does not support overlapping runs on one session. */
+  step(steer: number, pedal: number): Promise<Float32Array | null> {
+    const run = this.queue.then(() => this.stepNow(steer, pedal));
+    this.queue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private queue: Promise<void> = Promise.resolve();
+  private generation = 0;
+
+  private async stepNow(steer: number, pedal: number): Promise<Float32Array | null> {
     const t0 = performance.now();
+    const gen = this.generation;
     const n = 3 * this.size * this.size;
     const acts = new Float32Array(2 * this.L);
     acts.set(this.actions);
     acts[2 * (this.L - 1)] = steer;
     acts[2 * (this.L - 1) + 1] = pedal;
 
-    const sig = karrasSigmas(this.steps, this.info.edm);
+    const steps = this.steps; // snapshot: the slider may move while this frame is in flight
+    const sig = karrasSigmas(steps, this.info.edm);
     let x = new Float32Array(n);
     for (let i = 0; i < n; i++) x[i] = this.rng.normal() * sig[0];
-    this.trajectory = [];
-    for (let i = 0; i < this.steps; i++) {
+    const trajectory: Float32Array[] = [];
+    for (let i = 0; i < steps; i++) {
       const x0 = await this.denoise(x, sig[i], acts);
-      this.trajectory.push(x0);
+      if (gen !== this.generation) return null; // re-seeded mid-frame: discard
+      trajectory.push(x0);
       if (sig[i + 1] === 0) {
         x = Float32Array.from(x0);
       } else {
@@ -180,6 +200,7 @@ export class DreamEngine {
       }
     }
     for (let j = 0; j < n; j++) x[j] = Math.min(Math.max(x[j], -1), 1);
+    this.trajectory = trajectory;
 
     // Slide the window: drop the oldest frame/action, append the new ones.
     this.context.copyWithin(0, n);
