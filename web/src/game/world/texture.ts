@@ -1,23 +1,24 @@
-// The ground under the Mode-7 camera: one 2048 x 2048 texture (0.25 m per texel) covering a
-// 512 m square. Terrain is painted once per race; road is painted into it chunk by chunk, as
-// the circuit designer commits each new stretch. A mip chain keeps distant ground from
-// shimmering.
+// The ground under the Mode-7 camera: one 2560 x 2560 texture (0.3 m per texel) covering a
+// 768 m square. Terrain is painted once per race; road is painted into it chunk by chunk, as
+// the circuit designer commits each new stretch (raised road, on bridges, is painted as the
+// shadow it casts). A mip chain keeps distant ground from shimmering.
 
 import { hash2, mix, shade, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
 import { HALF_WIDTH, type Track } from "./track";
 
-export const TEX = 2048;
-export const RES = 0.25; // meters per texel
+export const TEX = 2560;
+export const RES = 0.3; // meters per texel
 export const HALF = (TEX * RES) / 2; // world spans [-HALF, HALF]
 const LEVELS = 5;
 const KERB_KAPPA = 1 / 40; // corners tighter than 40 m radius get kerbs
 
 export class WorldTexture {
   readonly levels: Uint32Array[] = [];
+  private readonly shaded = new Set<number>(); // raised road whose shadow is already painted
   constructor(readonly theme: Theme, readonly seed: number) {
     for (let k = 0; k < LEVELS; k++) this.levels.push(new Uint32Array((TEX >> k) * (TEX >> k)));
-    this.paintTerrain();
+    this.paintTerrain(0, 0, TEX, TEX);
     this.buildMips(0, 0, TEX, TEX);
   }
 
@@ -26,12 +27,12 @@ export class WorldTexture {
     return [(x + HALF) / RES, (HALF - y) / RES];
   }
 
-  private paintTerrain(): void {
+  private paintTerrain(x0: number, y0: number, x1: number, y1: number): void {
     const t = this.theme;
     const tex = this.levels[0];
-    for (let ty = 0; ty < TEX; ty++) {
+    for (let ty = Math.max(0, y0); ty < Math.min(TEX, y1); ty++) {
       const wy = HALF - (ty + 0.5) * RES;
-      for (let tx = 0; tx < TEX; tx++) {
+      for (let tx = Math.max(0, x0); tx < Math.min(TEX, x1); tx++) {
         const wx = (tx + 0.5) * RES - HALF;
         const band = Math.floor((wx * 0.7 + wy * 0.7) / 9) & 1; // mowing stripes / dune bands
         let c = t.ground[band];
@@ -94,9 +95,17 @@ export class WorldTexture {
       const h = hash2(tx, ty, 7);
       return h > 0.93 ? t.roadSpeck : shade(t.road, 0.96 + 0.08 * hash2(tx >> 2, ty >> 2, 3));
     };
+    const tex = this.levels[0];
+    const shadow = (tx: number, ty: number) => shade(tex[ty * TEX + tx], 0.62);
     for (let i = start; i < end; i++) {
       const j = track.wrap(i + 1);
       const hw = HALF_WIDTH;
+      if (Math.max(track.elev[i], track.elev[j]) > 0.25) {
+        // raised road is drawn in 3D; on the ground it leaves a shadow (darkened only once)
+        if (!this.shaded.has(i)) strip(i, j, -hw, hw, shadow);
+        this.shaded.add(i);
+        continue;
+      }
       strip(i, j, -hw - 1.8, hw + 1.8, (tx, ty) => shade(t.shoulder, 0.92 + 0.12 * hash2(tx, ty, 11)));
       strip(i, j, -hw, hw, asphalt);
       const kappa = Math.abs(track.curvature(i));
@@ -113,6 +122,33 @@ export class WorldTexture {
     // Start/finish checkers and grid boxes once the start line exists.
     if (track.startIndex >= start && track.startIndex < end + 1) this.paintStartLine(track, box);
     if (box[2] > box[0]) this.buildMips(box[0], box[1], box[2], box[3]);
+  }
+
+  /** Road between dense indices [from, to) was raised after it was painted: repaint the ground
+   * around it, then every stretch of road that runs through that area. */
+  repaint(track: Track, from: number, to: number): void {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    const pad = HALF_WIDTH + 2.5;
+    for (let i = from; i < to; i++) {
+      x0 = Math.min(x0, track.xs[i] - pad); x1 = Math.max(x1, track.xs[i] + pad);
+      y0 = Math.min(y0, track.ys[i] - pad); y1 = Math.max(y1, track.ys[i] + pad);
+    }
+    const [tx0, ty1] = WorldTexture.texel(x0, y0), [tx1, ty0] = WorldTexture.texel(x1, y1);
+    const bx0 = Math.floor(tx0), by0 = Math.floor(ty0), bx1 = Math.ceil(tx1), by1 = Math.ceil(ty1);
+    this.paintTerrain(bx0, by0, bx1, by1);
+    for (let i = from; i < to; i++) this.shaded.delete(i);
+    // every committed stretch that passes through the box (the road underneath, the bridge itself)
+    const inside = (i: number) => track.xs[i] > x0 - pad && track.xs[i] < x1 + pad && track.ys[i] > y0 - pad && track.ys[i] < y1 + pad;
+    let runStart = -1;
+    for (let i = 0; i <= track.count; i++) {
+      const ok = i < track.count && inside(i);
+      if (ok && runStart < 0) runStart = i;
+      if (!ok && runStart >= 0) {
+        this.paintRoad(track, runStart, Math.min(track.count, i + 1));
+        runStart = -1;
+      }
+    }
+    this.buildMips(bx0, by0, bx1, by1);
   }
 
   private paintStartLine(track: Track, box: number[]): void {

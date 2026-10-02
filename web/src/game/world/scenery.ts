@@ -4,9 +4,9 @@
 // gantry and a grandstand.
 
 import { Rand, type Sprite } from "../core/gfx";
-import { type SceneryArt, chevron, gantry, grandstand, makeScenery } from "../render/sprites";
+import { type SceneryArt, chevron, gantry, grandstand, makeScenery, pillar } from "../render/sprites";
 import type { Theme } from "../themes";
-import { HALF_WIDTH, type Track } from "./track";
+import { type Bridge, HALF_WIDTH, SPACING, type Track } from "./track";
 import { HALF } from "./texture";
 
 export interface Placed {
@@ -83,6 +83,31 @@ export class Scenery {
         const kind = this.rng.pick(t.near);
         this.add(track, track.xs[i] - ty * off, track.ys[i] + tx * off, this.art(kind), this.rng.next() > 0.5,
                  HALF_WIDTH + 2.4);
+      }
+    }
+  }
+
+  /** A bridge was built: pillars under its deck, clear of the road it crosses. */
+  onBridge(track: Track, b: Bridge): void {
+    const lower = (x: number, y: number) => {
+      let best = Infinity;
+      for (let k = -140; k <= 140; k += 2) {
+        const i = track.wrap(b.lower + k);
+        best = Math.min(best, Math.hypot(track.xs[i] - x, track.ys[i] - y));
+      }
+      return best;
+    };
+    const step = Math.round(11 / SPACING);
+    for (let k = -Math.round(60 / SPACING); k <= Math.round(60 / SPACING); k += step) {
+      const i = track.wrap(b.center + k);
+      const h = track.elev[i];
+      if (h < 2.2) continue;
+      const [tx, ty] = track.tangent(i);
+      for (const side of [1, -1]) {
+        const off = side * (HALF_WIDTH - 1.0);
+        const x = track.xs[i] - ty * off, y = track.ys[i] + tx * off;
+        if (lower(x, y) < HALF_WIDTH + 2.5) continue; // never in the road underneath
+        this.items.push({ x, y, art: pillar(h - 0.9), flip: false });
       }
     }
   }

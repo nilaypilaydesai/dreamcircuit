@@ -1,5 +1,6 @@
 // Arcade kart physics: snappy steering, drifting with mini-turbo boosts, off-road slowdown,
-// kart-to-kart bumps and a soft outer fence. Tuned for fun, not for the research simulator.
+// kart-to-kart bumps and a soft outer fence; road height (bridges) with guard rails; jumps off
+// ramps, with a trick for a well-timed hop. Tuned for fun, not for the research simulator.
 
 import { HALF_WIDTH, type Track } from "../world/track";
 import type { ItemKind } from "./items";
@@ -30,7 +31,14 @@ export interface Controls {
   item?: boolean; // held: an item fires on the press
 }
 
-export type Surface = "road" | "kerb" | "shoulder" | "grass";
+export type Surface = "road" | "kerb" | "shoulder" | "grass" | "air";
+
+export const GRAVITY = 26; // m/s^2: arcade jumps are short and punchy
+const TRICK_EARLY = 0.24; // s before the lip a hop still counts as a trick
+const TRICK_LATE = 0.18; // s after leaving the lip
+const PERFECT = 0.085; // s either side of the lip for a perfect trick
+
+export type TrickGrade = 0 | 1 | 2; // none, good, perfect
 
 export class Kart {
   x = 0;
@@ -56,6 +64,18 @@ export class Kart {
   itemHeld = false; // the item button was down last frame
   spin = 0; // s left in a spin-out
   spinAngle = 0; // the sprite's extra rotation while spinning
+  // height: the road under the kart (set by the race each frame), and the kart's own
+  ground = 0; // m, road surface height here (bridge decks, ramps)
+  elev = 0; // m, the kart's height
+  vz = 0;
+  air = false;
+  airTime = 0;
+  rampU = -1; // 0..1 while on a jump ramp (set by the race), -1 elsewhere
+  trick: TrickGrade = 0; // pending: paid out as a boost on landing
+  burnout = 0; // s of wheelspin after a too-early start
+  trickAngle = 0; // the sprite's extra rotation during a trick
+  private hopAge = 9; // s since the hop button was pressed
+  private hopHeld = false;
   // race bookkeeping
   crossings = 0; // times the start line has been crossed going forward
   private maxCrossings = 0; // backing over the line and back again must not count a lap twice
@@ -78,13 +98,25 @@ export class Kart {
     this.heading = Math.atan2(ty, tx);
     this.idx = idx;
     this.v = 0;
+    this.ground = this.elev = track.elev[idx] ?? 0;
+    this.air = false;
     this.lastFromStart = track.fromStart(idx);
     this.dist = this.lastFromStart;
   }
 
-  update(dt: number, input: Controls, track: Track, cls: ClassParams): { boosted: boolean } {
+  /** The sprite's total extra rotation (spin-outs and tricks). */
+  get visualSpin(): number {
+    return this.spinAngle + this.trickAngle;
+  }
+
+  update(dt: number, input: Controls, track: Track, cls: ClassParams):
+    { boosted: boolean; landed: TrickGrade | -1 } {
     // spun out: no control while the kart slides on, slowing, and the sprite turns
     let c = input;
+    if (this.burnout > 0) {
+      this.burnout -= dt;
+      c = { ...c, throttle: 0 };
+    }
     if (this.spin > 0) {
       this.spin -= dt;
       this.spinAngle += dt * 13;
@@ -96,7 +128,55 @@ export class Kart {
     this.offset = track.offset(this.x, this.y, this.idx);
     const a = Math.abs(this.offset);
     this.surface = a < HALF_WIDTH - 1.3 ? "road" : a < HALF_WIDTH ? "kerb" : a < HALF_WIDTH + 1.8 ? "shoulder" : "grass";
-    const surfaceSpeed = { road: 1, kerb: 0.97, shoulder: 0.82, grass: 0.52 }[this.surface];
+    let landed: TrickGrade | -1 = -1;
+
+    // hop button (the drift button) for tricks: a fresh press, timed against the ramp lip
+    this.hopAge += dt;
+    if (c.drift && !this.hopHeld) this.hopAge = 0;
+    this.hopHeld = !!c.drift;
+
+    // height: follow the road, fly off ramp lips, land with the trick's boost
+    if (this.air) {
+      this.surface = "air";
+      this.vz -= GRAVITY * dt;
+      this.elev += this.vz * dt;
+      this.airTime += dt;
+      if (this.trick === 0 && this.hopAge === 0 && this.airTime < TRICK_LATE) {
+        this.trick = this.airTime < PERFECT ? 2 : 1;
+      }
+      if (this.trick) this.trickAngle = Math.min(Math.PI * 2, this.trickAngle + dt * 15);
+      if (this.elev <= this.ground) {
+        this.elev = this.ground;
+        this.air = false;
+        this.vz = 0;
+        landed = this.trick;
+        if (this.trick) this.boostTime = Math.max(this.boostTime, this.trick === 2 ? 1.35 : 0.8);
+        this.trick = 0;
+        this.trickAngle = 0;
+      }
+    } else if (this.elev - this.ground > 0.3 && this.v > 8) {
+      // the road dropped away under a fast kart: the lip of a jump ramp
+      this.air = true;
+      this.airTime = 0;
+      this.vz = Math.max(this.vz, 0) + 4.2 + this.v * 0.11;
+      if (this.hopAge < TRICK_EARLY) this.trick = this.hopAge < PERFECT ? 2 : 1;
+      this.surface = "air";
+    } else {
+      this.vz = (this.ground - this.elev) / Math.max(dt, 1e-3); // climbing a ramp: the launch speed
+      this.elev = this.ground;
+    }
+    // guard rails on raised road: no falling off a bridge
+    if (!this.air && this.ground > 0.8 && a > HALF_WIDTH - 0.7) {
+      const [tx, ty] = track.tangent(this.idx);
+      const sgn = Math.sign(this.offset), push = a - (HALF_WIDTH - 0.7);
+      this.x += ty * sgn * push;
+      this.y -= tx * sgn * push;
+      this.offset = sgn * (HALF_WIDTH - 0.7);
+      this.v *= 0.97;
+      this.bumpTime = 0.2;
+      this.surface = "kerb";
+    }
+    const surfaceSpeed = { road: 1, kerb: 0.97, shoulder: 0.82, grass: 0.52, air: 1 }[this.surface];
     let boosted = false;
     const vmax = cls.vmax * surfaceSpeed * (this.boostTime > 0 ? 1.28 : 1);
 
@@ -109,7 +189,7 @@ export class Kart {
     } else {
       this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), 3.2 * dt);
     }
-    if (this.v > vmax) this.v -= (this.v - vmax) * 2.2 * dt; // over the limit (grass, a bump): bleed it off
+    if (this.v > vmax && !this.air) this.v -= (this.v - vmax) * 2.2 * dt; // over the limit: bleed it off
     if (this.surface === "grass") this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), 5 * dt);
     if (this.boostTime > 0) {
       this.boostTime -= dt;
@@ -119,12 +199,12 @@ export class Kart {
     // steering and drifting
     this.steer += (c.steer - this.steer) * Math.min(1, dt * 9);
     const speed = Math.abs(this.v);
-    if (c.drift && !this.drifting && Math.abs(c.steer) > 0.3 && speed > 11 && this.surface !== "grass") {
+    if (c.drift && !this.drifting && !this.air && Math.abs(c.steer) > 0.3 && speed > 11 && this.surface !== "grass") {
       this.drifting = true;
       this.driftDir = Math.sign(c.steer);
       this.driftTime = 0;
     }
-    if (this.drifting && (!c.drift || speed < 8 || this.surface === "grass")) {
+    if (this.drifting && (!c.drift || speed < 8 || this.surface === "grass" || this.air)) {
       if (this.driftTime > 0.7) {
         this.boostTime = this.driftTime > 1.6 ? 1.1 : 0.55; // mini-turbo
         boosted = true;
@@ -140,7 +220,7 @@ export class Kart {
       steerEff = this.driftDir * (0.55 + 0.45 * this.steer * this.driftDir);
       yawGain = 1.3;
     }
-    const turn = Math.min(1.9, cls.grip / Math.max(speed, 1)) * yawGain;
+    const turn = Math.min(1.9, cls.grip / Math.max(speed, 1)) * yawGain * (this.air ? 0.35 : 1);
     this.yawRate = steerEff * turn * Math.min(1, speed / 3.5) * Math.sign(this.v || 1);
     this.heading += this.yawRate * dt;
     const slipTarget = this.drifting ? this.driftDir * 0.32 : 0;
@@ -158,7 +238,7 @@ export class Kart {
       this.v *= 0.8;
     }
     if (this.bumpTime > 0) this.bumpTime -= dt;
-    return { boosted };
+    return { boosted, landed };
   }
 
   /** Lap bookkeeping from the arc length past the start line. */
@@ -206,6 +286,7 @@ export function collideKarts(karts: Kart[], vmax = 45): Kart[] {
   for (let i = 0; i < karts.length; i++) {
     for (let j = i + 1; j < karts.length; j++) {
       const a = karts[i], b = karts[j];
+      if (Math.abs(a.elev - b.elev) > 1.8) continue; // one on a bridge, one underneath
       const dx = b.x - a.x, dy = b.y - a.y;
       const d = Math.hypot(dx, dy);
       if (d >= 2 * R || d < 1e-6) continue;

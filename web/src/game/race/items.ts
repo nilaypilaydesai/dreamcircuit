@@ -24,8 +24,8 @@ const ORB_SPEED = 12; // m/s on top of the shooter's speed
 const ORB_RANGE = 150; // m of race distance in which an orb finds a target
 export const SPIN_TIME = 1.0; // s
 
-export interface ItemBox { x: number; y: number; respawn: number }
-export interface Slick { x: number; y: number; ttl: number; owner: Kart; armed: number }
+export interface ItemBox { x: number; y: number; elev: number; respawn: number }
+export interface Slick { x: number; y: number; elev: number; ttl: number; owner: Kart; armed: number }
 export interface Orb {
   idx: number; carry: number; x: number; y: number; offset: number; v: number; ttl: number;
   owner: Kart; target: Kart | null;
@@ -65,6 +65,7 @@ export class Items {
   slicks: Slick[] = [];
   orbs: Orb[] = [];
   events: ItemEvent[] = [];
+  rowS: number[] = []; // arc length of each row of boxes (other features keep clear of them)
   private nextRow = BOX_SPACING * 0.6; // first row a little after the start
 
   constructor(private readonly rng: Rand) {}
@@ -76,9 +77,11 @@ export class Items {
       if (s < this.nextRow) continue;
       if (track.locked && s > track.length - 70) break; // keep the run to the line clear
       this.nextRow += BOX_SPACING;
+      if (track.elev[i] > 0) continue; // never on a bridge's ramps
+      this.rowS.push(track.s[i]);
       const [tx, ty] = track.tangent(i);
       for (const lane of BOX_LANES) {
-        this.boxes.push({ x: track.xs[i] - ty * lane, y: track.ys[i] + tx * lane, respawn: 0 });
+        this.boxes.push({ x: track.xs[i] - ty * lane, y: track.ys[i] + tx * lane, elev: track.elev[i], respawn: 0 });
       }
     }
   }
@@ -92,7 +95,7 @@ export class Items {
     if (item === "turbo") {
       k.boostTime = Math.max(k.boostTime, 1.3);
     } else if (item === "oil") {
-      this.slicks.push({ x: k.x - c * 2.4, y: k.y - s * 2.4, ttl: 30, owner: k, armed: 1.0 });
+      this.slicks.push({ x: k.x - c * 2.4, y: k.y - s * 2.4, elev: k.ground, ttl: 30, owner: k, armed: 1.0 });
     } else {
       this.orbs.push({
         idx: k.idx, carry: 0, x: k.x + c * 2, y: k.y + s * 2, offset: k.offset, v: Math.max(k.v, 8) + ORB_SPEED,
@@ -122,7 +125,8 @@ export class Items {
         continue;
       }
       for (const k of karts) {
-        if (k.finished || (k.x - b.x) ** 2 + (k.y - b.y) ** 2 > PICKUP_R * PICKUP_R) continue;
+        if (k.finished || Math.abs(k.elev - b.elev) > 1.8) continue;
+        if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > PICKUP_R * PICKUP_R) continue;
         b.respawn = BOX_RESPAWN;
         if (!k.item && k.roulette <= 0) {
           k.item = rollItem(places(k), karts.length, this.rng);
@@ -150,7 +154,8 @@ export class Items {
       if (sl.ttl <= 0) return false;
       for (const k of karts) {
         if (k === sl.owner && sl.armed > 0) continue;
-        if (k.spin > 0 || (k.x - sl.x) ** 2 + (k.y - sl.y) ** 2 > SLICK_R * SLICK_R) continue;
+        if (k.spin > 0 || k.air || Math.abs(k.elev - sl.elev) > 1.2) continue;
+        if ((k.x - sl.x) ** 2 + (k.y - sl.y) ** 2 > SLICK_R * SLICK_R) continue;
         spinOut(k);
         this.events.push({ kind: "spun", kart: k, by: "oil", owner: sl.owner });
         return false;
@@ -184,8 +189,9 @@ export class Items {
         o.x = track.xs[o.idx] - ty * o.offset;
         o.y = track.ys[o.idx] + tx * o.offset;
       }
+      const oz = track.elev[o.idx] ?? 0;
       for (const k of karts) {
-        if (k === o.owner || k.spin > 0) continue;
+        if (k === o.owner || k.spin > 0 || Math.abs(k.elev - oz) > 2.2) continue;
         if ((k.x - o.x) ** 2 + (k.y - o.y) ** 2 > ORB_R * ORB_R) continue;
         spinOut(k);
         this.events.push({ kind: "spun", kart: k, by: "orb", owner: o.owner });

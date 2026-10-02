@@ -15,6 +15,7 @@ export class RivalDriver {
   private drifting = false;
   private driftSide = 0;
   private driftCooldown = 0; // one "drift this corner?" decision per corner
+  private trickTried = false; // one trick attempt per ramp
 
   constructor(private readonly rng: Rand, readonly kart: Kart, rank: number) {
     this.lane = rng.range(-2.5, 2.5);
@@ -60,7 +61,22 @@ export class RivalDriver {
     if (Math.abs(k.offset) > HALF_WIDTH + 2) vt = Math.min(vt, 14);
     const throttle = v < vt ? 1 : 0;
     const brake = v > vt + 2 ? Math.min(1, (v - vt) / 6) : 0;
-    return { steer, throttle, brake, drift: this.drift(dt, track, cls, steer), item: this.wantsItem(track, cls, others) };
+    return {
+      steer, throttle, brake, drift: this.drift(dt, track, cls, steer) || this.trick(cls),
+      item: this.wantsItem(track, cls, others),
+    };
+  }
+
+  /** Hop at a ramp's lip (a tap of the drift button) for a trick, timed by skill. */
+  private trick(cls: ClassParams): boolean {
+    const k = this.kart;
+    if (k.rampU < 0) {
+      this.trickTried = false;
+      return false;
+    }
+    if (this.trickTried || k.rampU < 0.9 - 0.12 * this.rng.next()) return false;
+    this.trickTried = true;
+    return this.rng.next() < 0.35 + 0.55 * cls.aiCorner;
   }
 
   /** When to fire the item: a turbo on a straight, oil with a kart close behind, an orb with a

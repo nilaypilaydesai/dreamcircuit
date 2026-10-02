@@ -1,10 +1,14 @@
-// Chiptune sound, synthesized live with WebAudio (no audio files): an engine whose pitch follows
-// the kart's speed, countdown beeps, lap and finish jingles, boosts, bumps and a little shimmer
-// when the dreamed circuit locks. Starts on the first key press (browser autoplay rules).
+// Chiptune sound, synthesized live with WebAudio (no audio files): music (core/music.ts), an
+// engine whose pitch follows the kart's speed, countdown beeps, lap and finish jingles, boosts,
+// bumps, jumps and tricks, and a little shimmer when the dreamed circuit locks. Starts on the
+// first key press (browser autoplay rules).
+
+import { Music } from "./music";
 
 export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  readonly music = new Music(() => this.ctx, () => this.master);
   private engine: { a: OscillatorNode; b: OscillatorNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
   muted = false;
 
@@ -113,6 +117,14 @@ export class Sound {
   orb(): void { this.tone(400, 0.35, "sawtooth", 0.07, 0, 1600); }
   spin(): void { this.tone(700, 0.6, "triangle", 0.12, 0, 120); this.noise(0.3, 0.1, 1200); }
   hit(): void { [1175, 1568].forEach((f, i) => this.tone(f, 0.1, "square", 0.09, i * 0.06)); }
+  jump(): void { this.tone(330, 0.25, "square", 0.07, 0, 880); }
+  land(): void { this.noise(0.12, 0.16, 300); this.tone(110, 0.12, "triangle", 0.14); }
+  trick(perfect: boolean): void {
+    const notes = perfect ? [1047, 1319, 1568, 2093] : [880, 1175, 1397];
+    notes.forEach((f, i) => this.tone(f, 0.11, "square", 0.08, i * 0.06));
+  }
+  rocket(): void { [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.1, "sawtooth", 0.07, i * 0.04)); }
+  burnout(): void { this.noise(0.6, 0.14, 700); this.tone(70, 0.5, "sawtooth", 0.08, 0, 50); }
   select(): void { this.tone(660, 0.07, "square", 0.08); }
   move(): void { this.tone(440, 0.04, "square", 0.05); }
 }

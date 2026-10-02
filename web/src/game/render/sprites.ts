@@ -420,3 +420,19 @@ export function itemIcons(): Record<"turbo" | "oil" | "orb", Sprite> {
   outline(oil, hex("#d9e1ea"));
   return { turbo, oil, orb: orbArt().sprite };
 }
+
+/** A concrete bridge pillar ``height`` meters tall. */
+export function pillar(height: number): SceneryArt {
+  const h = Math.max(6, Math.round(height * 8)), w = 12;
+  const s = makeSprite(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const light = x < 4 ? 1.08 : x > 8 ? 0.78 : 0.95; // lit face, shaded face
+      const band = y % 16 < 1 ? 0.88 : 1; // formwork lines
+      px(s, x, y, shade(hex("#b8b4a8"), light * band));
+    }
+  }
+  rect(s, 0, 0, w, 3, hex("#8f8b80")); // cap
+  outline(s, hex("#3b3a36"));
+  return { sprite: s, height, solid: true };
+}

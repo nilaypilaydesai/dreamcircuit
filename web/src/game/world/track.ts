@@ -1,23 +1,40 @@
-// A circuit that is still being dreamed. The diffusion model produces radii r(theta) at N
-// angles (start line at theta = 0, laps counter-clockwise); this class turns the known samples
-// into drivable road, one centripetal Catmull-Rom segment at a time.
+// A circuit that is still being dreamed. The circuit designer produces a lap as N points along
+// the road (start line at point 0, heading +x); this class turns the known points into drivable
+// road, one centripetal Catmull-Rom segment at a time.
 //
-// Segment j runs from polar point j to j + 1 and needs points j - 1 .. j + 2. Segments are
-// committed in driving order, starting just behind the start grid, as soon as their four
-// points are known; committed road never moves again. When the last segment closes the loop
-// the circuit is "locked" and laps 2 and 3 run on exactly the same road.
+// Segment j runs from point j to j + 1 and needs points j - 1 .. j + 2. Segments are committed
+// in driving order, starting just behind the start grid, as soon as their four points are known.
+// Committed road never moves sideways again; it may only be lifted onto a bridge before anyone
+// gets there. When the last segment closes the loop the circuit is "locked" and laps 2 and 3 run
+// on exactly the same road.
+//
+// Where new road crosses road that already exists, the new stretch becomes a bridge: it climbs a
+// ramp, crosses on a deck high enough to drive under, and comes back down.
 
-export const N = 128;
+export const N = 256;
 export const SCALE = 1.5; // model meters -> game meters (karts like wide roads)
 export const HALF_WIDTH = 6.5; // m, half the road width
 export const SPACING = 0.6; // m between dense centerline points
-export const FIRST_SEG = N - 11; // committed driving order starts here (just behind the grid)
+export const FIRST_SEG = N - 23; // committed driving order starts here (just behind the grid)
 
-const TWO_PI = Math.PI * 2;
+export const BRIDGE_HEIGHT = 6.0; // m: deck height over the road underneath
+export const BRIDGE_RAMP = 44; // m of ramp each side of the deck
+export const BRIDGE_DECK = 34; // m of level deck centred on the crossing
+const CELL = 8; // m, spatial hash for crossing detection
 
-export function polarPoint(r: number, j: number): [number, number] {
-  const th = (((j % N) + N) % N) * (TWO_PI / N);
-  return [r * SCALE * Math.cos(th), r * SCALE * Math.sin(th)];
+export interface Bridge {
+  center: number; // dense index of the crossing on the bridge (the later stretch)
+  centerS: number; // its arc length
+  lower: number; // dense index of the crossing on the road underneath
+}
+
+/** Height of a bridge's road at arc length offset ``ds`` from its crossing. */
+export function bridgeLift(ds: number): number {
+  const a = Math.abs(ds);
+  if (a <= BRIDGE_DECK / 2) return BRIDGE_HEIGHT;
+  const u = (a - BRIDGE_DECK / 2) / BRIDGE_RAMP;
+  if (u >= 1) return 0;
+  return BRIDGE_HEIGHT * (1 - u * u * (3 - 2 * u));
 }
 
 /** Centripetal Catmull-Rom between p1 and p2, sampled at roughly SPACING (excludes p2). */
@@ -41,22 +58,28 @@ export function crSegment(p0: number[], p1: number[], p2: number[], p3: number[]
   return out;
 }
 
+const wrapN = (q: number) => ((q % N) + N) % N;
+
 export class Track {
-  readonly radii = new Float64Array(N);
+  /** The lap's points in game meters (x0, y0, x1, y1, ...), filled in as they become known. */
+  readonly points = new Float64Array(2 * N);
   readonly known = new Uint8Array(N);
-  private committed = new Uint8Array(N);
   private nextSeg = FIRST_SEG; // next segment to commit, in driving order
   private segsDone = 0;
   // dense committed centerline in driving order (grows by appending)
   xs: number[] = [];
   ys: number[] = [];
   s: number[] = []; // cumulative arc length
+  elev: number[] = []; // road height (bridges), m
   segOf: number[] = [];
+  bridges: Bridge[] = [];
+  /** Dense range whose height changed after it was committed (a bridge's approach ramp). */
+  raised: [number, number] | null = null;
   startIndex = -1; // first point of segment 0: the start/finish line
   locked = false;
   length = 0; // lap length once locked
+  private readonly grid = new Map<number, number[]>();
 
-  /** Number of committed dense points. */
   get count(): number {
     return this.xs.length;
   }
@@ -66,39 +89,98 @@ export class Track {
     return this.segsDone / N;
   }
 
-  /** Mark polar samples as known; returns the dense index range newly committed. */
-  addKnown(indices: Iterable<number>, radii: ArrayLike<number>): [number, number] {
+  point(j: number): [number, number] {
+    const k = wrapN(j);
+    return [this.points[2 * k], this.points[2 * k + 1]];
+  }
+
+  /** Mark points as known (game meters, indexed by point); returns the dense range committed. */
+  addKnown(indices: Iterable<number>, pts: ArrayLike<number>): [number, number] {
     for (const j of indices) {
-      const k = ((j % N) + N) % N;
-      this.radii[k] = radii[k];
+      const k = wrapN(j);
+      this.points[2 * k] = pts[2 * k];
+      this.points[2 * k + 1] = pts[2 * k + 1];
       this.known[k] = 1;
     }
     const from = this.count;
+    this.raised = null;
     while (this.segsDone < N) {
       const j = this.nextSeg;
-      const need = [j - 1, j, j + 1, j + 2].map((q) => ((q % N) + N) % N);
+      const need = [j - 1, j, j + 1, j + 2].map(wrapN);
       if (!need.every((q) => this.known[q])) break;
-      const pts = need.map((q) => polarPoint(this.radii[q], q));
-      const seg = crSegment(pts[0], pts[1], pts[2], pts[3]);
+      const p = need.map((q) => this.point(q));
+      const seg = crSegment(p[0], p[1], p[2], p[3]);
       if (j === 0) this.startIndex = this.count;
-      for (const p of seg) {
+      for (const q of seg) {
         const n = this.xs.length;
-        const ds = n ? Math.hypot(p[0] - this.xs[n - 1], p[1] - this.ys[n - 1]) : 0;
-        this.xs.push(p[0]);
-        this.ys.push(p[1]);
+        const ds = n ? Math.hypot(q[0] - this.xs[n - 1], q[1] - this.ys[n - 1]) : 0;
+        this.xs.push(q[0]);
+        this.ys.push(q[1]);
         this.s.push(n ? this.s[n - 1] + ds : 0);
+        this.elev.push(this.liftAt(this.s[n] ?? 0));
         this.segOf.push(j);
       }
-      this.committed[j] = 1;
       this.segsDone += 1;
       this.nextSeg = (j + 1) % N;
     }
+    this.findCrossings(from);
+    for (let i = from; i < this.count; i++) this.elev[i] = this.liftAt(this.s[i]);
     if (this.segsDone === N && !this.locked) {
       const n = this.count;
       this.length = this.s[n - 1] + Math.hypot(this.xs[0] - this.xs[n - 1], this.ys[0] - this.ys[n - 1]);
       this.locked = true;
     }
     return [from, this.count];
+  }
+
+  /** Height of the road at arc length ``s`` (0 except on bridges). */
+  liftAt(s: number): number {
+    let h = 0;
+    for (const b of this.bridges) h = Math.max(h, bridgeLift(s - b.centerS));
+    return h;
+  }
+
+  private cellKey(x: number, y: number): number {
+    return (Math.floor(x / CELL) + 1024) * 4096 + (Math.floor(y / CELL) + 1024);
+  }
+
+  /** New road from dense index ``from`` that crosses older road becomes a bridge. */
+  private findCrossings(from: number): void {
+    const n = this.count;
+    const minGap = Math.round(90 / SPACING); // a crossing is between stretches far apart in the lap
+    for (let i = Math.max(1, from); i < n; i++) {
+      const ax = this.xs[i - 1], ay = this.ys[i - 1], bx = this.xs[i], by = this.ys[i];
+      const cx = Math.floor((ax + bx) / 2 / CELL), cy = Math.floor((ay + by) / 2 / CELL);
+      let hit = -1;
+      for (let gx = -1; gx <= 1 && hit < 0; gx++) {
+        for (let gy = -1; gy <= 1 && hit < 0; gy++) {
+          const list = this.grid.get((cx + gx + 1024) * 4096 + (cy + gy + 1024));
+          if (!list) continue;
+          for (const j of list) {
+            if (j <= 0 || i - j < minGap) continue;
+            if (segmentsCross(ax, ay, bx, by, this.xs[j - 1], this.ys[j - 1], this.xs[j], this.ys[j])) {
+              hit = j;
+              break;
+            }
+          }
+        }
+      }
+      if (hit >= 0 && !this.bridges.some((b) => Math.abs(b.center - i) < minGap)) this.addBridge(i, hit);
+      const k = this.cellKey((ax + bx) / 2, (ay + by) / 2);
+      const list = this.grid.get(k);
+      if (list) list.push(i);
+      else this.grid.set(k, [i]);
+    }
+  }
+
+  private addBridge(center: number, lower: number): void {
+    const b: Bridge = { center, centerS: this.s[center], lower };
+    this.bridges.push(b);
+    // lift the approach ramp, which is already road (nobody has reached it yet)
+    const back = Math.round((BRIDGE_DECK / 2 + BRIDGE_RAMP) / SPACING);
+    const a = Math.max(0, center - back);
+    for (let i = a; i < this.count; i++) this.elev[i] = this.liftAt(this.s[i]);
+    this.raised = [a, center];
   }
 
   /** Wrap an index around the loop once locked; clamp to the committed range before. */
@@ -126,7 +208,8 @@ export class Track {
     return d > 1e-9 ? (2 * cross) / d : 0;
   }
 
-  /** Nearest committed point, searching a window around ``hint`` (global fallback). */
+  /** Nearest committed point, searching a window around ``hint`` along the kart's own stretch
+   * (so a kart on a bridge never snaps to the road underneath); global fallback if lost. */
   nearest(x: number, y: number, hint: number, window = 40): number {
     const n = this.count;
     if (n === 0) return 0;
@@ -162,71 +245,143 @@ export class Track {
     return this.wrap(i + Math.round(meters / SPACING));
   }
 
-  /** Polar angle index of the frontier: how far around the lap the road exists. */
+  /** Point index of the frontier: how far around the lap the road exists. */
   get frontierSeg(): number {
     return this.nextSeg;
   }
 
-  /** Copy for re-racing a locked circuit. */
-  static fromRadii(radii: ArrayLike<number>): Track {
+  /** A locked circuit from its points (game meters), for re-racing it. */
+  static fromPoints(pts: ArrayLike<number>): Track {
     const t = new Track();
-    const all = Array.from({ length: N }, (_, j) => j);
-    t.addKnown(all, radii);
+    t.addKnown(Array.from({ length: N }, (_, j) => j), pts);
     return t;
   }
 }
 
+/** Proper intersection of segments ab and cd. */
+export function segmentsCross(ax: number, ay: number, bx: number, by: number,
+                              cx: number, cy: number, dx: number, dy: number): boolean {
+  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) =>
+    (qx - px) * (ry - py) - (qy - py) * (rx - px);
+  const d1 = o(cx, cy, dx, dy, ax, ay), d2 = o(cx, cy, dx, dy, bx, by);
+  const d3 = o(ax, ay, bx, by, cx, cy), d4 = o(ax, ay, bx, by, dx, dy);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
 // ---------------------------------------------------------------------------------------------
-// Drivability checks (the same rules the Python generator enforces, in game units)
+// Drivability checks: the architect's rules (src/dreamcircuit/trackgen/architect.py), in game units
 
-export const MIN_RADIUS = 9.0 * SCALE * 0.9;
+export const MIN_RADIUS = 9.0 * 0.92 * SCALE;
 export const MIN_CLEARANCE = (2 * 4.0 + 10.0 * 0.9) * SCALE;
+const LOOP_MAX = 920 * SCALE, LAP_MAX = 980 * SCALE, LAP_MIN = 520 * SCALE;
+export const MAX_FROM_START = 235 * SCALE;
+const CROSS_MIN_ANGLE = (50 * Math.PI) / 180;
+const BRIDGE_HALF = 34 * SCALE, UNDER_HALF = 16 * SCALE, CROSS_EXEMPT = 34 * SCALE;
+const PREVIEW = 2.0; // m between preview points
 
-/** Dense closed loop for a full guess of the radii, at coarse spacing, for validation. */
-export function previewLoop(radii: ArrayLike<number>, spacing = 2.0): number[][] {
-  const pts = Array.from({ length: N }, (_, j) => polarPoint(radii[j], j));
+export type Layout = "any" | "loop" | "figure8";
+const EXPECT: Record<Layout, number | null> = { any: null, loop: 0, figure8: 1 };
+
+/** Dense closed loop through a full guess of the points (game meters), for validation. Each
+ * entry is [x, y, point index]. */
+export function previewLoop(pts: ArrayLike<number>, spacing = PREVIEW): number[][] {
+  const p = (j: number) => [pts[2 * wrapN(j)], pts[2 * wrapN(j) + 1]];
   const out: number[][] = [];
   for (let j = 0; j < N; j++) {
-    const seg = crSegment(pts[(j + N - 1) % N], pts[j], pts[(j + 1) % N], pts[(j + 2) % N], spacing);
-    for (const p of seg) out.push([p[0], p[1], j]);
+    for (const q of crSegment(p(j - 1), p(j), p(j + 1), p(j + 2), spacing)) out.push([q[0], q[1], j]);
   }
   return out;
 }
 
-/** Check a full guess of the circuit, focusing on the polar arc ``arc`` (new road). */
-export function checkGuess(radii: ArrayLike<number>, arc: Set<number>): { ok: boolean; reason: string } {
-  const loop = previewLoop(radii);
+export interface LapCrossing {
+  i: number; // preview index on the earlier stretch
+  j: number; // preview index on the later stretch (the bridge)
+  angle: number;
+}
+
+/** Self-intersections of a preview loop. */
+export function loopCrossings(loop: number[][]): LapCrossing[] {
   const n = loop.length;
+  const out: LapCrossing[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = loop[i], b = loop[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      const c = loop[j], d = loop[(j + 1) % n];
+      if (Math.max(a[0], b[0]) < Math.min(c[0], d[0]) || Math.min(a[0], b[0]) > Math.max(c[0], d[0])) continue;
+      if (Math.max(a[1], b[1]) < Math.min(c[1], d[1]) || Math.min(a[1], b[1]) > Math.max(c[1], d[1])) continue;
+      if (!segmentsCross(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1])) continue;
+      const ux = b[0] - a[0], uy = b[1] - a[1], vx = d[0] - c[0], vy = d[1] - c[1];
+      const cos = Math.abs(ux * vx + uy * vy) / (Math.hypot(ux, uy) * Math.hypot(vx, vy) + 1e-12);
+      out.push({ i, j, angle: Math.acos(Math.min(1, cos)) });
+    }
+  }
+  return out;
+}
+
+function loopCurvature(loop: number[][], i: number, k: number): number {
+  const n = loop.length;
+  const a = loop[(i - k + n) % n], b = loop[i], c = loop[(i + k) % n];
+  const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const d = Math.hypot(b[0] - a[0], b[1] - a[1]) * Math.hypot(c[0] - b[0], c[1] - b[1]) *
+    Math.hypot(c[0] - a[0], c[1] - a[1]);
+  return d > 1e-9 ? Math.abs(2 * cross) / d : 0;
+}
+
+/** Check a full guess of the circuit (game meters), focusing on the points in ``arc`` (new road).
+ * ``first`` adds the start-straight rule (the arc with the grid). */
+export function checkLap(pts: ArrayLike<number>, arc: Set<number>, layout: Layout = "any",
+                         first = false): { ok: boolean; reason: string; crossings: LapCrossing[] } {
+  const loop = previewLoop(pts);
+  const n = loop.length;
+  const arcLen: number[] = [];
   let total = 0;
   for (let i = 0; i < n; i++) {
+    arcLen.push(total);
     const a = loop[i], b = loop[(i + 1) % n];
     total += Math.hypot(b[0] - a[0], b[1] - a[1]);
   }
-  if (total < 400 * SCALE || total > 1600 * SCALE) return { ok: false, reason: "length" };
-  const k = 3;
-  const arcLen: number[] = [];
-  let acc = 0;
-  for (let i = 0; i < n; i++) {
-    arcLen.push(acc);
-    const a = loop[i], b = loop[(i + 1) % n];
-    acc += Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const expect = EXPECT[layout];
+  const fail = (reason: string, crossings: LapCrossing[] = []) => ({ ok: false, reason, crossings });
+  if (total < LAP_MIN || total > (expect ? LAP_MAX : LOOP_MAX)) return fail("length");
+  const x0 = pts[0], y0 = pts[1];
+  for (const p of loop) if (Math.hypot(p[0] - x0, p[1] - y0) > MAX_FROM_START) return fail("too big");
+  const crossings = loopCrossings(loop);
+  if ((expect !== null && crossings.length !== expect) || crossings.length > 1) return fail("crossings", crossings);
+  const exempt = new Uint8Array(n);
+  const k = 3; // curvature from points 6 m apart
+  for (const c of crossings) {
+    if (c.angle < CROSS_MIN_ANGLE) return fail("shallow crossing", crossings);
+    for (const [centre, half, lim] of [[c.j, BRIDGE_HALF, 1 / (90 * SCALE)], [c.i, UNDER_HALF, 1 / (50 * SCALE)]]) {
+      const w = Math.round(half / PREVIEW);
+      for (let q = -w; q <= w; q++) {
+        if (loopCurvature(loop, (centre + q + n) % n, k) > lim * 1.3) return fail("bent crossing", crossings);
+      }
+    }
+    for (const centre of [c.i, c.j]) {
+      const w = Math.round(CROSS_EXEMPT / PREVIEW);
+      for (let q = -w; q <= w; q++) exempt[(centre + q + n) % n] = 1;
+      let d = Math.abs(arcLen[centre]);
+      d = Math.min(d, total - d);
+      if (d < 80 * SCALE) return fail("crossing at the start", crossings);
+    }
   }
   for (let i = 0; i < n; i++) {
     if (!arc.has(loop[i][2])) continue;
-    const a = loop[(i - k + n) % n], b = loop[i], c = loop[(i + k) % n];
-    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    const d = Math.hypot(b[0] - a[0], b[1] - a[1]) * Math.hypot(c[0] - b[0], c[1] - b[1]) *
-      Math.hypot(c[0] - a[0], c[1] - a[1]);
-    const kappa = d > 1e-9 ? Math.abs(2 * cross) / d : 0;
-    if (kappa > 1 / MIN_RADIUS) return { ok: false, reason: "too tight" };
+    if (loopCurvature(loop, i, k) > 1 / MIN_RADIUS) return fail("too tight", crossings);
+    const b = loop[i];
     for (let q = 0; q < n; q += 2) {
       let gap = Math.abs(arcLen[q] - arcLen[i]);
       gap = Math.min(gap, total - gap);
-      if (gap < 45 * SCALE) continue;
-      if (Math.hypot(loop[q][0] - b[0], loop[q][1] - b[1]) < MIN_CLEARANCE) {
-        return { ok: false, reason: "too close to itself" };
-      }
+      if (gap < 45 * SCALE || (exempt[i] && exempt[q])) continue;
+      if (Math.hypot(loop[q][0] - b[0], loop[q][1] - b[1]) < MIN_CLEARANCE) return fail("too close to itself", crossings);
     }
   }
-  return { ok: true, reason: "" };
+  if (first) {
+    const w0 = Math.round((48 * SCALE) / PREVIEW), w1 = Math.round((24 * SCALE) / PREVIEW);
+    for (let q = -w0; q < w1; q++) {
+      if (loopCurvature(loop, (q + n) % n, k) > 1 / (120 * SCALE) * 1.5) return fail("start not on a straight", crossings);
+    }
+  }
+  return { ok: true, reason: "", crossings };
 }

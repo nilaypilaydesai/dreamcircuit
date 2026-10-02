@@ -1,12 +1,18 @@
 {
   "file": "trackgen.onnx",
-  "bytes": 4501324,
-  "max_abs_err": 0.0004031658172607422,
-  "n": 128,
+  "bytes": 10409210,
+  "max_abs_err": 0.0011590197682380676,
+  "n": 256,
+  "dims": 2,
+  "representation": "steps",
+  "self_cond": true,
+  "scale": 2.0,
   "sigma_min": 0.002,
   "sigma_max": 40.0,
   "rho": 7.0,
   "sigma_data": 1.0,
-  "r_mean": 77.0,
-  "r_std": 23.5
+  "style_scale": [
+    8.656212546883854e-15,
+    0.446916788816452
+  ]
 }

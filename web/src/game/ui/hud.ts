@@ -1,5 +1,6 @@
 // The race HUD, drawn straight into the framebuffer: lap and time, position, speed, drift
-// charge, standings, a minimap that shows the circuit being dreamed, and the big banners.
+// charge, standings, a minimap that shows the circuit being dreamed (and its bridges), what the
+// designer is dreaming for you, small pop-ups (tricks, rocket starts) and the big banners.
 
 import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
@@ -7,7 +8,7 @@ import type { Kart } from "../race/kart";
 import { LAPS, type Race } from "../race/race";
 import { ITEM_KINDS, type ItemKind } from "../race/items";
 import { LIVERIES, itemIcons } from "../render/sprites";
-import { N, polarPoint } from "../world/track";
+import { N } from "../world/track";
 
 const WHITE = 0xffffffff;
 const INK = hex("#0b0b14");
@@ -25,6 +26,18 @@ export function formatTime(t: number): string {
 
 const ordinal = (n: number) => (n === 1 ? "ST" : n === 2 ? "ND" : n === 3 ? "RD" : "TH");
 
+/** What the designer is dreaming, from the style it was asked for. */
+export function styleWord(style: number | null): string {
+  if (style === null) return "THE CIRCUIT";
+  return style < 0.3 ? "CALM ROAD" : style < 0.55 ? "FLOWING ROAD" : style < 0.78 ? "TECHNICAL ROAD" : "WILD ROAD";
+}
+
+interface Popup {
+  text: string;
+  color: number;
+  at: number; // race clock
+}
+
 export interface Banner {
   text: string;
   sub?: string;
@@ -35,11 +48,18 @@ export interface Banner {
 
 export class Hud {
   banners: Banner[] = [];
+  popups: Popup[] = [];
   private mapBox: [number, number, number, number] | null = null;
   private mapFor: unknown = null; // the track the box was fitted to
   private readonly icons: Record<ItemKind, Sprite> = itemIcons();
 
   constructor(private readonly font: PixelFont) {}
+
+  /** A short message rising over the player's kart (tricks, rocket starts, boost pads). */
+  popup(text: string, clock: number, color = GOLD): void {
+    this.popups = this.popups.filter((q) => clock - q.at < 0.9);
+    this.popups.push({ text, color, at: clock });
+  }
 
   banner(text: string, clock: number, color = WHITE, seconds = 1.6, sub?: string, blink = false): void {
     this.banners = this.banners.filter((b) => b.until > clock);
@@ -88,6 +108,12 @@ export class Hud {
 
     this.minimap(scr, race, now);
     this.dreamStatus(scr, race, now);
+    for (const q of this.popups) {
+      const age = race.clock - q.at;
+      if (age < 0 || age > 0.9) continue;
+      if (age > 0.6 && Math.floor(now * 12) % 2) continue;
+      f.draw(scr, q.text, W / 2, 118 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
+    }
     this.itemSlot(scr, p, now);
 
     // banners
@@ -139,7 +165,7 @@ export class Hud {
     if (!race.track.locked && race.live) {
       const frac = race.dreamProgress;
       const x = W / 2 - 70, y = 8;
-      f.draw(scr, race.live.busy ? "AI DREAMING THE CIRCUIT" : "CIRCUIT FORMING", W / 2, y, {
+      f.draw(scr, race.live.busy ? `DREAMING ${styleWord(race.live.style)}` : "CIRCUIT FORMING", W / 2, y, {
         color: Math.floor(now * 3) % 2 && race.live.busy ? hex("#ffffff") : DREAM, outline: INK, align: "center",
       });
       scr.fillRect(x, y + 11, 140, 6, INK);
@@ -160,11 +186,11 @@ export class Hud {
     }
     const size = 74, x0 = W - size - 8, y0 = H - size - 8;
     // fit the designer's whole-circuit guess (or the locked circuit) into the box
-    const radii = race.live?.preview ?? (t.locked ? t.radii : null);
-    if (radii) {
+    const pts = race.live?.preview ?? (t.locked ? t.points : null);
+    if (pts) {
       let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
       for (let j = 0; j < N; j++) {
-        const [x, y] = polarPoint(radii[j], j);
+        const x = pts[2 * j], y = pts[2 * j + 1];
         minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y);
       }
       if (!this.mapBox || !t.locked) this.mapBox = [minx, miny, maxx, maxy];
@@ -183,8 +209,8 @@ export class Hud {
       const pv = race.live.preview;
       for (let j = 0; j < N; j++) {
         if (t.known[j]) continue;
-        const [ax, ay] = polarPoint(pv[j], j);
-        const [bx, by] = polarPoint(pv[(j + 1) % N], j + 1);
+        const ax = pv[2 * j], ay = pv[2 * j + 1];
+        const bx = pv[2 * ((j + 1) % N)], by = pv[2 * ((j + 1) % N) + 1];
         for (let s = 0; s < 4; s++) {
           if ((j * 4 + s + Math.floor(now * 8)) % 3) continue;
           const [px, py] = map(ax + ((bx - ax) * s) / 4, ay + ((by - ay) * s) / 4);
@@ -192,10 +218,21 @@ export class Hud {
         }
       }
     }
-    // committed road
+    // committed road, then bridges drawn over the road they cross (with a dark edge)
     for (let i = 0; i < t.count; i += 3) {
+      if (t.elev[i] > 2) continue;
       const [px, py] = map(t.xs[i], t.ys[i]);
       scr.fillRect(px - 1, py - 1, 2, 2, SILVER);
+    }
+    for (let i = 0; i < t.count; i += 2) {
+      if (t.elev[i] <= 2) continue;
+      const [px, py] = map(t.xs[i], t.ys[i]);
+      scr.fillRect(px - 2, py - 2, 4, 4, INK);
+    }
+    for (let i = 0; i < t.count; i += 2) {
+      if (t.elev[i] <= 2) continue;
+      const [px, py] = map(t.xs[i], t.ys[i]);
+      scr.fillRect(px - 1, py - 1, 2, 2, GOLD);
     }
     if (t.startIndex >= 0) {
       const [sx, sy] = map(t.xs[t.startIndex], t.ys[t.startIndex]);

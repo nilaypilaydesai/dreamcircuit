@@ -1,10 +1,12 @@
-// Billboards: scenery and karts projected into the Mode-7 view, depth sorted, scaled with
-// nearest-neighbor (the SNES look), with soft ground shadows under the karts.
+// Billboards: scenery and karts projected into the Mode-7 view, scaled with nearest-neighbor
+// (the SNES look), with soft shadows under the karts on whatever surface they are over. They are
+// depth sorted together with the 3D faces of bridges, ramps and pads (render/poly.ts).
 
 import { H, W, mix, type Screen, type Sprite } from "../core/gfx";
 import type { Kart } from "../race/kart";
 import type { Placed } from "../world/scenery";
 import type { Camera } from "./mode7";
+import type { Face } from "./poly";
 import { KART_VIEWS, type SceneryArt } from "./sprites";
 
 /** Moving or animated objects drawn like scenery: item boxes, oil slicks, dream orbs. */
@@ -12,7 +14,8 @@ export interface WorldSprite {
   x: number;
   y: number;
   art: SceneryArt;
-  lift?: number; // m above the ground (it casts a shadow when floating)
+  lift?: number; // m above the surface under it (it casts a shadow when floating)
+  base?: number; // m, height of that surface (a bridge deck)
 }
 
 interface Item {
@@ -25,11 +28,11 @@ interface Item {
 
 export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], karts: Kart[],
                                  kartSprites: Sprite[][], fog: number, sparks: (k: Kart) => number,
-                                 extras: WorldSprite[] = []): void {
+                                 extras: WorldSprite[] = [], faces: Face[] = []): void {
   const fx = Math.cos(cam.heading), fy = Math.sin(cam.heading);
   const rx = Math.sin(cam.heading), ry = -Math.cos(cam.heading);
   const items: Item[] = [];
-  const project = (x: number, y: number) => {
+  const project = (x: number, y: number, h = 0) => {
     const dx = x - cam.x, dy = y - cam.y;
     const z = dx * fx + dy * fy;
     if (z < 1.2 || z > cam.far) return null;
@@ -37,20 +40,24 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const ppm = cam.focal / z;
     const sx = W / 2 + lat * ppm;
     if (sx < -200 || sx > W + 200) return null;
-    return { z, sx, gy: cam.horizon + cam.height * ppm, ppm };
+    return { z, sx, gy: cam.horizon + (cam.height - h) * ppm, ppm };
   };
+  // up on a bridge, things at ground level under the deck must be drawn before it
+  const lowBias = cam.height > 4.5 ? 2.5 : 0;
   const fogAt = (z: number) => (z > cam.far * 0.45 ? Math.min(1, (z - cam.far * 0.45) / (cam.far * 0.55)) ** 1.5 : 0);
 
   for (const it of scenery) {
     const p = project(it.x, it.y);
-    if (!p) continue;
+    if (!p || (cam.clear && p.z < cam.clear)) continue;
     const h = it.art.height * p.ppm;
     if (h < 1.5) continue;
     const w = (h * it.art.sprite.w) / it.art.sprite.h;
-    items.push({ ...p, draw: () => scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h, w, h, it.flip, fog, fogAt(p.z)) });
+    items.push({ ...p, z: p.z + lowBias,
+      draw: () => scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h, w, h, it.flip, fog, fogAt(p.z)) });
   }
   for (const it of extras) {
-    const p = project(it.x, it.y);
+    const base = it.base ?? 0;
+    const p = project(it.x, it.y, base);
     if (!p) continue;
     const h = it.art.height * p.ppm;
     if (h < 1) continue;
@@ -58,6 +65,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const lift = (it.lift ?? 0) * p.ppm;
     items.push({
       ...p,
+      z: p.z + (base > 1 ? -0.5 : lowBias),
       draw: () => {
         if (lift > 0) shadow(scr, p.sx, p.gy, w * 0.42, Math.max(1, w * 0.12));
         scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h - lift, w, h, false, fog, fogAt(p.z));
@@ -65,29 +73,34 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     });
   }
   for (const k of karts) {
-    const p = project(k.x, k.y);
-    if (!p) continue;
+    const p = project(k.x, k.y, k.elev);
+    const ps = project(k.x, k.y, k.ground);
+    if (!p || !ps) continue;
     const sprites = kartSprites[k.livery % kartSprites.length];
     const view = Math.atan2(k.y - cam.y, k.x - cam.x); // camera -> kart, world frame
-    let rel = view - (k.heading + k.slip + k.spinAngle);
+    let rel = view - (k.heading + k.slip + k.visualSpin);
     if (k.isPlayer) rel -= k.steer * 0.18; // lean into the steer
     const vi = (((Math.round((rel / (Math.PI * 2)) * KART_VIEWS) % KART_VIEWS) + KART_VIEWS) % KART_VIEWS);
     const s = sprites[vi];
     const h = 1.75 * p.ppm * (s.h / 44);
     const w = (h * s.w) / s.h;
     const bounce = k.surface === "grass" && Math.abs(k.v) > 3 ? Math.round(Math.sin(performance.now() / 45 + k.id)) : 0;
+    const air = Math.max(0, k.elev - k.ground);
+    const shrink = 1 / (1 + air * 0.35);
     items.push({
       ...p,
+      z: p.z + (k.elev > 1 ? -0.5 : lowBias),
       draw: () => {
-        shadow(scr, p.sx, p.gy, 1.0 * p.ppm, 0.32 * p.ppm);
+        shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
         scr.blitScaled(s, p.sx - w / 2, p.gy - h * 0.86 + bounce, w, h, false, fog, fogAt(p.z));
         const sp = sparks(k);
         if (sp) drawSparks(scr, p.sx, p.gy, p.ppm, sp, k.driftDir);
       },
     });
   }
-  items.sort((a, b) => b.z - a.z);
-  for (const it of items) it.draw();
+  const all: { z: number; draw: () => void }[] = [...items, ...faces];
+  all.sort((a, b) => b.z - a.z);
+  for (const it of all) it.draw();
 }
 
 function shadow(scr: Screen, cx: number, cy: number, rx: number, ry: number): void {

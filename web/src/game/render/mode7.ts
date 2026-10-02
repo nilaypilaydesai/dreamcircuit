@@ -13,10 +13,13 @@ export interface Camera {
   focal: number; // px
   horizon: number; // screen row of the horizon
   far: number; // m, draw distance
+  lift: number; // m, smoothed height of the ground under the kart being followed
+  fx: number; // 0..1, speed effects (wider view, speed lines) while boosting
+  clear?: number; // m: scenery nearer than this is not drawn (scripted film cameras only)
 }
 
 export function makeCamera(): Camera {
-  return { x: 0, y: 0, heading: 0, height: 2.9, focal: 250, horizon: 74, far: 240 };
+  return { x: 0, y: 0, heading: 0, height: 2.9, focal: 250, horizon: 74, far: 240, lift: 0, fx: 0 };
 }
 
 export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: number,
