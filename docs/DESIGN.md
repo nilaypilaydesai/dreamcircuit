@@ -360,7 +360,8 @@ score windows near the circuit.
 instrument's own error appears as the "reality" number:
 
 - *Fidelity.* PSNR and SSIM to the true future vs. horizon for 1-4 sampling steps, against a
-  copy-the-last-frame baseline.
+  copy-the-last-frame baseline. `docs/assets/reality_vs_dream.gif` shows an open-loop rollout
+  next to the truth: the dream stays plausible while it drifts away from the real road.
 - *Motion.* Speed and yaw-rate error vs. the truth over 4 s.
 - *Speedometer consistency.* The dreamed HUD speed vs. the dreamed ego-motion. A physically
   consistent dream agrees with itself.

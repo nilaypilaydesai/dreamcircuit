@@ -58,6 +58,7 @@ export class Kart {
   spinAngle = 0; // the sprite's extra rotation while spinning
   // race bookkeeping
   crossings = 0; // times the start line has been crossed going forward
+  private maxCrossings = 0; // backing over the line and back again must not count a lap twice
   dist = 0; // race distance used for positions
   lapStart = 0;
   lapTimes: number[] = [];
@@ -186,6 +187,10 @@ export class Kart {
       this.dist = Math.max(0, this.crossings - 1) * L + (this.crossings === 0 ? q - L : q);
     }
     this.lastFromStart = p;
+    if (crossed) {
+      crossed = this.crossings > this.maxCrossings; // only a crossing never reached before
+      this.maxCrossings = Math.max(this.maxCrossings, this.crossings);
+    }
     // wrong way: driving against the track direction for a while
     const [tx, ty] = track.tangent(this.idx);
     const along = Math.cos(this.heading) * tx + Math.sin(this.heading) * ty;

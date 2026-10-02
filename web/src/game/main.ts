@@ -9,7 +9,7 @@ import { H, Rand, Screen, W, hex, mix, type Sprite } from "./core/gfx";
 import { GameInput, type MenuEvent } from "./core/input";
 import { RivalDriver } from "./race/ai";
 import { CLASSES, type Controls, type Difficulty } from "./race/kart";
-import { Race, type RaceEvent } from "./race/race";
+import { Race, type RaceEvent, type RaceSetup } from "./race/race";
 import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, makeCamera } from "./render/mode7";
 import { Sky } from "./render/sky";
@@ -55,6 +55,10 @@ class Game {
   private sky: Sky | null = null;
   private cam: Camera = makeCamera();
   private attract: Attract | null = null;
+  private attractPending = false; // a new attract race is being dreamed
+  private attractRuns = 0;
+  private autoPaused = false; // paused because the tab was hidden
+  private raceError = "";
   private lastCircuit: Float64Array | null = null;
   private seed = (Math.random() * 1e9) | 0;
   private shake = 0;
@@ -69,7 +73,22 @@ class Game {
     this.input.onMute = () => this.sound.toggleMute();
   }
 
+  private watchVisibility(): void {
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        if (this.mode === "race" && this.race?.phase !== "done") {
+          this.go("pause");
+          this.autoPaused = true;
+        }
+        this.sound.suspend();
+      } else {
+        this.sound.resume();
+      }
+    });
+  }
+
   async boot(): Promise<void> {
+    this.watchVisibility();
     this.font = await PixelFont.load();
     this.hud = new Hud(this.font);
     this.kartSprites = LIVERIES.map((l) => bakeKart(l));
@@ -118,11 +137,11 @@ class Game {
       ], 300),
       pause: new Menu("PAUSED", [
         { label: "RESUME", action: () => this.go("race") },
-        { label: "RESTART", action: () => void this.startRace(true) , hint: "SAME CIRCUIT, FRESH START" },
+        { label: "RESTART", action: () => this.raceAgain(), hint: "SAME CIRCUIT, FRESH START" },
         { label: "QUIT TO MENU", action: () => this.quitToMenu() },
       ]),
       results: new Menu("", [
-        { label: "RACE AGAIN", action: () => void this.startRace(true), hint: "SAME CIRCUIT" },
+        { label: "RACE AGAIN", action: () => this.raceAgain(), hint: "SAME CIRCUIT" },
         { label: "NEW DREAM CIRCUIT", action: () => void this.startRace(false) },
         { label: "MAIN MENU", action: () => this.quitToMenu() },
       ], 240),
@@ -132,6 +151,8 @@ class Game {
   private go(m: Mode): void {
     this.mode = m;
     if (m === "setup") this.menus.setup.index = this.menus.setup.items.length - 2;
+    if (m === "pause") this.sound.setEngine(0, false, false);
+    if (m !== "pause") this.autoPaused = false;
   }
 
   private quitToMenu(): void {
@@ -159,7 +180,7 @@ class Game {
   }
 
   private async startAttract(): Promise<void> {
-    const rng = new Rand(this.seed + 99);
+    const rng = new Rand(this.seed + 99 + 7919 * this.attractRuns++); // a new circuit each time
     const theme = THEMES[rng.int(0, THEMES.length)];
     const radii = await this.dreamWholeCircuit(rng);
     const race = new Race({ rivals: 5, difficulty: "pro", theme, seed: this.seed + 7, replay: radii }, null,
@@ -171,8 +192,28 @@ class Game {
     this.attract = { race, sky: new Sky(theme, cam.horizon, this.seed + 3), cam, driver: new RivalDriver(rng, race.player, 2) };
   }
 
-  private async startRace(sameCircuit: boolean): Promise<void> {
-    if (!this.designer && !(sameCircuit && this.lastCircuit)) {
+  /** Once per finished attract race (the update loop would otherwise start one per frame). */
+  private restartAttract(): void {
+    this.attractPending = true;
+    this.startAttract()
+      .catch((e) => {
+        console.error("attract race unavailable", e);
+        this.attract = null; // the title screen works without it
+      })
+      .finally(() => { this.attractPending = false; });
+  }
+
+  /** RESTART and RACE AGAIN: the same circuit (or, mid lap 1, the same dream) and world. */
+  private raceAgain(): void {
+    const r = this.race;
+    if (!r) return;
+    const replay = r.track.locked ? Float64Array.from(r.track.radii) : r.setup.replay;
+    void this.startRace(false, { ...r.setup, replay });
+  }
+
+  private async startRace(sameCircuit: boolean, again?: RaceSetup): Promise<void> {
+    this.raceError = "";
+    if (!again && !this.designer && !(sameCircuit && this.lastCircuit)) {
       // A quick player can press START before the designer has loaded: start once it has.
       if (this.waitingForDesigner) return;
       this.waitingForDesigner = true;
@@ -182,16 +223,29 @@ class Game {
     }
     const s = this.settings;
     const theme = s.theme === THEMES.length ? THEMES[(Math.random() * THEMES.length) | 0] : THEMES[s.theme];
-    this.seed = (Math.random() * 1e9) | 0;
-    const replay = sameCircuit && this.lastCircuit ? this.lastCircuit : null;
-    const race = new Race({ rivals: s.rivals, difficulty: DIFFS[s.diff], theme, seed: this.seed, replay },
-                          this.designer, (sp) => this.banner(sp));
+    // a live race with the same seed dreams the same circuit again
+    const setup: RaceSetup = again ?? {
+      rivals: s.rivals, difficulty: DIFFS[s.diff], theme, seed: (Math.random() * 1e9) | 0,
+      replay: sameCircuit && this.lastCircuit ? this.lastCircuit : null,
+    };
+    this.seed = setup.seed;
+    const race = new Race(setup, this.designer, (sp) => this.banner(sp));
     this.race = race;
-    this.sky = new Sky(theme, this.cam.horizon, this.seed + 3);
+    this.sky = new Sky(setup.theme, this.cam.horizon, this.seed + 3);
     this.hud.banners = [];
+    this.sound.setEngine(0, false, false);
     this.go("dreaming");
     this.sound.ensure();
-    await race.prepare();
+    try {
+      await race.prepare();
+    } catch (e) {
+      console.error(e);
+      if (this.race !== race) return;
+      this.race = null;
+      this.raceError = "THE DREAM FAILED. TRY AGAIN";
+      this.go("setup");
+      return;
+    }
     if (this.race !== race) return; // the player backed out while it was dreaming
     this.snapCamera(this.cam, race);
     this.go("race");
@@ -227,8 +281,10 @@ class Game {
         if (e.final) { this.sound.finalLap(); this.hud.banner("FINAL LAP!", now, HOT, 2.2); }
         else { this.sound.lap(); this.hud.banner(`LAP ${e.lap}`, now, 0xffffffff, 1.6); }
       } else if (e.kind === "locked") {
-        this.sound.locked();
-        if (race.live) this.hud.banner("CIRCUIT LOCKED", now, HOT, 2.6, "THE DREAM IS NOW YOUR TRACK");
+        if (race.live) { // a re-raced circuit is locked from the start: no fanfare
+          this.sound.locked();
+          this.hud.banner("CIRCUIT LOCKED", now, HOT, 2.6, "THE DREAM IS NOW YOUR TRACK");
+        }
         this.lastCircuit = Float64Array.from(race.track.radii);
       } else if (e.kind === "finish") {
         this.sound.finish(e.place);
@@ -294,8 +350,12 @@ class Game {
       if (e === "back" || e === "pause") this.go("pause");
       return;
     }
+    if (this.mode === "pause" && e === "pause") {
+      this.go("race"); // P or Start toggle
+      return;
+    }
     if (this.mode === "dreaming") {
-      if (e === "back") this.quitToMenu();
+      if (e === "back" || e === "cancel") this.quitToMenu();
       return;
     }
     if (menu) {
@@ -316,7 +376,7 @@ class Game {
       a.race.update(dt, c);
       a.race.events = [];
       this.follow(a.cam, a.race, dt);
-      if (a.race.phase === "done") void this.startAttract();
+      if (a.race.phase === "done" && !this.attractPending) this.restartAttract();
     }
     const r = this.race;
     if (!r) return;
@@ -398,9 +458,10 @@ class Game {
         background();
         f.draw(scr, "DREAM CIRCUIT", W / 2, 16, { scale: 2, rows: LOGO_ROWS, outline: INK, align: "center" });
         (this.mode === "main" ? this.menus.main : this.menus.setup).draw(scr, f, W / 2, 46, now);
-        if (this.mode === "setup" && !this.designer) {
-          f.draw(scr, this.designerError || "WAKING THE DREAMER...", W / 2, H - 12,
-                 { color: this.designerError ? HOT : DREAM, outline: INK, align: "center" });
+        if (this.mode === "setup" && (!this.designer || this.raceError)) {
+          const err = this.raceError || this.designerError;
+          f.draw(scr, err || "WAKING THE DREAMER...", W / 2, H - 12,
+                 { color: err ? HOT : DREAM, outline: INK, align: "center" });
         }
         break;
       case "howto":
@@ -449,6 +510,7 @@ class Game {
     } else {
       this.input.drive = () => c;
     }
+    if (this.autoPaused) this.go("race"); // the harness hides the tab; that is not a pause
     this.handleInput(); // queued menu presses (rAF, which normally handles them, may be paused)
     for (let i = 0; i < n; i++) this.update(1 / 60);
     this.input.drive = original;
@@ -461,6 +523,9 @@ class Game {
       mode: this.mode,
       designer: !!this.designer,
       attract: !!this.attract,
+      attractRuns: this.attractRuns,
+      // fingerprint of the road so far: equal for equal circuits
+      radiiSum: r ? Math.round(Array.from(r.track.radii).reduce((a, v, j) => a + (r.track.known[j] ? v * (j + 1) : 0), 0)) : null,
       phase: r?.phase,
       clock: r?.clock,
       locked: r?.track.locked,

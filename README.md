@@ -13,6 +13,12 @@ When the loop closes it locks, and laps 2 and 3 are raced on the track it dreame
   <a href="docs/MODEL_CARD.md">Model cards</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/nilayd2007/dreamcircuit/actions/workflows/ci.yml"><img src="https://github.com/nilayd2007/dreamcircuit/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/nilayd2007/dreamcircuit/actions/workflows/pages.yml"><img src="https://github.com/nilayd2007/dreamcircuit/actions/workflows/pages.yml/badge.svg" alt="GitHub Pages deploy status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
+
 <p align="center"><img src="docs/assets/game_hero.gif" width="768" alt="Race start in Dream Valley: countdown lights, eight karts launch, a row of item boxes, and a Turbo lands in the item slot while the minimap shows the circuit still being dreamed"></p>
 <p align="center"><sub>A real race, captured from the game: the start, a row of item boxes, a Turbo in the item slot. The bar at the top fills as the circuit is dreamed. On the minimap, white is road that exists and violet is the designer's current guess at the rest of the lap.</sub></p>
 
@@ -188,6 +194,9 @@ flowchart LR
 **One network call per frame.** The circuit designer runs on ONNX Runtime Web's WASM backend on the main thread. Between network calls the sampler waits for the next animation frame, so dreaming an arc costs each frame a few milliseconds instead of one long stall. The race code adds a safety net for slow devices: no kart can drive past road that has not been dreamed yet, because speed is capped by the distance left to the frontier. With a quarter-lap lookahead, it only matters on slow devices.
 
 **The world model in the browser.** The denoiser is exported with its EDM preconditioning built in, so the page runs only a 4-line Euler loop around it. GroupNorm is rewritten as one fused InstanceNormalization per layer (on WebGPU, per-kernel dispatch overhead, not FLOPs, dominates small models). Weights are stored as fp16 and cast to fp32 in the graph: half the download, and it runs on every GPU.
+
+<p align="center"><img src="docs/assets/imagination.png" width="760" alt="Pure noise denoised into a frame over the sampler's steps"></p>
+<p align="center"><sub>One frame being imagined: from pure noise to a frame in a few Euler steps of the EDM sampler. The DATA page shows this live.</sub></p>
 
 **The audit instrument.** For an egocentric top-down camera, consecutive frames differ by a rigid motion of the car. A joint grid search over forward motion and rotation, refined by Adam through `grid_sample`, recovers that motion from pixels. On real frames it agrees with the simulator's ground truth to R² = 0.999 for both speed and yaw rate near the track. Run on dreamed frames, it measures the dream's physics.
 

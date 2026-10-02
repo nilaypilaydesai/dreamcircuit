@@ -65,7 +65,14 @@ async function main(): Promise<void> {
     setOverlay(null);
     app.start();
     // Remaining circuits load in the background; "New circuit" cycles through what has arrived.
-    for (const t of index.slice(1)) tracks.push(await Track.load("assets/tracks", t.id));
+    // A failure here costs one circuit, not the running lab.
+    for (const t of index.slice(1)) {
+      try {
+        tracks.push(await Track.load("assets/tracks", t.id));
+      } catch (err) {
+        console.warn(`circuit ${t.id} could not load`, err);
+      }
+    }
   } catch (e) {
     console.error(e);
     setOverlay(`Could not start the dream: ${(e as Error).message}. ` +

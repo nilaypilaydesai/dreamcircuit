@@ -67,7 +67,7 @@ export class RivalDriver {
    * kart in range ahead; anything held too long gets used. Sharper classes react sooner. */
   private wantsItem(track: Track, cls: ClassParams, others: Kart[]): boolean {
     const k = this.kart;
-    if (!k.item || k.spin > 0) return false;
+    if (!k.item || k.spin > 0 || k.finished) return false;
     if (k.itemAge < 1.6 - cls.aiCorner) return false; // reaction time: 0.9 s rookie, 0.65 s legend
     if (k.itemAge > 9) return true;
     if (k.item === "turbo") {

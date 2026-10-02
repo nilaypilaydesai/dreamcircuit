@@ -1,12 +1,12 @@
 [project]
 name = "dreamcircuit"
 version = "0.1.0"
-description = "A racing game that exists only inside a neural network: a diffusion world model of an EV race car, playable in the browser, with a physics audit of the dream."
+description = "Dream Circuit: a retro kart racer whose tracks are dreamed live by a diffusion model, plus a diffusion world model of an EV race car you can drive in the browser, with a physics audit of the dream."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Nilay Desai" }]
 requires-python = ">=3.11"
-keywords = ["world-model", "diffusion", "edm", "reinforcement-learning", "interpretability", "webgpu", "racing"]
+keywords = ["procedural-generation", "inpainting", "world-model", "diffusion", "edm", "interpretability", "webgpu", "racing", "game"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -18,6 +18,10 @@ dependencies = [
     "torch>=2.4,<2.16",  # the ONNX export uses the TorchScript exporter
     "tqdm>=4.66",
 ]
+
+[project.urls]
+Homepage = "https://nilayd2007.github.io/dreamcircuit/"
+Repository = "https://github.com/nilayd2007/dreamcircuit"
 
 [project.optional-dependencies]
 export = ["onnx>=1.16", "onnxruntime>=1.18", "onnxscript>=0.1", "onnxconverter-common>=1.14"]

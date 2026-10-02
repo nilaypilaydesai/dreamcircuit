@@ -2,7 +2,8 @@
 // edge-triggered menu events. Listens only while the game screen is active, so the rest of the
 // site (the DATA pages) keeps normal keyboard scrolling.
 
-export type MenuEvent = "up" | "down" | "left" | "right" | "confirm" | "back" | "pause";
+// "cancel" is the pad's B: back in menus, but not a pause in a race (there B brakes)
+export type MenuEvent = "up" | "down" | "left" | "right" | "confirm" | "back" | "cancel" | "pause";
 
 const DRIVE: Record<string, string> = {
   ArrowUp: "gas", KeyW: "gas", ArrowDown: "brake", KeyS: "brake",
@@ -66,6 +67,12 @@ export class GameInput {
       b.addEventListener("pointerleave", off);
       b.addEventListener("pointercancel", off);
     });
+    touchRoot.querySelectorAll<HTMLButtonElement>("button[data-ev]").forEach((b) => {
+      b.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        this.events.push(b.dataset.ev as MenuEvent);
+      });
+    });
   }
 
   private pollPad(): { steer: number; gas: number; brake: number; drift: boolean; item: boolean } | null {
@@ -79,7 +86,7 @@ export class GameInput {
       if (p.buttons[14]?.pressed || ax < -0.6) now.add("left");
       if (p.buttons[15]?.pressed || ax > 0.6) now.add("right");
       if (p.buttons[0]?.pressed) now.add("confirm");
-      if (p.buttons[1]?.pressed) now.add("back");
+      if (p.buttons[1]?.pressed) now.add("cancel");
       if (p.buttons[9]?.pressed) now.add("pause");
       for (const k of now) if (!this.padPrev.has(k)) this.events.push(k as MenuEvent);
       this.padPrev = now;
@@ -88,7 +95,7 @@ export class GameInput {
       return {
         steer: Math.max(-1, Math.min(1, steer)),
         gas: Math.max(p.buttons[7]?.value ?? 0, p.buttons[0]?.pressed ? 1 : 0),
-        brake: Math.max(p.buttons[6]?.value ?? 0, p.buttons[2]?.pressed ? 1 : 0),
+        brake: Math.max(p.buttons[6]?.value ?? 0, p.buttons[1]?.pressed || p.buttons[2]?.pressed ? 1 : 0),
         drift: !!(p.buttons[5]?.pressed || p.buttons[4]?.pressed),
         item: !!p.buttons[3]?.pressed,
       };

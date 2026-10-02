@@ -57,7 +57,7 @@ export class App {
     this.env = new CarEnv(tracks[0], cfg, sprite);
     this.real = new Screen($("real-canvas"));
     this.dream = new Screen($("dream-canvas"));
-    this.input = new Input($("touch"));
+    this.input = new Input($("touch"), $("screens"));
     this.input.onAction = (a) => this.onAction(a);
     this.buildStrip();
     this.bindControls();

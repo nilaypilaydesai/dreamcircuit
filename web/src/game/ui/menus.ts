@@ -43,7 +43,7 @@ export class Menu {
       sound.select();
       if (it.action) it.action();
       else if (it.right) it.right();
-    } else if (ev === "back") {
+    } else if (ev === "back" || ev === "cancel") {
       return "back";
     }
     return null;

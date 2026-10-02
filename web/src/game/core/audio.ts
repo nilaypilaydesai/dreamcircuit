@@ -21,6 +21,15 @@ export class Sound {
     this.master.connect(this.ctx.destination);
   }
 
+  /** Silence everything while the page is hidden; resume when it comes back. */
+  suspend(): void {
+    void this.ctx?.suspend();
+  }
+
+  resume(): void {
+    void this.ctx?.resume();
+  }
+
   toggleMute(): boolean {
     this.muted = !this.muted;
     if (this.master) this.master.gain.value = this.muted ? 0 : 0.5;

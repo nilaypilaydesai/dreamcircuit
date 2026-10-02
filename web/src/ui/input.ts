@@ -13,11 +13,19 @@ const KEYS: Record<string, "gas" | "brake" | "left" | "right"> = {
 
 export class Input {
   private held = new Set<string>();
+  private inView = true;
   onAction: ((name: string) => void) | null = null;
 
-  constructor(touchRoot: HTMLElement | null) {
+  /** Keys drive the car only while ``scope`` is on screen; elsewhere the page scrolls as usual. */
+  constructor(touchRoot: HTMLElement | null, scope?: HTMLElement) {
+    if (scope && "IntersectionObserver" in window) {
+      new IntersectionObserver((entries) => {
+        this.inView = entries.some((en) => en.isIntersecting);
+        if (!this.inView) this.held.clear();
+      }, { threshold: 0.3 }).observe(scope);
+    }
     window.addEventListener("keydown", (e) => {
-      if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return;
+      if (!this.inView || e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return;
       const k = KEYS[e.code];
       if (k) {
         this.held.add(k);

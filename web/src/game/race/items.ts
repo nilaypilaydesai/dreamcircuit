@@ -122,7 +122,7 @@ export class Items {
         continue;
       }
       for (const k of karts) {
-        if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > PICKUP_R * PICKUP_R) continue;
+        if (k.finished || (k.x - b.x) ** 2 + (k.y - b.y) ** 2 > PICKUP_R * PICKUP_R) continue;
         b.respawn = BOX_RESPAWN;
         if (!k.item && k.roulette <= 0) {
           k.item = rollItem(places(k), karts.length, this.rng);
@@ -162,6 +162,8 @@ export class Items {
       o.ttl -= dt;
       if (o.ttl <= 0) return false;
       const step = o.v * dt;
+      // a target that is already spinning (or done) is left alone: the orb flies on
+      if (o.target && (o.target.spin > 0 || o.target.finished)) o.target = null;
       const t = o.target;
       const near = t && Math.hypot(t.x - o.x, t.y - o.y) < 22;
       if (near && t) {

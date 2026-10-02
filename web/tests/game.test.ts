@@ -8,7 +8,7 @@ import { CLASSES, Kart } from "../src/game/race/kart";
 import { Race } from "../src/game/race/race";
 import { THEMES } from "../src/game/themes";
 import { HALF_WIDTH, N, SCALE, SPACING, Track, checkGuess, crSegment, polarPoint } from "../src/game/world/track";
-import { CHUNK, INITIAL, smoothArc } from "../src/game/world/trackgen";
+import { CHUNK, type CircuitDesigner, INITIAL, LiveCircuit, smoothArc } from "../src/game/world/trackgen";
 
 const circle = (r = 77) => Float64Array.from({ length: N }, () => r);
 const wavy = () => Float64Array.from({ length: N }, (_, j) => 80 + 12 * Math.sin((j / N) * Math.PI * 2 * 3));
@@ -288,5 +288,59 @@ describe("a crowded race", () => {
       // before the fix, bumps at the start pumped one kart to 88 m/s and shoved another to -55
       expect(fastest).toBeLessThan(race.cls.vmax * 1.3);
     }
+  });
+});
+
+/** A stand-in designer whose every guess is a round 77 m circle; ``fail`` decides which calls throw. */
+function fakeDesigner(fail: (call: number) => boolean): CircuitDesigner {
+  let calls = 0;
+  const d = {
+    sample: async () => {
+      if (fail(calls++)) throw new Error("simulated runtime failure");
+      return new Float32Array(N); // standardized 0 = the mean radius
+    },
+    toMeters: (u: ArrayLike<number>) => Float64Array.from(u, (v) => v * 23.5 + 77),
+    toStandard: (r: ArrayLike<number>) => Float32Array.from(r, (v) => (v - 77) / 23.5),
+  };
+  return d as unknown as CircuitDesigner;
+}
+
+async function driveLap(live: LiveCircuit, frames = 400): Promise<void> {
+  for (let i = 0; i < frames && !live.track.locked; i++) {
+    live.update((live.track.frontierSeg - 1 + N) % N); // the leader is always right at the frontier
+    for (let k = 0; k < 5; k++) await Promise.resolve();
+  }
+}
+
+describe("live circuit generation", () => {
+  it("builds the lap arc by arc and locks it", async () => {
+    const live = new LiveCircuit(fakeDesigner(() => false), new Rand(1));
+    await live.start();
+    expect(live.track.locked).toBe(false);
+    await driveLap(live);
+    expect(live.track.locked).toBe(true);
+    expect(live.stats.arcs).toBe(liveArcs().length);
+  });
+
+  it("retries an arc that failed instead of wedging the race", async () => {
+    const live = new LiveCircuit(fakeDesigner((c) => c % 3 === 1), new Rand(2));
+    await live.start();
+    await driveLap(live);
+    expect(live.track.locked).toBe(true);
+    expect(live.closedWithoutDesigner).toBe(false);
+    expect(live.busy).toBe(false);
+  });
+
+  it("closes the lap from its last guess if the designer keeps failing", async () => {
+    const live = new LiveCircuit(fakeDesigner((c) => c > 0), new Rand(3));
+    await live.start(); // the opening stretch works, then every call fails
+    await driveLap(live);
+    expect(live.track.locked).toBe(true);
+    expect(live.closedWithoutDesigner).toBe(true);
+  });
+
+  it("reports a designer that cannot dream the opening stretch", async () => {
+    const live = new LiveCircuit(fakeDesigner(() => true), new Rand(4));
+    await expect(live.start()).rejects.toThrow("opening stretch");
   });
 });

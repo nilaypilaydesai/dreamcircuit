@@ -157,16 +157,21 @@ export class LiveCircuit {
     return this.arcs.length;
   }
 
+  /** True if the designer kept failing mid-race and the lap was closed from its last guess. */
+  closedWithoutDesigner = false;
+  private failures = 0; // arcs in a row that failed to generate
+
   /** Generate the grid and the opening stretch (awaited before the countdown). */
   async start(): Promise<void> {
-    await this.next();
+    for (let attempt = 0; attempt < 3 && this.stats.arcs === 0; attempt++) await this.next();
+    if (this.stats.arcs === 0) throw new Error("the circuit designer could not dream the opening stretch");
   }
 
   /** Call every frame with the leader's polar segment; dreams the next arc when needed. */
   update(leaderSeg: number): void {
     if (this.busy || this.arcs.length === 0) return;
     const ahead = (this.track.frontierSeg - leaderSeg + N) % N;
-    if (ahead < LOOKAHEAD) void this.next();
+    if (ahead < LOOKAHEAD) void this.next().catch((e) => console.error("could not commit an arc", e));
   }
 
   private async next(): Promise<void> {
@@ -174,23 +179,51 @@ export class LiveCircuit {
     if (!arc) return;
     this.busy = true;
     const t0 = performance.now();
+    try {
+      let chosen: Float32Array;
+      try {
+        chosen = await this.dream(arc);
+      } catch (e) {
+        // Keep the race alive: put the arc back for the next frame to retry, and after a few
+        // failures in a row close the lap from the designer's last guess.
+        console.error("the circuit designer failed on an arc", e);
+        this.arcs.unshift(arc);
+        this.failures += 1;
+        if (this.failures >= 3 && this.stats.arcs > 0) this.closeFromGuess();
+        return;
+      }
+      this.failures = 0;
+      this.stats.arcs += 1;
+      this.stats.ms += performance.now() - t0;
+      this.commit(arc, chosen);
+    } finally {
+      this.busy = false;
+      this.denoise = 0;
+    }
+  }
+
+  /** Sample an arc until it passes the checks in context (or the retries run out). */
+  private async dream(arc: number[]): Promise<Float32Array> {
     const arcSet = new Set(arc);
-    let chosen: Float32Array | null = null;
     const pace = this.stats.arcs > 0; // the opening arc runs flat out, before the countdown
-    for (let attempt = 0; attempt <= RETRIES && !chosen; attempt++) {
+    for (let attempt = 0; ; attempt++) {
       const sample = await this.designer.sample(this.mask, this.known, this.rng, (x0, frac) => {
         this.preview = this.designer.toMeters(x0);
         this.denoise = frac;
       }, pace);
       const smoothed = smoothArc(sample, arc, ARC_SMOOTH);
-      if (checkGuess(this.designer.toMeters(smoothed), arcSet).ok) chosen = smoothed;
-      else if (attempt < RETRIES) this.stats.retries += 1;
-      else {
-        chosen = smoothArc(sample, arc, 2.0); // last resort: iron out the wiggle and keep racing
-        this.stats.fallbacks += 1;
+      if (checkGuess(this.designer.toMeters(smoothed), arcSet).ok) return smoothed;
+      if (attempt < RETRIES) {
+        this.stats.retries += 1;
+        continue;
       }
+      this.stats.fallbacks += 1;
+      return smoothArc(sample, arc, 2.0); // last resort: iron out the wiggle and keep racing
     }
-    const c = chosen!;
+  }
+
+  /** Write an arc's samples into the known profile and turn them into road. */
+  private commit(arc: number[], c: Float32Array): void {
     for (const j of arc) {
       const k = ((j % N) + N) % N;
       this.known[k] = c[k];
@@ -198,12 +231,18 @@ export class LiveCircuit {
     }
     this.preview = this.designer.toMeters(c);
     const [from, to] = this.track.addKnown(arc, this.designer.toMeters(this.known));
-    this.stats.arcs += 1;
-    this.stats.ms += performance.now() - t0;
-    this.busy = false;
-    this.denoise = 0;
     if (to > from) this.onCommit?.(from, to);
     if (this.track.locked) this.onLock?.();
+  }
+
+  /** The designer failed repeatedly: finish the lap from its last whole-circuit guess. */
+  private closeFromGuess(): void {
+    const rest = this.arcs.splice(0).flat();
+    const guess = this.preview ? this.designer.toStandard(this.preview) : new Float32Array(N);
+    const u = Float32Array.from(this.known);
+    for (const j of rest) u[j] = guess[j];
+    this.closedWithoutDesigner = true;
+    this.commit(rest, smoothArc(u, rest, 2.0));
   }
 }
 

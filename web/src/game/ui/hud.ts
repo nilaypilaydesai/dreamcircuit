@@ -36,6 +36,7 @@ export interface Banner {
 export class Hud {
   banners: Banner[] = [];
   private mapBox: [number, number, number, number] | null = null;
+  private mapFor: unknown = null; // the track the box was fitted to
   private readonly icons: Record<ItemKind, Sprite> = itemIcons();
 
   constructor(private readonly font: PixelFont) {}
@@ -153,6 +154,10 @@ export class Hud {
 
   private minimap(scr: Screen, race: Race, now: number): void {
     const t = race.track;
+    if (this.mapFor !== t) {
+      this.mapFor = t; // a new race: never draw it in the last circuit's frame
+      this.mapBox = null;
+    }
     const size = 74, x0 = W - size - 8, y0 = H - size - 8;
     // fit the designer's whole-circuit guess (or the locked circuit) into the box
     const radii = race.live?.preview ?? (t.locked ? t.radii : null);

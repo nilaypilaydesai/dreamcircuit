@@ -114,6 +114,7 @@ export class Race {
     this.standings.forEach((k, i) => { k.place = i + 1; });
     this.phase = "countdown";
     this.countdown = 4;
+    this.events.push({ kind: "count", n: 3 }); // 2, 1 and GO follow from the clock
   }
 
   update(dt: number, playerControls: Controls): void {
@@ -171,7 +172,7 @@ export class Race {
 
   /** Items fire on the press of the button, not while it is held. */
   private fire(k: Kart, c: Controls): void {
-    if (c.item && !k.itemHeld) this.items.use(k, this.karts);
+    if (c.item && !k.itemHeld && !k.finished) this.items.use(k, this.karts);
     k.itemHeld = !!c.item;
   }
 
@@ -188,6 +189,7 @@ export class Race {
   }
 
   private completeLap(k: Kart): void {
+    if (k.finished) return; // a cool-down lap is not a lap
     const lapTime = this.clock - k.lapStart;
     k.lapTimes.push(lapTime);
     k.lapStart = this.clock;
