@@ -27,12 +27,12 @@ const STEPS = 24; // Heun steps (47 network calls) per arc
 const ARC_SMOOTH = 1.0; // light smoothing of new radii (angle samples): no too-tight wiggles
 const RETRIES = 3;
 
-// Yield to the renderer between network calls. A hidden page gets no animation frames, so there
-// the sampler yields a macrotask instead (the race is paused anyway; this just finishes the arc).
-const nextFrame = () => new Promise<void>((r) => {
-  if (typeof document !== "undefined" && document.hidden) setTimeout(r, 0);
-  else requestAnimationFrame(() => r());
-});
+// Yield to the renderer between network calls. A hidden page draws nothing and gets no animation
+// frames (and its timers are throttled), so there the sampler simply runs on to finish the arc.
+const nextFrame = (): Promise<void> => {
+  if (typeof document !== "undefined" && document.hidden) return Promise.resolve();
+  return new Promise<void>((r) => requestAnimationFrame(() => r()));
+};
 
 function gaussian(rng: Rand): number {
   let u = 0;

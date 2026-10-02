@@ -1,6 +1,8 @@
 // Game logic: circuits that grow while they are dreamed, lock into loops, and count laps.
 
 import { describe, expect, it } from "vitest";
+import { Rand } from "../src/game/core/gfx";
+import { RivalDriver } from "../src/game/race/ai";
 import { CLASSES, Kart } from "../src/game/race/kart";
 import { HALF_WIDTH, N, SCALE, SPACING, Track, checkGuess, crSegment, polarPoint } from "../src/game/world/track";
 import { CHUNK, INITIAL, smoothArc } from "../src/game/world/trackgen";
@@ -130,5 +132,32 @@ describe("lap counting", () => {
     k.update(1 / 60, { steer: 0, throttle: 0, brake: 0, drift: false }, t, CLASSES.pro);
     expect(k.surface).toBe("road");
     expect(polarPoint(77, 0)[0]).toBeCloseTo(77 * SCALE, 9);
+  });
+});
+
+describe("rival drivers", () => {
+  it("lap a twisty circuit cleanly and drift its tight corners", () => {
+    const radii = Float64Array.from({ length: N },
+      (_, j) => 78 + 22 * Math.sin((2 * Math.PI * j) / N * 2 + 0.4) + 9 * Math.cos((2 * Math.PI * j) / N * 6));
+    expect(checkGuess(radii, new Set(range(0, N))).ok).toBe(true);
+    const t = Track.fromRadii(radii);
+    const k = new Kart(1, "RIVAL", 1, false);
+    k.placeOn(t, t.wrap(t.startIndex - 8), 0);
+    const driver = new RivalDriver(new Rand(4), k, 1);
+    const dt = 1 / 60;
+    let steps = 0, grass = 0, drifts = 0, boosts = 0, was = false;
+    while (k.crossings < 4 && steps < 60 * 300) {
+      const { boosted } = k.update(dt, driver.act(dt, t, CLASSES.pro, k, [k]), t, CLASSES.pro);
+      k.updateProgress(t);
+      if (k.surface === "grass") grass++;
+      if (k.drifting && !was) drifts++;
+      was = k.drifting;
+      if (boosted) boosts++;
+      steps++;
+    }
+    expect(k.crossings - 1).toBe(3);
+    expect(grass / steps).toBeLessThan(0.02);
+    expect(drifts).toBeGreaterThanOrEqual(3);
+    expect(boosts).toBeGreaterThanOrEqual(1);
   });
 });

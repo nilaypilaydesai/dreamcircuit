@@ -1,6 +1,7 @@
 // Rival drivers. Pure pursuit on a racing line that cuts the inside of corners, a speed profile
 // from the curvature ahead, a little sloppiness, simple overtaking room and the classic kart
 // racer rubber band: rivals far behind the player find a few percent, rivals far ahead lift.
+// Like a human, they drift the tight corners and release on the exit for the mini-turbo.
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
@@ -11,6 +12,9 @@ export class RivalDriver {
   private laneTarget: number;
   private wobble = 0;
   private readonly skill: number;
+  private drifting = false;
+  private driftSide = 0;
+  private driftCooldown = 0; // one "drift this corner?" decision per corner
 
   constructor(private readonly rng: Rand, readonly kart: Kart, rank: number) {
     this.lane = rng.range(-2.5, 2.5);
@@ -56,6 +60,26 @@ export class RivalDriver {
     if (Math.abs(k.offset) > HALF_WIDTH + 2) vt = Math.min(vt, 14);
     const throttle = v < vt ? 1 : 0;
     const brake = v > vt + 2 ? Math.min(1, (v - vt) / 6) : 0;
-    return { steer, throttle, brake, drift: false };
+    return { steer, throttle, brake, drift: this.drift(dt, track, cls, steer) };
+  }
+
+  private drift(dt: number, track: Track, cls: ClassParams, steer: number): boolean {
+    const k = this.kart;
+    const kappa = track.curvature(track.ahead(k.idx, 3 + Math.max(k.v, 0) * 0.25));
+    this.driftCooldown -= dt;
+    if (this.drifting) {
+      // hold through the corner; let go as it opens up (or if the kart runs wide)
+      if (Math.abs(kappa) < 1 / 75 || Math.sign(kappa) !== this.driftSide || k.surface !== "road") {
+        this.drifting = false;
+      }
+    } else if (this.driftCooldown <= 0 && k.v > 16 && Math.abs(kappa) > 1 / 40 &&
+               Math.sign(steer) === Math.sign(kappa) && k.surface === "road") {
+      this.driftCooldown = 2.5;
+      if (this.rng.next() < cls.aiCorner * 0.8) {
+        this.drifting = true;
+        this.driftSide = Math.sign(kappa);
+      }
+    }
+    return this.drifting;
   }
 }

@@ -1,4 +1,4 @@
-"""Regenerate the numbers in README.md from results/summary.json.
+"""Regenerate the numbers in README.md from results/summary.json and results/trackgen.json.
 
 Every figure quoted between ``<!-- results:start -->`` and ``<!-- results:end -->`` (and in the
 other marked blocks) is computed from the evaluation output, so the README cannot drift from
@@ -101,8 +101,40 @@ def main() -> None:
         f"{s['data']['frames']:,} training frames from {s['data']['circuits']} circuits"
     )
     text = block(text, "stats", stats)
+    text = designer_blocks(text)
     (ROOT / "README.md").write_text(text)
     print("README numbers updated")
+
+
+def designer_blocks(text: str) -> str:
+    """The circuit designer's numbers, from ``dreamcircuit eval-tracks``."""
+    path = ROOT / "results" / "trackgen.json"
+    if not path.exists():
+        return text
+    tg = json.loads(path.read_text())
+    onnx = json.loads((ROOT / "web" / "public" / "models" / "trackgen.json").read_text())
+    reasons = ", ".join(f"{v} {k}" for k, v in sorted(tg["whole_fail_reasons"].items()))
+    rows = [
+        "| What was measured | Result |",
+        "|---|---|",
+        f"| Whole circuits dreamed from nothing that pass every drivability check | "
+        f"**{100 * tg['whole_valid']:.1f}%** of {tg['n_whole']:,} "
+        f"({100 * tg['whole_valid_unsmoothed']:.1f}% before arc smoothing; failures: {reasons}) |",
+        f"| Circuits built live, arc by arc, the way lap 1 builds them | "
+        f"**{100 * tg['live_valid']:.1f}%** of {tg['n_live']:,} |",
+        f"| Arcs resampled per live circuit (the game's retry rule) | "
+        f"{tg['live_retries_per_circuit']:.2f} on average |",
+        f"| Mean lap length of a dreamed circuit | {tg['mean_length_m']:.0f} m "
+        f"(the game drives it at 1.5x scale) |",
+    ]
+    text = block(text, "trackgen", "\n".join(rows))
+    stats = (
+        f"{tg['params'] / 1e6:.1f}M-parameter circuit designer · "
+        f"{100 * tg['live_valid']:.0f}% of live-built circuits drivable · "
+        f"{onnx['bytes'] / 1e6:.1f} MB, runs on the CPU in a browser tab · "
+        f"{tg['sampler_steps']} Heun steps per arc"
+    )
+    return block(text, "designer-stats", stats)
 
 
 if __name__ == "__main__":

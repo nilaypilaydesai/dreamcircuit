@@ -24,15 +24,16 @@ train:  ## train the diffusion world model (~3.5 h on an M4 Pro; resumable)
 policy:  ## distill the privileged expert into the pixel autopilot (BC + DAgger)
 	$(PY) -m dreamcircuit train-policy --device auto
 
-tracks:  ## the circuit-designer diffusion model behind the racing game
+tracks:  ## the circuit designer behind the racing game: data, training, validity at scale, figures
 	$(PY) -m dreamcircuit trackgen-data --n 60000
 	$(PY) -m dreamcircuit train-tracks
+	$(PY) -m dreamcircuit eval-tracks
 
 report:  ## physics audit, probes, steering, figures, web summary, README numbers (run after export)
 	$(PY) -m dreamcircuit report --checkpoint $(CKPT)
 	$(PY) scripts/update_readme.py
 
-export:  ## ONNX models + simulator assets + parity fixtures for the browser
+export:  ## ONNX models (world model, autopilot, circuit designer) + simulator assets for the browser
 	$(PY) -m dreamcircuit export --checkpoint $(CKPT)
 
 web-dev:  ## run the browser app locally (http://localhost:5173)

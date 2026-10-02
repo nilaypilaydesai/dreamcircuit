@@ -53,6 +53,11 @@ def _cmd_export(a: argparse.Namespace) -> None:
     out = {"denoiser": info}
     if Path(a.policy).exists():
         out["policy"] = export_policy(load_policy(a.policy), models)
+    if Path(a.tracks).exists():
+        from dreamcircuit.export.onnx_export import export_track_model
+        from dreamcircuit.trackgen.train import load_track_model
+
+        out["trackgen"] = export_track_model(load_track_model(a.tracks), models)
     out["assets"] = export_web_assets(Path(a.web_dir))
     print(json.dumps(out, indent=2))
 
@@ -129,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     ex = sub.add_parser("export", help="ONNX models + web assets for the browser app")
     ex.add_argument("--checkpoint", default="runs/wm_base/latest.pt")
     ex.add_argument("--policy", default="runs/policy/policy.pt")
+    ex.add_argument("--tracks", default="runs/trackgen/trackgen.pt", help="circuit designer")
     ex.add_argument("--web-dir", default="web")
     ex.set_defaults(func=_cmd_export)
 
@@ -154,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     tt.set_defaults(func=_cmd_train_tracks)
 
     et = sub.add_parser("eval-tracks", help="validity of dreamed circuits, and a gallery sample")
-    et.add_argument("--checkpoint", default="runs/trackgen/trackgen_8k.pt")
+    et.add_argument("--checkpoint", default="runs/trackgen/trackgen.pt")
     et.add_argument("--out", default="results/trackgen.json")
     et.add_argument("--n", type=int, default=1000, help="whole circuits, sampled in one batch")
     et.add_argument("--n-live", type=int, default=200, help="circuits built arc by arc, like lap 1")

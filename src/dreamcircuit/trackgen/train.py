@@ -65,43 +65,63 @@ def random_masks(b: int, n: int, rng: np.random.Generator) -> np.ndarray:
     return m
 
 
-def live_generate(
-    model: TrackDenoiser,
-    device: torch.device,
-    rng: np.random.Generator,
-    steps: int = SAMPLER_STEPS,
-    retries: int = 3,
-) -> tuple[np.ndarray, int]:
-    """The game's lap-1 procedure. Returns the radii (meters) and how many arcs were retried."""
-    n = model.cfg.n
-    known = np.zeros(n, dtype=np.float32)
-    mask = np.zeros(n, dtype=np.float32)
+def live_arcs(n: int = N_ANGLES) -> list[np.ndarray]:
+    """The order in which the game builds a circuit: the start grid and first stretch, then
+    CHUNK-sized arcs around the lap until the loop closes."""
     a, b = INITIAL_KNOWN
     arcs = [np.arange(a, b) % n]
     pos = b
     while pos < n + a:
         arcs.append(np.arange(pos, min(pos + CHUNK, n + a)) % n)
         pos += CHUNK
+    return arcs
+
+
+def live_generate(
+    model: TrackDenoiser,
+    device: torch.device,
+    rng: np.random.Generator,
+    steps: int = SAMPLER_STEPS,
+    retries: int = 3,
+    trace: list[dict] | None = None,
+) -> tuple[np.ndarray, int]:
+    """The game's lap-1 procedure. Returns the radii (meters) and how many arcs were retried.
+
+    With ``trace``, appends one snapshot per built arc: the arc, the road known so far and the
+    designer's guess for the whole circuit at that moment (radii in meters)."""
+    n = model.cfg.n
+    known = np.zeros(n, dtype=np.float32)
+    mask = np.zeros(n, dtype=np.float32)
     retried = 0
-    for k, arc in enumerate(arcs):
-        last = k == len(arcs) - 1
+    for arc in live_arcs(n):
         for attempt in range(retries + 1):
             g = torch.Generator().manual_seed(int(rng.integers(1 << 31)))
             m = torch.from_numpy(mask)[None, None].to(device)
             kn = torch.from_numpy(known)[None, None].to(device)
-            out = model.sample(m, kn, steps=steps, generator=g)[0, 0].cpu().numpy()
-            out = smooth_arc(out, arc)
+            raw = model.sample(m, kn, steps=steps, generator=g)[0, 0].cpu().numpy()
+            out = smooth_arc(raw, arc)
             cand_known, cand_mask = known.copy(), mask.copy()
             cand_known[arc] = out[arc]
             cand_mask[arc] = 1.0
             # Check the arc in context: fill the still-unknown rest with this sample's guess.
             full = np.where(cand_mask > 0, cand_known, out)
-            if check(reconstruct(destandardize(full)), DEFAULT.track).ok or attempt == retries:
+            ok = check(reconstruct(destandardize(full)), DEFAULT.track).ok
+            if ok or attempt == retries:
+                if not ok:  # last resort, as in the game: iron out the wiggle and keep racing
+                    cand_known[arc] = smooth_arc(raw, arc, 2.0)[arc]
+                    full = np.where(cand_mask > 0, cand_known, out)
                 known, mask = cand_known, cand_mask
                 break
             retried += 1
-        if last:
-            break
+        if trace is not None:
+            trace.append(
+                {
+                    "arc": arc,
+                    "mask": mask.copy(),
+                    "known": destandardize(known),
+                    "guess": destandardize(full),
+                }
+            )
     return destandardize(known), retried
 
 
@@ -134,10 +154,16 @@ def evaluate(
             reasons[v.reason] = reasons.get(v.reason, 0) + 1
     live_ok, retried = 0, 0
     n_live = n // 4 if n_live is None else n_live
-    for _ in range(n_live):
-        r, k = live_generate(model, device, rng)
-        live_ok += check(reconstruct(r), DEFAULT.track).ok
-        retried += k
+    threads = torch.get_num_threads()
+    if device.type == "cpu":
+        torch.set_num_threads(1)  # a long chain of batch-1 calls: extra threads only add overhead
+    try:
+        for _ in range(n_live):
+            r, k = live_generate(model, device, rng)
+            live_ok += check(reconstruct(r), DEFAULT.track).ok
+            retried += k
+    finally:
+        torch.set_num_threads(threads)
     model.train()
     return {
         "whole_valid": whole / n,
@@ -236,6 +262,7 @@ def evaluate_designer(
     device_name: str = "cpu",
     data: str = "data/tracks",
     web: str | Path | None = "web/public/results",
+    figures: str | Path | None = "docs/assets",
 ) -> dict:
     """The published numbers: validity at scale, plus circuits for the DATA page gallery.
 
@@ -268,4 +295,8 @@ def evaluate_designer(
     for path in [Path(out)] + ([Path(web) / "trackgen.json"] if web else []):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
+    if figures:
+        from dreamcircuit.trackgen.figures import write_figures
+
+        write_figures(model, dev, result, figures)
     return result

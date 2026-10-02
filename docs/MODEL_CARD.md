@@ -1,6 +1,41 @@
-# Model card
+# Model cards
 
-## DreamCircuit world model (`web/public/models/denoiser.onnx`)
+Three models ship with the site: the circuit designer behind the game, and the world model and
+pixel autopilot behind the Dream Lab.
+
+## Circuit designer (`web/public/models/trackgen.onnx`)
+
+| | |
+|---|---|
+| Type | Masked-conditional diffusion model (EDM denoiser, 1-D U-Net with circular padding) over polar circuit profiles |
+| Input | A noisy 128-sample radius profile r(theta), its noise level, a 0/1 mask of known angles and the known radii |
+| Output | The denoised profile; 24 Heun steps (47 network calls) make one arc, or one whole circuit |
+| Size | 2.2M parameters, 4.5 MB (fp16 weights, fp32 compute); runs on the CPU (WASM) in the browser |
+| Training | 8,000 steps, batch 256, AdamW, EMA 0.999, on one Apple M4 Pro (about 20 min) |
+| Data | 56,971 circuits from the simulator's procedural generator; 2,998 more held out |
+| Evaluation | 1,000 whole circuits and 200 circuits built live, arc by arc, checked against the generator's drivability rules; see `results/trackgen.json` and the README |
+| License | MIT |
+
+**Intended use.** Designing kart circuits live inside the game, and a compact, inspectable
+example of diffusion inpainting for procedural content.
+
+**Out of scope.** Real circuit design. "Drivable" here means a toy generator's geometric rules
+(corner radius, clearance between stretches, lap length), not any racing or safety standard:
+there is no run-off, elevation, sight-line or safety analysis.
+
+**Known failure modes.**
+- About 1.6% of whole circuits dreamed from nothing break a rule, almost always one corner
+  slightly too tight. In the game, a failing arc is resampled before it becomes road.
+- Only star-shaped circuits: no figure-eights, crossovers or hairpins that double back past the
+  center angle.
+- It learned the generator's distribution of circuits and should not be expected to produce
+  styles outside it.
+- Its guess for the unbuilt part of the lap changes as arcs are added. That is by design, but it
+  means the minimap preview is a guess, not a promise.
+
+**Data and privacy.** All circuits are synthetic, produced by the generator in this repository.
+
+## World model (`web/public/models/denoiser.onnx`)
 
 | | |
 |---|---|

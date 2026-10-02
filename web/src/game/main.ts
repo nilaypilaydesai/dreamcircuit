@@ -147,7 +147,8 @@ class Game {
     const all = Array.from({ length: N }, (_, j) => j);
     let best: Float64Array | null = null;
     for (let k = 0; k < 6; k++) {
-      const r = d.toMeters(smoothArc(await d.sample(zeros, zeros, rng), all, 1.0));
+      // paced: the title screen keeps animating while the next attract circuit is dreamed
+      const r = d.toMeters(smoothArc(await d.sample(zeros, zeros, rng, undefined, true), all, 1.0));
       best = r;
       if (checkGuess(r, new Set(all)).ok) break;
     }
@@ -419,7 +420,7 @@ class Game {
     const original = this.input.drive.bind(this.input);
     const r = this.race;
     if (held.has("auto") && r) {
-      this.debugPilot ??= new RivalDriver(new Rand(5), r.player, 0);
+      if (this.debugPilot?.kart !== r.player) this.debugPilot = new RivalDriver(new Rand(5), r.player, 0);
       this.input.drive = () => this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts);
     } else {
       this.input.drive = () => c;
@@ -434,6 +435,8 @@ class Game {
     const r = this.race;
     return {
       mode: this.mode,
+      designer: !!this.designer,
+      attract: !!this.attract,
       phase: r?.phase,
       clock: r?.clock,
       locked: r?.track.locked,

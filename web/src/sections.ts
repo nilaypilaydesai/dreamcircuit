@@ -147,6 +147,6 @@ export async function renderDesigner(): Promise<void> {
     c.append(b, l, n);
     return c;
   }));
-  document.getElementById("gallery-dreamed")!.replaceChildren(...d.dreamed.slice(0, 18).map((r, i) => circuitSvg(r, `Dreamed circuit ${i + 1}`)));
+  document.getElementById("gallery-dreamed")!.replaceChildren(...d.dreamed.slice(0, 12).map((r, i) => circuitSvg(r, `Dreamed circuit ${i + 1}`)));
   document.getElementById("gallery-real")!.replaceChildren(...d.real.slice(0, 12).map((r, i) => circuitSvg(r, `Procedural circuit ${i + 1}`)));
 }

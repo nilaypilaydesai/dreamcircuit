@@ -23,6 +23,7 @@ from dreamcircuit.trackgen.polar import (
 from dreamcircuit.trackgen.train import (
     CHUNK,
     INITIAL_KNOWN,
+    live_arcs,
     live_generate,
     random_masks,
     reconstruct,
@@ -103,15 +104,13 @@ def test_smooth_arc_wraps_around_the_start_line():
 
 
 def test_live_schedule_covers_the_lap_exactly_once():
-    a, b = INITIAL_KNOWN
-    arcs = [np.arange(a, b) % N_ANGLES]
-    pos = b
-    while pos < N_ANGLES + a:
-        arcs.append(np.arange(pos, min(pos + CHUNK, N_ANGLES + a)) % N_ANGLES)
-        pos += CHUNK
+    arcs = live_arcs()
     every = np.concatenate(arcs)
     assert len(every) == N_ANGLES
     assert set(every.tolist()) == set(range(N_ANGLES))
+    a, b = INITIAL_KNOWN
+    assert len(arcs[0]) == b - a  # the grid and first stretch come first, before the countdown
+    assert all(len(arc) <= CHUNK for arc in arcs[1:])
 
 
 def test_random_masks_are_empty_or_one_contiguous_arc():
@@ -168,7 +167,12 @@ def test_live_generation_builds_every_angle():
     # of one round, valid circuit, so the procedure itself is what is being tested.
     m = TrackDenoiser(TINY).eval()
     m.denoise = lambda x, sigma, mask, known: torch.zeros_like(x)  # type: ignore[method-assign]
-    radii, retried = live_generate(m, torch.device("cpu"), np.random.default_rng(0), steps=4)
+    trace: list[dict] = []
+    radii, retried = live_generate(
+        m, torch.device("cpu"), np.random.default_rng(0), steps=4, trace=trace
+    )
+    assert len(trace) == len(live_arcs())
+    assert [int(t["mask"].sum()) for t in trace][-1] == N_ANGLES
     assert radii.shape == (N_ANGLES,)
     np.testing.assert_allclose(radii, destandardize(np.zeros(N_ANGLES)), atol=1e-4)
     assert retried == 0

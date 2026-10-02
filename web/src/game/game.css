@@ -7,3 +7,8 @@ body.game { display: grid; place-items: center; touch-action: none; user-select:
 .touch button { font: 12px "Press Start 2P", monospace; color: #fff; min-width: 64px; height: 56px; border-radius: 12px; border: 2px solid rgba(199, 155, 255, 0.6); background: rgba(12, 10, 29, 0.55); touch-action: none; }
 .touch button.on { background: rgba(199, 155, 255, 0.45); }
 @media (pointer: coarse) { .touch { display: flex; } }
+@media (max-width: 440px) {
+  .touch { padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .touch .pad { gap: 6px; }
+  .touch button { font-size: 9px; min-width: 52px; height: 52px; padding: 0 6px; }
+}

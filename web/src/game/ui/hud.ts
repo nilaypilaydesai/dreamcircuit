@@ -90,6 +90,8 @@ export class Hud {
     this.banners = this.banners.filter((b) => b.until > race.clock || race.phase === "countdown");
     for (const b of this.banners) {
       if (b.blink && Math.floor(now * 4) % 2) continue;
+      // a ribbon behind the big text: it spans the screen, so it lies over the standings
+      scr.dimRect(0, 79, W, b.sub ? 46 : 33, INK, 0.62);
       f.draw(scr, b.text, W / 2, 84, { scale: 3, color: b.color, outline: INK, align: "center" });
       if (b.sub) f.draw(scr, b.sub, W / 2, 112, { color: WHITE, outline: INK, align: "center" });
     }
