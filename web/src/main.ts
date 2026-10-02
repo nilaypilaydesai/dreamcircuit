@@ -3,11 +3,19 @@ import "@fontsource/press-start-2p/400.css";
 import { App, type MindDirection } from "./app";
 import { DreamEngine } from "./dream/engine";
 import { Policy } from "./dream/policy";
-import { renderDesigner, renderSections } from "./sections";
+import { renderGrowth } from "./page/growth";
+import { paintHorizons } from "./page/horizon";
+import { startParallax } from "./page/parallax";
+import {
+  type Designer, loadJson, type Probes, renderFacts, renderGalleries, renderQuotes, renderSections,
+  renderTiles, type Summary,
+} from "./sections";
 import type { SimConfig, SpriteData } from "./sim/config";
 import { Track } from "./sim/track";
 
-export const REPO_URL = "https://github.com/nilayd2007/dreamcircuit";
+export const REPO_URL = "https://github.com/nilaypilaydesai/dreamcircuit";
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 async function fetchJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -26,20 +34,108 @@ function setOverlay(text: string | null, error = false): void {
   if (error) overlay.querySelector(".spinner")?.remove();
 }
 
-async function main(): Promise<void> {
-  (document.getElementById("gh-link") as HTMLAnchorElement).href = REPO_URL;
-  void renderSections();
-  void renderDesigner();
-  // The lab loads a 20 MB world model and runs it on the GPU: start it only when it is in view.
+/** The hero film: muted autoplay on a loop, paused off screen, never autoplayed for anyone who
+ * asked for reduced motion (they get the poster and a play button), and pausable by anyone. */
+function heroVideo(): void {
+  const video = document.getElementById("hero-video") as HTMLVideoElement;
+  const toggle = document.getElementById("hero-toggle") as HTMLButtonElement;
+  let userPaused = reduceMotion.matches;
+  let visible = true;
+  const label = () => {
+    toggle.textContent = video.paused ? "Play video" : "Pause video";
+  };
+  const sync = () => {
+    if (userPaused || !visible) video.pause();
+    else void video.play().catch(() => label()); // autoplay refused (e.g. low-power mode): poster stays
+  };
+  if (reduceMotion.matches) {
+    video.removeAttribute("autoplay");
+    video.pause();
+  }
+  video.addEventListener("play", label);
+  video.addEventListener("pause", label);
+  toggle.addEventListener("click", () => {
+    userPaused = !video.paused;
+    sync();
+  });
+  new IntersectionObserver((entries) => {
+    visible = entries[entries.length - 1].isIntersecting; // batched changes: the latest one counts
+    sync();
+  }).observe(video);
+  label();
+}
+
+/** Solid nav once the hero scrolls away; the link for the section in view is marked. */
+function nav(): void {
+  const bar = document.getElementById("nav")!;
+  const onScroll = () => bar.classList.toggle("solid", window.scrollY > 40);
+  window.addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+  const links = new Map([...bar.querySelectorAll<HTMLAnchorElement>("nav a")].map((a) => [a.hash.slice(1), a]));
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      for (const [id, a] of links) a.classList.toggle("here", id === e.target.id);
+    }
+  }, { rootMargin: "-40% 0px -55% 0px" });
+  for (const id of links.keys()) {
+    const s = document.getElementById(id);
+    if (s) io.observe(s);
+  }
+}
+
+/** Fade sections in as they arrive; everything is visible at once under reduced motion. */
+function reveals(): void {
+  const els = [...document.querySelectorAll<HTMLElement>(".reveal")];
+  if (reduceMotion.matches) {
+    for (const el of els) el.classList.add("in");
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      e.target.classList.add("in");
+      io.unobserve(e.target);
+    }
+  }, { rootMargin: "0px 0px -8% 0px" });
+  for (const el of els) io.observe(el);
+}
+
+async function content(): Promise<void> {
+  const [raw, summary, parity, probes] = await Promise.all([
+    loadJson<Designer>("results/trackgen.json"),
+    loadJson<Summary>("results/summary.json"),
+    loadJson<Summary["parity"]>("results/parity.json"),
+    loadJson<Probes>("results/probes.json"),
+  ]);
+  // results from an older designer (points, not steps) do not carry these fields: leave them out
+  const designer = raw && typeof raw.live_valid_figure8 === "number" && raw.dreamed?.loop ? raw : null;
+  renderFacts(designer, summary);
+  renderTiles(designer, summary, probes);
+  renderQuotes(designer, summary);
+  renderGalleries(designer);
+  const growth = designer?.growth;
+  const figure = document.getElementById("growth")!;
+  if (growth) {
+    renderGrowth(growth, figure, [...document.querySelectorAll<HTMLElement>("#steps .step")],
+                 document.getElementById("growth-count")!);
+  } else {
+    figure.hidden = true;
+  }
+  reveals();
+  await renderSections(summary, parity, designer);
+}
+
+/** The lab loads a 20 MB world model and runs it on the GPU: it starts only once it is in view. */
+async function lab(): Promise<void> {
   await new Promise<void>((resolve) => {
-    const lab = document.getElementById("lab")!;
     const io = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) {
         io.disconnect();
         resolve();
       }
     }, { rootMargin: "200px" });
-    io.observe(lab);
+    io.observe(document.getElementById("lab")!);
   });
   try {
     setOverlay("Loading the simulator...");
@@ -80,4 +176,15 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+function main(): void {
+  for (const id of ["gh-link", "repo-link"]) (document.getElementById(id) as HTMLAnchorElement).href = REPO_URL;
+  (document.getElementById("issues-link") as HTMLAnchorElement).href = `${REPO_URL}/issues`;
+  heroVideo();
+  nav();
+  const parallax = startParallax();
+  paintHorizons(() => parallax.refresh());
+  void content().then(() => parallax.refresh());
+  void lab();
+}
+
+main();
