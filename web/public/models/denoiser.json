@@ -1,0 +1,16 @@
+{
+  "file": "denoiser.onnx",
+  "bytes": 19573066,
+  "max_abs_err_fp32": 8.38935375213623e-06,
+  "max_abs_err_fp16_storage": 0.001819029450416565,
+  "context_frames": 4,
+  "mid_channels": 192,
+  "edm": {
+    "sigma_min": 0.002,
+    "sigma_max": 5.0,
+    "rho": 7.0,
+    "sigma_data": 0.5,
+    "aug_max": 0.3
+  },
+  "train_step": 60000
+}

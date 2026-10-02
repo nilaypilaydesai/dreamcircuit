@@ -7,33 +7,39 @@ pixel autopilot behind the Dream Lab.
 
 | | |
 |---|---|
-| Type | Masked-conditional diffusion model (EDM denoiser, 1-D U-Net with circular padding) over polar circuit profiles |
-| Input | A noisy 128-sample radius profile r(theta), its noise level, a 0/1 mask of known angles and the known radii |
-| Output | The denoised profile; 24 Heun steps (47 network calls) make one arc, or one whole circuit |
-| Size | 2.2M parameters, 4.5 MB (fp16 weights, fp32 compute); runs on the CPU (WASM) in the browser |
-| Training | 8,000 steps, batch 256, AdamW, EMA 0.999, on one Apple M4 Pro (about 20 min) |
-| Data | 56,971 circuits from the simulator's procedural generator; 2,998 more held out |
-| Evaluation | 1,000 whole circuits and 200 circuits built live, arc by arc, checked against the generator's drivability rules; see `results/trackgen.json` and the README |
+| Type | Masked-conditional diffusion model (EDM denoiser, 1-D U-Net with circular padding) over the 256 steps between a lap's road points |
+| Input | The noisy steps (x, y at 2 m per unit), the noise level, a 0/1 mask of known steps and the known steps, its own previous estimate (self-conditioning); optionally a style (0 calm to 1 wild) and a layout (any, plain loop, figure-eight) |
+| Output | The denoised steps, which are added up from the end of the known road into points; 24 Heun steps (47 network calls) make one arc, or one whole circuit |
+| Size | 5.09M parameters, 10.4 MB (fp16 weights, fp32 compute); runs on the CPU (WASM) in a Web Worker in the browser |
+| Training | 14,000 steps, then 6,000 with self-conditioning; batch 256, AdamW, EMA 0.999, on one Apple M4 Pro (about an hour and a half) |
+| Data | 66,500 circuits from the procedural architect in this repository (35% figure-eights); 3,500 more held out |
+| Evaluation | Built live, arc by arc, as in the game (200 per layout): 97.0% of loops and 85.5% of figure-eights pass every drivability rule. Dreamed in one pass from nothing (1,000 per layout): 71.8% and 48.7%. See `results/trackgen.json` and the README |
 | License | MIT |
 
 **Intended use.** Designing kart circuits live inside the game, and a compact, inspectable
 example of diffusion inpainting for procedural content.
 
-**Out of scope.** Real circuit design. "Drivable" here means a toy generator's geometric rules
-(corner radius, clearance between stretches, lap length), not any racing or safety standard:
-there is no run-off, elevation, sight-line or safety analysis.
+**Out of scope.** Real circuit design. "Drivable" here means a toy architect's geometric rules
+(corner radius, clearance between stretches, lap size, a straight start, a steep crossing on
+straight road), not any racing or safety standard: there is no run-off, sight-line or safety
+analysis, and the only elevation is the game's bridges and jump ramps.
 
 **Known failure modes.**
-- About 1.6% of whole circuits dreamed from nothing break a rule, almost always one corner
-  slightly too tight. In the game, a failing arc is resampled before it becomes road.
-- Only star-shaped circuits: no figure-eights, crossovers or hairpins that double back past the
-  center angle.
-- It learned the generator's distribution of circuits and should not be expected to produce
-  styles outside it.
+- About 3% of loops and 15% of figure-eights built live still break a rule. In the game, a
+  failing arc is dreamed again before it becomes road (about 1.7 retries per loop and 5 per
+  figure-eight), and after three failures a more heavily smoothed version is kept so the race
+  goes on.
+- One-pass dreams fail more often (28% of loops, 51% of figure-eights), mostly on global shape:
+  for figure-eights, a crossing on a bend or a lap reaching too far from the start; for loops, the
+  wrong number of crossings, the size, or a corner a little too tight.
+- At most one crossing (one bridge) per lap: the architect makes plain loops and figure-eights
+  only.
+- It learned the architect's distribution of circuits and should not be expected to produce
+  styles outside it. The style condition steers how technical the road is, within that range.
 - Its guess for the unbuilt part of the lap changes as arcs are added. That is by design, but it
   means the minimap preview is a guess, not a promise.
 
-**Data and privacy.** All circuits are synthetic, produced by the generator in this repository.
+**Data and privacy.** All circuits are synthetic, produced by the architect in this repository.
 
 ## World model (`web/public/models/denoiser.onnx`)
 

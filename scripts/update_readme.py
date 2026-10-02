@@ -10,6 +10,7 @@ what the code actually measured. Run after ``make report``:
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 
@@ -58,9 +59,10 @@ def main() -> None:
         "|---|---|---|---|",
     ]
     labels = s["probes"]["labels"]
+    # speed and steering are drawn in the frame's HUD (raw pixels decode them), so they say
+    # nothing about what the network learned and stay out of the table
     for k in (
         "yaw_rate",
-        "steer",
         "lateral_speed",
         "curvature_10",
         "curvature_30",
@@ -112,26 +114,36 @@ def designer_blocks(text: str) -> str:
     if not path.exists():
         return text
     tg = json.loads(path.read_text())
+    if "live_valid_figure8" not in tg:
+        return text  # results from the v1 designer: leave the README as it is
     onnx = json.loads((ROOT / "web" / "public" / "models" / "trackgen.json").read_text())
-    reasons = ", ".join(f"{v} {k}" for k, v in sorted(tg["whole_fail_reasons"].items()))
+
+    def fails(layout: str) -> str:
+        r = tg[f"whole_fail_{layout}"]
+        return ", ".join(f"{v} {k}" for k, v in sorted(r.items(), key=lambda kv: -kv[1])) or "none"
+
+    pct = lambda v: f"{100 * v:.1f}%"  # noqa: E731
     rows = [
-        "| What was measured | Result |",
-        "|---|---|",
-        f"| Whole circuits dreamed from nothing that pass every drivability check | "
-        f"**{100 * tg['whole_valid']:.1f}%** of {tg['n_whole']:,} "
-        f"({100 * tg['whole_valid_unsmoothed']:.1f}% before arc smoothing; failures: {reasons}) |",
-        f"| Circuits built live, arc by arc, the way lap 1 builds them | "
-        f"**{100 * tg['live_valid']:.1f}%** of {tg['n_live']:,} |",
-        f"| Arcs resampled per live circuit (the game's retry rule) | "
-        f"{tg['live_retries_per_circuit']:.2f} on average |",
-        f"| Mean lap length of a dreamed circuit | {tg['mean_length_m']:.0f} m "
-        f"(the game drives it at 1.5x scale) |",
+        "| What was measured | Loops | Figure-eights |",
+        "|---|---|---|",
+        f"| Built live, arc by arc, the way lap 1 builds them (n = {tg['n_live']} each) | "
+        f"**{pct(tg['live_valid_loop'])}** | **{pct(tg['live_valid_figure8'])}** |",
+        f"| Arcs dreamed again after failing a rule, per live circuit | "
+        f"{tg['live_retries_loop']:.2f} | {tg['live_retries_figure8']:.2f} |",
+        f"| Whole circuits dreamed in one pass from nothing (n = {tg['n_whole']:,} each) | "
+        f"{pct(tg['whole_valid_loop'])} | {pct(tg['whole_valid_figure8'])} |",
+        f"| Why one-pass circuits failed | {fails('loop')} | {fails('figure8')} |",
     ]
+    steer = tg["style_steering"]
+    rows.append(
+        f"| Style steering: technicality measured on arcs asked for calm (0.1) vs wild (0.9) | "
+        f"{steer['0.1']:.2f} vs {steer['0.9']:.2f} | |"
+    )
     text = block(text, "trackgen", "\n".join(rows))
     stats = (
         f"{tg['params'] / 1e6:.1f}M-parameter circuit designer · "
-        f"{100 * tg['live_valid']:.0f}% of live-built circuits drivable · "
-        f"{onnx['bytes'] / 1e6:.1f} MB, runs on the CPU in a browser tab · "
+        f"{math.floor(100 * min(tg['live_valid_loop'], tg['live_valid_figure8']))}%+ of live-built "
+        f"circuits drivable · {onnx['bytes'] / 1e6:.1f} MB, runs on the CPU in a browser tab · "
         f"{tg['sampler_steps']} Heun steps per arc"
     )
     return block(text, "designer-stats", stats)

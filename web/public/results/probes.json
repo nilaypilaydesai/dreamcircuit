@@ -1,0 +1,74 @@
+{
+  "n_train": 12000,
+  "n_test": 4000,
+  "labels": {
+    "speed": "Speed",
+    "yaw_rate": "Yaw rate",
+    "lateral_speed": "Lateral slip",
+    "steer": "Steering angle",
+    "offset": "Offset from centerline",
+    "heading_error": "Heading vs. track",
+    "curvature_0": "Curvature here",
+    "curvature_10": "Curvature 10 m ahead",
+    "curvature_20": "Curvature 20 m ahead",
+    "curvature_30": "Curvature 30 m ahead (beyond view)",
+    "on_grass": "On grass"
+  },
+  "r2": {
+    "speed": {
+      "trained": 0.9951388325061571,
+      "random_init": 0.6634622578339033,
+      "raw_pixels": 0.9927266559929312
+    },
+    "yaw_rate": {
+      "trained": 0.9421477569160117,
+      "random_init": 0.2596113362589634,
+      "raw_pixels": 0.47950784543386415
+    },
+    "lateral_speed": {
+      "trained": 0.7726103819092838,
+      "random_init": 0.010371927688101246,
+      "raw_pixels": 0.09500991094745037
+    },
+    "steer": {
+      "trained": 0.9484052959470426,
+      "random_init": 0.32160049992111406,
+      "raw_pixels": 0.9883823384915873
+    },
+    "offset": {
+      "trained": 0.31148309053298573,
+      "random_init": 0.04508754279779037,
+      "raw_pixels": 0.1636004978672888
+    },
+    "heading_error": {
+      "trained": 0.4676024187971811,
+      "random_init": 0.010824114599417678,
+      "raw_pixels": 0.07459629871247397
+    },
+    "curvature_0": {
+      "trained": 0.8137774389789143,
+      "random_init": 0.34140732218276393,
+      "raw_pixels": 0.7388981819785185
+    },
+    "curvature_10": {
+      "trained": 0.8427221842076471,
+      "random_init": 0.3328677536807272,
+      "raw_pixels": 0.719738209373699
+    },
+    "curvature_20": {
+      "trained": 0.802775987921882,
+      "random_init": 0.1599428783905349,
+      "raw_pixels": 0.5442379448080578
+    },
+    "curvature_30": {
+      "trained": 0.5459430295062477,
+      "random_init": 0.028665008245002732,
+      "raw_pixels": 0.24637262536465132
+    },
+    "on_grass": {
+      "trained": 0.8932696716240719,
+      "random_init": 0.3018827113780248,
+      "raw_pixels": 0.9399717806121534
+    }
+  }
+}

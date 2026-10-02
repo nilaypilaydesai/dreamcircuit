@@ -20,91 +20,156 @@ the results; this file has the reasoning.
 
 ## 2. The circuit designer (`trackgen/`, `web/src/game/world/trackgen.ts`)
 
-### Representation
+### The architect: where the training circuits come from
 
-Every procedural circuit is built from control points at sorted angles around an origin, so it
-winds exactly once around it and can be written as a radius function r(theta), sampled at 128
-evenly spaced angles, with the start line at theta = 0 and the lap running counter-clockwise
-(clockwise circuits are mirrored). The representation was chosen for what it makes free:
+`trackgen/architect.py` lays out circuits the way a track designer sketches them: as a sequence
+of features joined by straights. A feature is a hairpin (150 to 190 degrees at 9 to 14 m), a
+tight corner, a medium corner, a sweeper, a kink, a chicane, esses or a double apex, each with
+its own range of turning angles and radii, and every corner eases in and out of its curvature
+like a clothoid, so the road never kinks. The corner angles are drawn first and scaled so the
+lap's total turning is exact: one full turn for a plain loop, zero for a figure-eight. Once the
+headings are fixed, the lap's end point is linear in the straights' lengths, so those are solved
+(least squares with a minimum length) to close the lap exactly. A figure-eight is two lobes that
+each close on themselves through one shared crossing, with a home straight for the start.
 
-- **Closure.** Any 128-vector is a closed loop. A model that output x/y points would have to
-  learn to end where it started.
-- **Inpainting.** "The road built so far" is a contiguous arc of known samples. Extending the
-  road and closing the loop are both "fill in the unknown samples given the known ones", which
-  diffusion models do well.
-- **No self-intersection by construction.** A star-shaped loop cannot cross itself. What *can*
-  go wrong is local: a corner that is too tight, or two stretches that pass too close. Both are
-  checked.
+Every circuit must pass the rules the game enforces (`check`):
 
-The cost is expressiveness: no figure-eights, no hairpins that double back past the center
-angle. For a kart racer that is the right trade.
+- lap length 520 to 980 m (plain loops at most 920 m), and every point within 235 m of the start
+  line, so the circuit fits the game's world texture at 1.5x scale;
+- no corner tighter than the 9 m minimum radius (with an 8% tolerance);
+- clearance between stretches that are far apart along the lap;
+- the start line on straight road (48 m before it, 24 m after it);
+- plain loops never cross; figure-eights cross exactly once, at 50 degrees or more, at least 80 m
+  from the start, with straight road around the crossing (34 m either side on the stretch that
+  becomes the bridge, 16 m on the road underneath).
 
-### Data and model
+`trackgen-data` builds 70,000 of them in 13.5 minutes on 10 cores, 35% figure-eights, and holds
+out 3,500. Each is resampled to 256 points evenly spaced along the road (2.8 m apart on average),
+with the start line at point 0 heading +x, and the curvature at each point is kept for the style
+signal.
 
-`trackgen-data` samples 60,000 circuits from the simulator's own generator (geometry only, 3
-minutes on 10 cores); 59,969 are star-shaped about their origin, and 5% are held out. Radii are
-standardized (mean 77 m, standard deviation 23.5 m).
+### The representation: steps between points
 
-The denoiser is a 1-D U-Net (32/64/128 channels, two residual blocks per level, self-attention
-at the bottleneck, 2.2M parameters). Every convolution uses **circular padding**: the lap is
-periodic, so there is no edge for the network to see, and the road always meets itself.
-Inputs are five channels: the noisy profile, a 0/1 mask of known angles, the known values
-(masked), and sin/cos of the angle, so the network knows where the start straight is. The noise
-level conditions every block through adaptive normalization, with EDM preconditioning
-(`sigma_data = 1` on the standardized radii).
+The network does not dream the points. It dreams the 256 *steps* between consecutive points
+(point i to point i + 1), at 2 m per network unit, so each component has unit spread.
+`from_steps` turns steps back into a lap: known points stay exactly where they are, and each run
+of dreamed steps from one known point to the next is corrected evenly so that it lands on the
+known point at its end. With nothing known, the lap starts at the origin and the closing gap is
+spread over every step. Why steps, and not points, is in "What did not work" below.
 
-Training draws a random known arc for each example: none at all 20% of the time (dream a whole
-circuit), otherwise one contiguous arc of 6 to 121 samples starting anywhere. The loss on known
-samples is down-weighted to 10%: they are given, so the network should spend its capacity on
-the rest. Half of the examples are mirrored (the same circuit driven the other way). AdamW, a
-cosine schedule over 8,000 steps at batch 256, EMA 0.999: 20 minutes on the M4 Pro's GPU.
+### The model
+
+A 1-D U-Net (32/64/128/192 channels, two residual blocks per level, kernel 5, self-attention at
+the bottleneck, 5.09M parameters). Every convolution uses **circular padding**: the lap is
+periodic, so there is no edge for the network to see. Eleven input channels: the noisy steps, a
+0/1 mask of known steps, the known steps, sin/cos of the position along the lap (so the network
+knows where the start straight is), and its own previous estimate of the steps with the positions
+they add up to (self-conditioning; zero on the first sampling step). The noise level, a style value and a layout (any,
+plain loop, figure-eight) condition every block through adaptive normalization. The style and
+the layout each have a learned "don't care", so both are optional. EDM preconditioning, with one
+change: **known road is returned exactly**, `D = (c_skip x + c_out F)(1 - mask) + known mask`,
+so the network only ever dreams the rest.
+
+Training draws a known stretch for each example: none at all 20% of the time (dream a whole
+circuit), the lap so far from the grid 40% of the time (as the game builds it), and one random
+contiguous stretch otherwise. Known steps are never noised, and the loss covers only the steps
+to be dreamed, weighted up to 10x next to existing road, where the join is decided. Noise levels
+are log-normal with mean -1.6 and spread 1.6, broader and lower than EDM's defaults (-1.2,
+1.2), so the network also learns the small noise levels where a corner's last fraction of a
+meter is set. Half the examples are mirrored, 20% drop the style and 25% drop the layout. AdamW,
+a cosine schedule over 14,000 steps at batch 256 (3e-4, 400 warmup steps), EMA 0.999, then 6,000
+more with self-conditioning (1.5e-4): about an hour and a half on the M4 Pro's GPU.
+
+The style of a stretch is the mean of `min(1, 15 |curvature|)` over its points, mapped to 0..1
+between the 5th and 95th percentile of the training arcs: 0 is a stretch with barely a bend, 1
+a stretch of hairpins and chicanes.
 
 ### Live generation
 
-The game runs the procedure that `live_generate()` in Python mirrors exactly:
+The game runs the procedure that `live_generate()` mirrors in Python:
 
-1. **Before the countdown:** the grid and the first stretch, angles -12 to 23. Twelve angles
-   *behind* the line exist so that the start grid has road under it.
-2. **During lap 1:** whenever the race leader is within 34 angles (27% of a lap) of the end of
-   the road, the next 16 angles are dreamed, conditioned on everything known.
-3. **The closing arc** is conditioned on both ends at once, the road so far and the grid, so it
-   joins them smoothly.
+1. **Before the countdown:** the grid and the first stretch, points -24 to 39, a quarter of the
+   lap. The 24 points *behind* the line exist so the start grid has road under it.
+2. **During lap 1:** whenever the race leader is within 72 points (28% of a lap) of the end of
+   the road, the next 32 points (about 130 m at the game's scale) are dreamed, conditioned on
+   everything known, the layout and the style the race asks for.
+3. **The closing arc** is conditioned on both ends at once, the road so far and the grid, and its
+   steps are corrected to land on the grid.
 
-Each arc is sampled with 24 Heun steps (47 network calls, EDM Algorithm 1 without churn). The
-new samples are then smoothed with a small circular Gaussian (sigma = 1 sample, new arc only;
-existing road never moves) and checked **in context**: the arc plus the designer's guess for the
-still-unknown rest must form a valid circuit (corner radius at least 92% of the generator's 9 m,
-at least 90% of its clearance between stretches, length 400 to 1600 m). Checking the arc
-together with the guess for the rest catches an arc that would make closing the loop
-impossible while it can still be resampled. A failing arc is resampled up to 3 times; after
+Each arc is 24 Heun steps (47 network calls, EDM Algorithm 1 without churn, noise levels from
+40 down to 0.002 with rho = 7), decoded with `from_steps`, smoothed with a small circular
+Gaussian (sigma = 1 point, new arc only) and checked **in context**: the arc plus the designer's
+guess for the still-unknown rest must form a valid circuit under the architect's rules.
+Checking the arc with the guess for the rest catches an arc that would make closing the lap
+impossible while it can still be dreamed again. A failing arc is resampled up to 3 times; after
 that a sigma = 2 smoothing of the last sample is kept, so the race always goes on.
 
-The game turns the known samples into road one Catmull-Rom segment at a time. Segment j (from
-polar point j to j + 1) needs points j - 1 to j + 2, so it is committed, in driving order, as
-soon as those four are known. Committed road is appended to the dense centerline (a point every
-0.6 m, at 1.5x scale for kart-friendly widths) and never changes. When the last segment closes
-the loop, the circuit is **locked**: lap counting switches to the closed loop, the far
-landscape, start gantry and grandstand are placed, and laps 2 and 3 run on the same road.
+**The style signal.** The race keeps exponential averages, over about eight seconds, of the
+player's speed as a share of the class's top speed, the share of time spent drifting, off the
+road (grass or shoulder), and in a spin or a bump. Before each arc it asks for
+`0.5 + 1.25 (speed - 0.72) + 0.6 drift - 1.1 offroad - 0.25 (1 - clean)`, shifted by +0.1 on
+Legend and -0.1 on Rookie, clamped to 0.05..0.95. It is a hand-written heuristic, not learned
+from players.
+
+The game turns known points into road one Catmull-Rom segment at a time, in driving order, as
+soon as the four points a segment needs are known. Committed road is appended to the dense
+centerline (a point every 0.6 m, at 1.5x scale for kart-friendly widths) and never moves, with
+one exception: when a new arc crosses road that exists, the later stretch is lifted into a
+bridge (section 3), even if part of it was built already. When the last segment closes the loop,
+the circuit is **locked**: lap counting switches to the closed loop, the far landscape, start
+gantry and grandstand are placed, and laps 2 and 3 run on the same road.
 
 ### What did not work, and what did
 
-- The first model, sampled with 12 Heun steps, built valid circuits 92% of the time. Most
-  failures were one corner slightly too tight: high-frequency wiggles in r(theta) that a spline
-  turns into a kink. Twice the sampler steps plus the light arc smoothing fixed most of them;
-  whole-circuit validity rose to 98.4% (96.5% with the steps alone).
-- A longer continuation run from the 8k checkpoint, with a fresh learning-rate schedule, scored
-  *lower* partway through, while its learning rate was still high. It was stopped; the 8k model
-  ships.
+- **The first designer (v1) wrote a circuit as a radius per angle**, r(theta) at 128 angles
+  around a center. Closure was free and live generation worked (98.4% of whole circuits and 99%
+  of live builds valid), but a radius function can only describe a loop that winds once around
+  its center: no figure-eights, no bridges. v2 needed a representation that can cross itself.
+- **v2 first dreamed the points**, (x, y) in meters. After 10,500 of 14,000 training steps, 13.5% of
+  whole loops and none of the figure-eights passed the rules, and not one of 16 laps built live
+  did. Two things were wrong.
+- **The noise schedule.** With EDM's default log-normal noise levels, about 1% of training
+  examples see noise below 2 m, but that is the scale at which a corner's last fraction of a
+  meter, and so the 9 m minimum radius, is decided. Training on from the 10.5k checkpoint with a
+  broader schedule (mean -2.4, spread 1.8) took whole-lap validity to 74% for loops and 46% for
+  figure-eights within 3,500 steps. Live builds still failed, every time.
+- **The joins.** Inpainting real laps with half the lap known failed 48 times out of 48, with a
+  near-zero radius exactly where dreamed road met known road. Measured directly: the first
+  dreamed point after the known road was 2.6 m off at a noise level of 30 m, and 5 to 7 m off at
+  100 to 300 m. With points 2.8 m apart, joins turned by up to 120 degrees at one point. The
+  error is made while the noise is high, and later, low-noise steps treat a smooth offset as road
+  and keep it.
+- **What did not fix the joins.** Re-imposing the known road at every sampling step (1 live loop
+  in 5 passed). Keeping known road exact during training for 700 steps (the step across the
+  join fell from 5.3 m to 3.3 m; inpainting still failed 58 of 64). Weighting the loss 10x next to
+  the join for 700 steps (the first point's error at 30 m of noise went from 2.55 to 2.46 m).
+  Pulling the first six dreamed points toward a smooth continuation of the road during sampling
+  (3 live loops in 5: the kink moved to the end of the pulled stretch).
+- **What did: steps.** Absolute coordinates span hundreds of meters and a join needs them right to
+  a fraction of a percent; a step is a few meters long, so continuing the road only asks the
+  network to keep a step close to its neighbor, and the position at a join is exact by
+  construction. Combined with the exact known road, the join-weighted loss and a broad noise
+  schedule, trained from scratch for 14,000 steps, it built 100% of 40 loops and 85% of 40
+  figure-eights live (in-training evaluation).
+- **Then the global shape: self-conditioning.** With steps, where the road *is* has to be added
+  up from hundreds of steps, and the figure-eights' remaining failures were global: laps reaching
+  too far from the start, crossings on a bend, the wrong number of crossings. The network now also
+  sees its own previous estimate of the lap, as steps and as the positions they add up to
+  (self-conditioning, fed back at every sampling step and, half of the time, in training). It was
+  grown from the 14k model (the new input channels start at zero, so it begins exactly where that
+  model left off) and trained 6,000 steps more. One-pass figure-eights went from 37% to 47%
+  valid and the style steering widened (0.34/0.81 to 0.32/0.87 for calm/wild); live builds stayed
+  where they were. That is the model that ships.
 
 ### In the browser
 
-The designer is small (4.5 MB as fp16-stored ONNX), so it runs on ONNX Runtime Web's WASM
-backend, on the main thread: the proxy-worker mode did not initialize under the dev server, and
-it is not needed. The sampler awaits an animation frame before each network call, so dreaming an
-arc costs every frame a few milliseconds instead of stalling one frame for a tenth of a second.
-In a hidden tab there are no animation frames and timers are throttled, so there it runs flat
-out (nothing is being drawn anyway). The first arc runs flat out too, during the "dreaming"
-screen, in about 0.25 s.
+The designer is small, so it runs on ONNX Runtime Web's WASM backend, single-threaded, in a
+**Web Worker**: the worker holds the session and runs the whole Heun loop for each request,
+posting the running whole-lap guess a few times along the way (the minimap draws it) and the
+finished steps at the end. The main thread turns steps into points (`fromSteps`, a TypeScript
+mirror of `from_steps`) and does the checks. The exported model says which representation it
+expects, and the game refuses a model that predates steps rather than drawing garbage. Weights
+are stored as fp16 and cast to fp32 in the graph.
 
 Two safety nets cover slow devices. Race speed is capped by the distance left to the frontier,
 so no kart can drive past road that does not exist yet. And the dream mist at the frontier hides
@@ -117,11 +182,30 @@ the unbuilt edge: the ground there shimmers into fog, and the road appears out o
 nearest-neighbor CSS, so every pixel stays square.
 
 **Mode-7 ground.** Each scanline below the horizon is a line across the ground plane at distance
-`z = h f / (y - horizon)` (camera 2.9 m up, focal length 250 px). The world is one 2048x2048
-texture at 0.25 m per texel, painted when road is committed (grass noise, asphalt, kerbs on
-corners tighter than 40 m, edge lines, the start checkers and grid slots) and mip-mapped, so each
-row samples the level that matches its footprint. Distance fog blends into each world's horizon
-color, and the frontier mist is a per-pixel term that pulses near the end of the dreamed road.
+`z = h f / (y - horizon)` (camera 2.9 m up, focal length 250 px). The world is one 2560x2560
+texture at 0.3 m per texel (768 m across, which is why the architect keeps every lap within 235 m
+of its start line), painted when road is committed (grass noise, asphalt, kerbs on corners
+tighter than 40 m, edge lines, the start checkers and grid slots, and the shadow a bridge casts on
+the road below it) and mip-mapped, so each row samples the level that matches its footprint.
+Distance fog blends into each world's horizon color, and the frontier mist is a per-pixel term
+that pulses near the end of the dreamed road.
+
+**Polygons in a Mode-7 world.** A flat ground texture cannot show a bridge, so bridges, jump
+ramps and boost pads are drawn as flat-shaded convex polygons by a small software rasterizer
+(`render/poly.ts`): transform to camera space, clip against the near plane, cull faces that look
+away, fog by distance, fill scanline by scanline. Polygons and sprites share one painter's sort,
+with a small depth bias per kind so a kart on a deck draws over the deck and a kart underneath
+draws under it. The camera rides up onto bridges with the kart it follows and rises partway on a
+jump, for a sense of air.
+
+**Bridges.** When the dreamed road crosses itself (a figure-eight), the later stretch becomes a
+bridge: it is lifted 6 m over the road below, on 44 m smoothstep ramps either side of a 34 m
+level deck, with kerbed edges, a dashed center line, girder sides, guard rails with posts, and
+pillars placed clear of the road underneath. Crossings are found with a spatial hash as each arc
+is committed; road that was already built is lifted after the fact, its texture repainted and
+its scenery moved. Karts have a height: the ground under a kart is the deck, a ramp or the
+plain road, the guard rails keep it on the deck, and two karts only collide if they are at the
+same level, so traffic passes over and under freely.
 
 **Sprites.** Karts are tiny voxel models (body, wheels, driver, helmet in each livery's colors)
 rendered from 16 directions at load time. The renderer picks the view from the angle between the
@@ -143,6 +227,26 @@ braking-distance lookahead, make room for karts ahead of them, drift tight corne
 per corner, held through it, released on exit), and rubber-band: far behind the player they find
 6%, far ahead they lift 7%. A headless test drives a rival around a twisty circuit and requires
 three clean laps, under 2% of the time on grass, and at least three drifts.
+
+**Jumps, tricks and boost pads.** As road is committed, the game places features on it: jump
+ramps on straights longer than 95 m (at least 260 m apart, and never near a bridge, an item row
+or the start), and boost pads at corner exits (170 m apart). A ramp is an 11 m striped wedge, 1.7
+m high at the lip; a fast kart leaves it on a ballistic arc (gravity 26 m/s^2, arcade-short), with
+a third of its steering in the air. A hop (the drift button) from 0.24 s before the lip to 0.18 s
+after it is a trick, and within 0.085 s of the lip a perfect one: the kart spins in the air and
+lands into a boost (0.8 s, or 1.35 s for a perfect trick). Pads give a 1 s boost; every boost
+widens the field of view and draws speed lines. Rivals try tricks too, more often in the faster
+classes.
+
+**The start.** The countdown reads the throttle: press it in the half second before GO for a
+rocket start (a 1.2 s boost); hold it for more than 1.7 s and the wheels spin for 0.75 s
+instead. Rivals get their own good starts at a rate set by their class. (Until the hero video
+was filmed, the game passed no controls to the race during the countdown at all, so a rocket
+start was impossible; filming one found it, and a test now drives the start procedure.)
+
+**Soundtrack.** Each world, and the title screen, has its own chiptune, sequenced in code
+(`core/music.ts`): four channels (pulse lead, pulse arpeggio, triangle bass, noise drums) over a
+chord progression, synthesized with WebAudio. The tempo steps up on the final lap.
 
 **Items.** A row of four boxes spans the road every 210 m of committed road (the first one
 shortly after the start, none in the last 70 m before the line), so boxes appear as the road is
@@ -378,8 +482,9 @@ instrument's own error appears as the "reality" number:
 network must imagine the next frame from pure noise. Ridge regressions (penalty chosen on a
 validation split) are fit on training circuits and scored on held-out ones. Two controls keep
 the result honest: the same probe on a *randomly initialized* network of the same architecture,
-and a probe on the raw context pixels. Speed is excluded from the headline because it is drawn in
-the HUD, so raw pixels decode it too. Yaw rate (motion between frames), slip, and curvature
+and a probe on the raw context pixels. Speed and the steering angle are excluded from the
+headline because both are drawn in the HUD (a speed bar and a steering marker), so raw pixels
+decode them too. Yaw rate (motion between frames), slip, and curvature
 beyond the view are not drawn anywhere, yet the trained network represents them.
 
 **Steering, and a negative result.** Adding a probe's direction to the bottleneck during sampling

@@ -38,7 +38,7 @@ export interface Designer {
   growth?: Growth;
 }
 
-export interface Probes { r2: Record<string, { trained: number; random_init: number }> }
+export interface Probes { r2: Record<string, { trained: number; random_init: number; raw_pixels: number }> }
 
 export async function loadJson<T>(url: string): Promise<T | null> {
   try {
@@ -177,7 +177,8 @@ export function renderTiles(d: Designer | null, s: Summary | null, p: Probes | n
       icon: gauge,
       title: "Physics audit and probes",
       body: "The dream's frames are read back into physics and checked against the simulator; linear probes find speed and road curvature inside the network.",
-      fact: p ? `speed probe R² ${p.r2.speed.trained.toFixed(3)} (untrained network: ${p.r2.speed.random_init.toFixed(3)})` : null,
+      // yaw rate is in no single frame (speed is drawn in the HUD, so raw pixels read it too)
+      fact: p?.r2.yaw_rate ? `yaw-rate probe R² ${p.r2.yaw_rate.trained.toFixed(2)} (raw pixels: ${p.r2.yaw_rate.raw_pixels.toFixed(2)})` : null,
       href: "#audit",
     },
   ];
