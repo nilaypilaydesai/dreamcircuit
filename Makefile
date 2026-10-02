@@ -25,8 +25,10 @@ policy:  ## distill the privileged expert into the pixel autopilot (BC + DAgger)
 	$(PY) -m dreamcircuit train-policy --device auto
 
 tracks:  ## the circuit designer behind the racing game: data, training, validity at scale, figures
-	$(PY) -m dreamcircuit trackgen-data --n 60000
-	$(PY) -m dreamcircuit train-tracks
+	$(PY) -m dreamcircuit trackgen-data --n 70000
+	$(PY) -m dreamcircuit train-tracks --out runs/designer_base
+	$(PY) -m dreamcircuit train-tracks --init runs/designer_base/designer.pt --self-cond \
+		--steps 6000 --lr 1.5e-4 --out runs/designer
 	$(PY) -m dreamcircuit eval-tracks
 
 report:  ## physics audit, probes, steering, figures, web summary, README numbers (run after export)

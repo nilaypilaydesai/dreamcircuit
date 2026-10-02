@@ -188,24 +188,43 @@ class TrackGraph(nn.Module):
         self.model = model
 
     def forward(
-        self, x: torch.Tensor, sigma: torch.Tensor, mask: torch.Tensor, known: torch.Tensor
+        self,
+        x: torch.Tensor,
+        sigma: torch.Tensor,
+        mask: torch.Tensor,
+        known: torch.Tensor,
+        style: torch.Tensor,
+        style_on: torch.Tensor,
+        layout: torch.Tensor,
+        prev: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        return self.model.denoise(x, sigma, mask, known)
+        return self.model.denoise(x, sigma, mask, known, style, style_on, layout, prev)
 
 
-def export_track_model(model: TrackDenoiser, out_dir: Path, name: str = "trackgen") -> dict:
-    """Export the circuit designer: D(x; sigma | mask, known) on (1, 1, N) polar profiles.
-    Tiny, so the browser runs it on the WASM backend."""
+def export_track_model(
+    model: TrackDenoiser,
+    out_dir: Path,
+    name: str = "trackgen",
+    style_scale: list[float] | None = None,
+) -> dict:
+    """Export the circuit designer: D(x; sigma | mask, known, style, layout) on (1, 2, N) laps,
+    as the steps between consecutive road points (see trackgen/model.py). Run by the game in a
+    worker on the WASM backend."""
     m = copy.deepcopy(model).cpu().eval()
     m.set_export(True)
-    n = m.cfg.n
+    n, d = m.cfg.n, m.cfg.dims
     g = torch.Generator().manual_seed(0)
     inputs = {
-        "x": torch.randn(1, 1, n, generator=g) * 3,
+        "x": torch.randn(1, d, n, generator=g) * 2,
         "sigma": torch.tensor([2.0]),
         "mask": (torch.rand(1, 1, n, generator=g) > 0.5).float(),
-        "known": torch.randn(1, 1, n, generator=g),
+        "known": torch.randn(1, d, n, generator=g),
+        "style": torch.tensor([0.6]),
+        "style_on": torch.tensor([1.0]),
+        "layout": torch.tensor([[0.0, 0.0, 1.0]]),
     }
+    if m.cfg.self_cond:
+        inputs["prev"] = torch.randn(1, d, n, generator=g)  # the sampler's previous estimate
     graph = TrackGraph(m).eval()
     tmp = out_dir / f"{name}.fp32.onnx"
     final = out_dir / f"{name}.onnx"
@@ -214,19 +233,20 @@ def export_track_model(model: TrackDenoiser, out_dir: Path, name: str = "trackge
     tmp.unlink()
     err = check_parity(graph, inputs, final)
     c = m.cfg
-    from dreamcircuit.trackgen.polar import R_MEAN, R_STD
-
     info = {
         "file": final.name,
         "bytes": final.stat().st_size,
         "max_abs_err": err,
         "n": n,
+        "dims": d,
+        "representation": "steps",  # x and known are steps between road points, not points
+        "self_cond": c.self_cond,  # True: the graph also takes "prev", the latest estimate
+        "scale": c.scale,
         "sigma_min": c.sigma_min,
         "sigma_max": c.sigma_max,
         "rho": c.rho,
         "sigma_data": c.sigma_data,
-        "r_mean": R_MEAN,
-        "r_std": R_STD,
+        "style_scale": style_scale,
     }
     (out_dir / f"{name}.json").write_text(json.dumps(info, indent=2))
     return info

@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://nilayd2007.github.io/dreamcircuit/"
-Repository = "https://github.com/nilayd2007/dreamcircuit"
+Homepage = "https://nilaypilaydesai.github.io/dreamcircuit/"
+Repository = "https://github.com/nilaypilaydesai/dreamcircuit"
 
 [project.optional-dependencies]
 export = ["onnx>=1.16", "onnxruntime>=1.18", "onnxscript>=0.1", "onnxconverter-common>=1.14"]

@@ -57,7 +57,8 @@ def _cmd_export(a: argparse.Namespace) -> None:
         from dreamcircuit.export.onnx_export import export_track_model
         from dreamcircuit.trackgen.train import load_track_model
 
-        out["trackgen"] = export_track_model(load_track_model(a.tracks), models)
+        designer, scale = load_track_model(a.tracks)
+        out["trackgen"] = export_track_model(designer, models, style_scale=[scale.lo, scale.hi])
     out["assets"] = export_web_assets(Path(a.web_dir))
     print(json.dumps(out, indent=2))
 
@@ -86,14 +87,64 @@ def _cmd_trackgen_data(a: argparse.Namespace) -> None:
 def _cmd_train_tracks(a: argparse.Namespace) -> None:
     from dreamcircuit.trackgen.train import train_tracks
 
-    r = train_tracks(a.data, a.out, a.steps, device_name=a.device, init=a.init)
+    r = train_tracks(
+        a.data,
+        a.out,
+        a.steps,
+        lr=a.lr,
+        device_name=a.device,
+        init=a.init,
+        p_mean=a.p_mean,
+        p_std=a.p_std,
+        resume=a.resume,
+        self_cond=a.self_cond,
+    )
     print(json.dumps(r["evals"][-1]))
+
+
+def _cmd_dream(a: argparse.Namespace) -> None:
+    """Build one circuit live, arc by arc, as the game does, and write it in game meters."""
+    import numpy as np
+    import torch
+
+    from dreamcircuit.trackgen import architect as A
+    from dreamcircuit.trackgen.train import (
+        EXPECT,
+        constant_style,
+        live_generate,
+        load_track_model,
+        reconstruct,
+    )
+
+    torch.set_num_threads(1)
+    model, _ = load_track_model(a.checkpoint, "cpu")
+    style = None if a.style is None else constant_style(a.style)
+    for k in range(a.tries):
+        rng = np.random.default_rng(a.seed + k)
+        pts, retried = live_generate(model, torch.device("cpu"), rng, a.layout, style=style)
+        v = A.check(reconstruct(pts), expect=EXPECT[a.layout])
+        print(f"seed {a.seed + k}: {'drivable' if v.ok else v.reason}, {retried} arcs retried")
+        if v.ok:
+            game = (pts * 1.5).round(3).reshape(-1).tolist()  # the game drives at 1.5x scale
+            Path(a.out).write_text(json.dumps(game))
+            print(f"wrote {a.out} ({v.length * 1.5:.0f} m lap in the game)")
+            return
+    raise SystemExit("no drivable circuit in that many tries")
 
 
 def _cmd_eval_tracks(a: argparse.Namespace) -> None:
     from dreamcircuit.trackgen.train import evaluate_designer
 
-    r = evaluate_designer(a.checkpoint, a.out, n_whole=a.n, n_live=a.n_live, device_name=a.device)
+    r = evaluate_designer(
+        a.checkpoint,
+        a.out,
+        n_whole=a.n,
+        n_live=a.n_live,
+        device_name=a.device,
+        workers=a.workers,
+        web=None if a.web == "none" else a.web,
+        figures=None if a.figures == "none" else a.figures,
+    )
     print(json.dumps({k: v for k, v in r.items() if k not in ("dreamed", "real")}, indent=2))
 
 
@@ -134,7 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     ex = sub.add_parser("export", help="ONNX models + web assets for the browser app")
     ex.add_argument("--checkpoint", default="runs/wm_base/latest.pt")
     ex.add_argument("--policy", default="runs/policy/policy.pt")
-    ex.add_argument("--tracks", default="runs/trackgen/trackgen.pt", help="circuit designer")
+    ex.add_argument("--tracks", default="runs/designer/designer.pt", help="circuit designer")
     ex.add_argument("--web-dir", default="web")
     ex.set_defaults(func=_cmd_export)
 
@@ -145,26 +196,45 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--quick", action="store_true", help="a quarter of the samples")
     rp.set_defaults(func=_cmd_report)
 
-    td = sub.add_parser("trackgen-data", help="circuits as polar profiles for the track model")
-    td.add_argument("--n", type=int, default=60000)
+    td = sub.add_parser("trackgen-data", help="architect circuits for the designer")
+    td.add_argument("--n", type=int, default=70000)
     td.add_argument("--workers", type=int, default=10)
-    td.add_argument("--out", default="data/tracks")
+    td.add_argument("--out", default="data/circuits")
     td.set_defaults(func=_cmd_trackgen_data)
 
     tt = sub.add_parser("train-tracks", help="train the circuit-designer diffusion model")
-    tt.add_argument("--data", default="data/tracks")
-    tt.add_argument("--out", default="runs/trackgen")
-    tt.add_argument("--steps", type=int, default=8000)
+    tt.add_argument("--data", default="data/circuits")
+    tt.add_argument("--out", default="runs/designer")
+    tt.add_argument("--steps", type=int, default=14000)
     tt.add_argument("--device", default="auto")
     tt.add_argument("--init", default=None, help="continue from a checkpoint's weights")
+    tt.add_argument("--lr", type=float, default=3e-4)
+    tt.add_argument("--p-mean", type=float, default=None, help="log noise level: mean")
+    tt.add_argument("--p-std", type=float, default=None, help="log noise level: spread")
+    tt.add_argument("--resume", action="store_true", help="continue a stopped run from its state")
+    tt.add_argument("--self-cond", action="store_true", help="feed back the previous estimate")
     tt.set_defaults(func=_cmd_train_tracks)
 
+    dr = sub.add_parser("dream", help="build one circuit live with the designer (game meters)")
+    dr.add_argument("--checkpoint", default="runs/designer/designer.pt")
+    dr.add_argument("--layout", default="figure8", choices=["any", "loop", "figure8"])
+    dr.add_argument("--style", type=float, default=None, help="0 calm .. 1 wild (default: any)")
+    dr.add_argument("--seed", type=int, default=0)
+    dr.add_argument("--tries", type=int, default=20)
+    dr.add_argument("--out", default="runs/dreamed.json")
+    dr.set_defaults(func=_cmd_dream)
+
     et = sub.add_parser("eval-tracks", help="validity of dreamed circuits, and a gallery sample")
-    et.add_argument("--checkpoint", default="runs/trackgen/trackgen.pt")
+    et.add_argument("--checkpoint", default="runs/designer/designer.pt")
     et.add_argument("--out", default="results/trackgen.json")
     et.add_argument("--n", type=int, default=1000, help="whole circuits, sampled in one batch")
     et.add_argument("--n-live", type=int, default=200, help="circuits built arc by arc, like lap 1")
-    et.add_argument("--device", default="cpu", help="cpu is fastest for this tiny 1-D model")
+    et.add_argument(
+        "--device", default="auto", help="for the batched whole-circuit dreams (live: CPU workers)"
+    )
+    et.add_argument("--workers", type=int, default=8, help="processes for the live builds")
+    et.add_argument("--web", default="web/public/results", help='where the site reads it ("none")')
+    et.add_argument("--figures", default="docs/assets", help='README figures ("none" to skip)')
     et.set_defaults(func=_cmd_eval_tracks)
     return p
 
