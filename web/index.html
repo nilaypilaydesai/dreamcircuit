@@ -32,7 +32,7 @@
           <p class="eyebrow">Neural game engine <span class="dot"></span> running on your GPU</p>
           <h1>This racing game <span class="nowrap">does not exist.</span></h1>
           <p class="lede">
-            No physics engine, no renderer, no game code is running on the right. Every frame is
+            No physics engine, no renderer and no game code produce the frames below. Each one is
             <em>imagined</em> by a diffusion model, live in your browser, from the last four frames
             and the keys you press.
           </p>
@@ -57,6 +57,10 @@
                 </div>
                 <figcaption><span class="tag dream">Dream</span> neural network, 0 lines of game code</figcaption>
               </figure>
+            </div>
+            <div class="touch" id="touch" aria-hidden="true">
+              <button data-k="left">&larr;</button><button data-k="right">&rarr;</button>
+              <button data-k="brake">Brake</button><button data-k="gas">Gas</button>
             </div>
             <p class="drive-hint" id="drive-hint" aria-live="polite"></p>
             <div class="pills" id="pills">
@@ -118,10 +122,6 @@
               <span><kbd>A</kbd><kbd>D</kbd> steer</span>
               <span><kbd>Space</kbd> autopilot</span>
               <span><kbd>R</kbd> wake up</span>
-            </div>
-            <div class="touch" id="touch" aria-hidden="true">
-              <button data-k="left">&larr;</button><button data-k="right">&rarr;</button>
-              <button data-k="brake">Brake</button><button data-k="gas">Gas</button>
             </div>
           </aside>
         </div>

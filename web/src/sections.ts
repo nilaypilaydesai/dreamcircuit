@@ -45,8 +45,9 @@ function card(big: string, label: string, note = ""): string {
 export async function renderSections(): Promise<void> {
   let summary: Summary = {};
   try {
-    const r = await fetch("results/summary.json");
-    if (r.ok) summary = await r.json();
+    const [r, p] = await Promise.all([fetch("results/summary.json"), fetch("results/parity.json")]);
+    if (r.ok && !(r.headers.get("content-type") ?? "").includes("html")) summary = await r.json();
+    if (p.ok && !(p.headers.get("content-type") ?? "").includes("html")) summary.parity = await p.json();
   } catch {
     // results are optional during development; the cards fall back to static text
   }

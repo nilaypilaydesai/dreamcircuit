@@ -53,7 +53,7 @@ class GroupNorm(nn.Module):
         return ((g - mean) / torch.sqrt(var + self.eps)).reshape_as(x)
 
 
-def zero_init(m: nn.Linear | nn.Conv2d) -> None:
+def zero_init(m: nn.Linear | nn.Conv1d | nn.Conv2d) -> None:
     """Zero a layer so its block starts as the identity (stable deep diffusion training)."""
     nn.init.zeros_(m.weight)
     if m.bias is not None:

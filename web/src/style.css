@@ -92,8 +92,9 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; margin: 0; }
   letter-spacing: 0.14em;
   color: var(--dream);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
 }
 .eyebrow .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--dim); }
 .hero h1 { font-size: clamp(34px, 4.6vw, 60px); line-height: 1.05; font-weight: 700; }
@@ -223,7 +224,7 @@ input[type="range"] { width: 100%; accent-color: var(--dream); }
 .btn.dream { border-color: rgba(167, 139, 250, 0.5); color: #ddd6fe; }
 .keys { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--dim); padding: 0 4px; }
 kbd { font-size: 11px; color: var(--muted); padding: 1px 6px; border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 5px; margin-right: 3px; }
-.touch { display: none; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.touch { display: none; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
 .touch button { font: 600 15px var(--font); color: var(--text); padding: 16px 0; border-radius: 12px; background: var(--panel); border: 1px solid var(--line-2); touch-action: none; user-select: none; }
 .touch button.on { background: rgba(167, 139, 250, 0.25); }
 @media (pointer: coarse) { .touch { display: grid; } .keys { display: none; } }

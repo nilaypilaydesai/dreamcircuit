@@ -24,7 +24,7 @@ import torch.nn.functional as F
 
 from dreamcircuit.config import DEFAULT
 from dreamcircuit.data.dataset import EpisodeStore, to_tensor, to_uint8
-from dreamcircuit.eval.registration import estimate_motion
+from dreamcircuit.eval.registration import estimate_motion, true_motion
 from dreamcircuit.model.edm import WorldModel
 from dreamcircuit.sim.env import RaceEnv
 from dreamcircuit.sim.render import read_hud
@@ -146,6 +146,15 @@ def fidelity(
             "denoiser_calls": calls,
         }
         dreams[steps] = dream
+    # Play-time context-noise level (the browser's "context noise" slider): telling the model
+    # its context is slightly noisy invites it to repair, rather than copy, its own mistakes.
+    res["context_noise_sweep"] = {}
+    for aug in (0.0, 0.05, 0.1, 0.2):
+        torch.manual_seed(seed)
+        dream = model.rollout(
+            frames[:, :l], acts[:, : l - 1], acts[:, l - 1 :], steps=2, aug_sigma=aug
+        )
+        res["context_noise_sweep"][f"{aug:.2f}"] = psnr(dream, truth).mean(0).tolist()
     return {
         "metrics": res,
         "dreams": dreams,
@@ -258,9 +267,48 @@ def controllability(
         "yaw_response_ratio": float(
             np.median(yaw_d / np.where(np.abs(yaw_r) > 1e-3, yaw_r, np.nan))
         ),
-        "dv_response_ratio": float(np.median(dv_d / np.where(np.abs(dv_r) > 1e-3, dv_r, np.nan))),
+        "dv_response_ratio": float(
+            np.nanmedian(dv_d / np.where(np.abs(dv_r) > 1e-3, dv_r, np.nan))
+        ),
     }
     return {"metrics": out, "examples": examples}
+
+
+@torch.no_grad()
+def instrument_validation(
+    store: EpisodeStore, device: torch.device, n: int = 512, seed: int = 0
+) -> dict:
+    """How well does the registration instrument recover true motion from *real* frames?
+    (Everything the audit says about dreams is only as good as this.)"""
+    rng = np.random.default_rng(seed)
+    e = rng.integers(0, store.n_episodes, n)
+    t = rng.integers(0, store.n_frames - 1, n)
+    off = np.abs(np.asarray(store.features[e, t, store.feature_index("offset")]))
+    near = off < DEFAULT.track.half_width + 6.0
+    e, t = e[near], t[near]
+    est = (
+        estimate_motion(
+            to_tensor(store.frames[e, t], device), to_tensor(store.frames[e, t + 1], device)
+        )
+        .cpu()
+        .numpy()
+    )
+    st = torch.from_numpy(np.asarray(store.states[e, t], dtype=np.float32))
+    st1 = torch.from_numpy(np.asarray(store.states[e, t + 1], dtype=np.float32))
+    tru = true_motion(st, st1).numpy()
+
+    def r2(a: np.ndarray, b: np.ndarray) -> float:
+        return float(1 - ((a - b) ** 2).sum() / ((a - a.mean()) ** 2).sum())
+
+    v_t, v_e, r_t, r_e = tru[:, 0] * HZ, est[:, 0] * HZ, tru[:, 2] * HZ, est[:, 2] * HZ
+    return {
+        "pairs": len(e),
+        "speed_r2": r2(v_t, v_e),
+        "speed_mae": float(np.abs(v_t - v_e).mean()),
+        "yaw_r2": r2(r_t, r_e),
+        "yaw_mae": float(np.abs(r_t - r_e).mean()),
+        "speed_range": [float(np.percentile(v_t, 5)), float(np.percentile(v_t, 95))],
+    }
 
 
 def run_audit(
@@ -283,6 +331,7 @@ def run_audit(
     phys = physics(fid["dreams"][physics_steps], fid["truth"], fid["frames"][:, l - 1])
     ctrl = controllability(model, store, device, n_counterfactual, 1.0, physics_steps, seed)
     report = {
+        "instrument": instrument_validation(store, device),
         "fidelity": fid["metrics"],
         "physics": phys,
         "controllability": ctrl["metrics"],

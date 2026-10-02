@@ -1,7 +1,7 @@
 // The TypeScript simulator must reproduce the Python simulator: same physics trajectory, same
 // track localization, same pixels. Golden data comes from `dreamcircuit export-web`.
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
@@ -34,6 +34,8 @@ describe("simulator parity with Python", () => {
   const cars = golden.init_state.length as number;
   const steps = golden.actions.length as number;
 
+  let worstState = 0;
+
   it("reproduces vehicle trajectories and localization", async () => {
     const track = await loadTrack();
     for (let c = 0; c < cars; c++) {
@@ -48,6 +50,7 @@ describe("simulator parity with Python", () => {
         expect(env.idx).toBe(golden.idx[t + 1][c]);
       }
       expect(maxErr).toBeLessThan(1e-9); // observed: ~1e-15 (machine precision)
+      worstState = Math.max(worstState, maxErr);
     }
   });
 
@@ -67,6 +70,13 @@ describe("simulator parity with Python", () => {
           worst = Math.max(worst, d);
         }
       }
+    }
+    if (process.env.WRITE_PARITY) {
+      // `WRITE_PARITY=1 npm test` publishes these numbers for the website's engineering cards.
+      mkdirSync(resolve(root, "public/results"), { recursive: true });
+      writeFileSync(resolve(root, "public/results/parity.json"),
+                    JSON.stringify({ bytes_total: total, bytes_diff: mismatched, worst,
+                                   state_err: worstState }));
     }
     expect(worst).toBeLessThanOrEqual(1);
     expect(mismatched / total).toBeLessThan(1e-4); // observed: 0 of 258,048 bytes differ

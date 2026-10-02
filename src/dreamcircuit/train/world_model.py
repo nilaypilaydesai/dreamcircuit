@@ -72,8 +72,12 @@ def evaluate_rollouts(
     t = k[:, None] + np.arange(l + horizon)[None, :]
     frames = to_tensor(store.frames[e[:, None], t], device)  # (n, L+H, 3, 64, 64)
     acts = torch.from_numpy(np.asarray(store.actions[e[:, None], t[:, :-1]])).to(device)
-    torch.manual_seed(seed)
-    dream = model.rollout(frames[:, :l], acts[:, : l - 1], acts[:, l - 1 :], steps=steps)
+    # Fixed noise for comparable evals, without resetting the *training* RNG: a global
+    # manual_seed here would make every eval interval replay the same noise draws.
+    devices = [device] if device.type == "cuda" else []
+    with torch.random.fork_rng(devices=devices, device_type=device.type):
+        torch.manual_seed(seed)
+        dream = model.rollout(frames[:, :l], acts[:, : l - 1], acts[:, l - 1 :], steps=steps)
     truth = frames[:, l:]
     p = psnr(dream, truth).mean(0).cpu().numpy()  # (H,)
     copy_last = psnr(frames[:, l - 1 : l].expand_as(truth), truth).mean(0).cpu().numpy()
@@ -120,6 +124,7 @@ def train(
         ema.model.load_state_dict(ck["ema"])
         opt.load_state_dict(ck["opt"])
         step = ck["step"]
+        torch.manual_seed(tc.get("seed", 0) + step)  # fresh draws, not a replay of step 0's
         print(f"resumed from step {step}")
     total = tc["steps"] if max_steps is None else min(tc["steps"], max_steps)
     print(

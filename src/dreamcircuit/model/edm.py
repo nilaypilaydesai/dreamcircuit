@@ -35,6 +35,18 @@ class EDMConfig:
     aug_prob: float = 0.7  # fraction of training samples with augmented context
 
 
+def karras_sigmas(steps: int, e: EDMConfig) -> torch.Tensor:
+    """Karras et al. noise schedule: ``steps`` levels from sigma_max to sigma_min, then 0.
+    The browser's sampler (web/src/dream/engine.ts) implements the same formula."""
+    if steps == 1:
+        s = torch.tensor([e.sigma_max])
+    else:
+        ramp = torch.linspace(0, 1, steps)
+        lo, hi = e.sigma_min ** (1 / e.rho), e.sigma_max ** (1 / e.rho)
+        s = (hi + ramp * (lo - hi)) ** e.rho
+    return torch.cat([s, torch.zeros(1)])
+
+
 class WorldModel(nn.Module):
     def __init__(self, unet_cfg: UNetConfig | None = None, edm: EDMConfig | None = None):
         super().__init__()
@@ -98,14 +110,7 @@ class WorldModel(nn.Module):
     # ---------------------------------------------------------------------------------------
     def sigmas(self, steps: int, device: torch.device | str = "cpu") -> torch.Tensor:
         """Karras schedule from sigma_max down to sigma_min, with a trailing 0."""
-        e = self.edm
-        if steps == 1:
-            s = torch.tensor([e.sigma_max])
-        else:
-            ramp = torch.linspace(0, 1, steps)
-            lo, hi = e.sigma_min ** (1 / e.rho), e.sigma_max ** (1 / e.rho)
-            s = (hi + ramp * (lo - hi)) ** e.rho
-        return torch.cat([s, torch.zeros(1)]).to(device)
+        return karras_sigmas(steps, self.edm).to(device)
 
     @torch.no_grad()
     def sample_trajectory(

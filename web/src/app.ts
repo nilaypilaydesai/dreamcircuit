@@ -43,6 +43,8 @@ export class App {
   private msAvg = 0;
   private fpsAvg = 0;
   private lastTick = 0;
+  private frames = 0;
+  private adapted = false;
   private busy = false;
   private mind: { dir: MindDirection; value: number }[] = [];
   private turing = { round: 0, correct: 0, truth: "" as "" | "real" | "dream", playing: false };
@@ -170,6 +172,9 @@ export class App {
     });
     $("panel-turing").hidden = m !== "turing";
     $("panel-controls").hidden = m === "turing";
+    $("panel-imagination").hidden = m === "turing";
+    $("panel-mind").hidden = m === "turing" || this.mind.length === 0;
+    $("drive-hint").hidden = m === "turing";
     $("pill-div").hidden = m !== "split";
     $("spark").hidden = m !== "split";
     if (m === "turing") {
@@ -312,6 +317,13 @@ export class App {
     }
     this.lastTick = now;
     this.msAvg = this.msAvg ? 0.9 * this.msAvg + 0.1 * this.engine.lastMs : this.engine.lastMs;
+    // Adaptive quality: a slow device (phones, WASM) drops to one denoising step to hold 15 fps.
+    this.frames += 1;
+    if (!this.adapted && this.frames > 45 && this.engine.steps > 1 && this.msAvg > 0.9 * (1000 / HZ)) {
+      this.adapted = true;
+      this.setSteps(1);
+      $("drive-hint").textContent = "This device is a little slow, so the dream switched to 1 denoising step to keep 15 fps.";
+    }
     $("pill-ms").textContent = `${this.msAvg.toFixed(1)} ms / frame (${this.engine.steps} step${this.engine.steps > 1 ? "s" : ""})`;
     $("pill-fps").textContent = `${this.fpsAvg.toFixed(1)} fps`;
     const led = $("led");
@@ -354,6 +366,7 @@ export class App {
     }
     this.turing.truth = isDream ? "dream" : "real";
     this.updateTuringText("Watch closely. Real or dream?");
+    $("dream-canvas").scrollIntoView({ behavior: "smooth", block: "nearest" });
     for (const f of frames) {
       this.dream.drawRGB(f);
       await new Promise((r) => setTimeout(r, 1000 / HZ));

@@ -9,8 +9,8 @@ __pycache__/
 .hypothesis/
 
 # Generated data and training artifacts (reproducible via `make data` / `make train`)
-data/
-runs/
+/data/
+/runs/
 *.npy
 !tests/fixtures/*.npy
 

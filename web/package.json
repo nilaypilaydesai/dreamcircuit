@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "parity-report": "WRITE_PARITY=1 vitest run tests/sim.parity.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

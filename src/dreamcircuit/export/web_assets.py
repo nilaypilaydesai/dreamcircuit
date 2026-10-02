@@ -16,6 +16,7 @@ import numpy as np
 
 from dreamcircuit.config import DEFAULT
 from dreamcircuit.data.generate import SPLIT_SEED_OFFSET
+from dreamcircuit.model.edm import EDMConfig, karras_sigmas
 from dreamcircuit.sim.drivers import MixedDriver
 from dreamcircuit.sim.env import RaceEnv
 from dreamcircuit.sim.render import car_sprite
@@ -62,6 +63,7 @@ def export_golden(path: Path, track_dir: Path, steps: int = 90, cars: int = 3) -
         idx.append(env.idx.copy())
         frames.append(env.render())
     keep = list(range(0, steps + 1, 15))
+    edm = EDMConfig()
     golden = {
         "track": meta["id"],
         "init_state": init.tolist(),
@@ -70,6 +72,8 @@ def export_golden(path: Path, track_dir: Path, steps: int = 90, cars: int = 3) -
         "states": np.stack(states).tolist(),  # (T+1, n, 7)
         "idx": np.stack(idx).tolist(),
         "frame_steps": keep,
+        "edm": {"sigma_min": edm.sigma_min, "sigma_max": edm.sigma_max, "rho": edm.rho},
+        "sigmas": {str(n): karras_sigmas(n, edm).tolist() for n in (1, 2, 3, 4)},
         "frames": {
             str(k): [base64.b64encode(frames[k][c].tobytes()).decode() for c in range(cars)]
             for k in keep

@@ -72,6 +72,18 @@ def _cmd_report(a: argparse.Namespace) -> None:
     )
 
 
+def _cmd_trackgen_data(a: argparse.Namespace) -> None:
+    from dreamcircuit.trackgen.data import build
+
+    print(json.dumps(build(Path(a.out), a.n, a.workers), indent=2))
+
+
+def _cmd_train_tracks(a: argparse.Namespace) -> None:
+    from dreamcircuit.trackgen.train import train_tracks
+
+    print(json.dumps(train_tracks(a.data, a.out, a.steps, device_name=a.device)["evals"][-1]))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dreamcircuit", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -118,6 +130,19 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--device", default="auto")
     rp.add_argument("--quick", action="store_true", help="a quarter of the samples")
     rp.set_defaults(func=_cmd_report)
+
+    td = sub.add_parser("trackgen-data", help="circuits as polar profiles for the track model")
+    td.add_argument("--n", type=int, default=60000)
+    td.add_argument("--workers", type=int, default=10)
+    td.add_argument("--out", default="data/tracks")
+    td.set_defaults(func=_cmd_trackgen_data)
+
+    tt = sub.add_parser("train-tracks", help="train the circuit-designer diffusion model")
+    tt.add_argument("--data", default="data/tracks")
+    tt.add_argument("--out", default="runs/trackgen")
+    tt.add_argument("--steps", type=int, default=8000)
+    tt.add_argument("--device", default="auto")
+    tt.set_defaults(func=_cmd_train_tracks)
     return p
 
 

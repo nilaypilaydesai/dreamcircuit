@@ -1,9 +1,10 @@
 # DreamCircuit: one command per stage. `make help` lists them.
 PY ?= .venv/bin/python
 WM_RUN ?= runs/wm_base
-CKPT ?= $(WM_RUN)/latest.pt
+# Pin a finished checkpoint, never the moving latest.pt.
+CKPT ?= $(WM_RUN)/ckpt_060000.pt
 
-.PHONY: help setup data train policy report export web-dev web-build test lint all clean-runs
+.PHONY: help setup data train policy tracks report export web-dev web-build test lint all clean-runs
 
 help:  ## list targets
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-11s\033[0m %s\n", $$1, $$2}'
@@ -23,8 +24,13 @@ train:  ## train the diffusion world model (~3.5 h on an M4 Pro; resumable)
 policy:  ## distill the privileged expert into the pixel autopilot (BC + DAgger)
 	$(PY) -m dreamcircuit train-policy --device auto
 
-report:  ## physics audit, probes, steering; writes results/ figures and web summary
+tracks:  ## the circuit-designer diffusion model behind the racing game
+	$(PY) -m dreamcircuit trackgen-data --n 60000
+	$(PY) -m dreamcircuit train-tracks
+
+report:  ## physics audit, probes, steering, figures, web summary, README numbers (run after export)
 	$(PY) -m dreamcircuit report --checkpoint $(CKPT)
+	$(PY) scripts/update_readme.py
 
 export:  ## ONNX models + simulator assets + parity fixtures for the browser
 	$(PY) -m dreamcircuit export --checkpoint $(CKPT)
@@ -45,7 +51,7 @@ lint:  ## ruff, mypy, tsc
 	$(PY) -m mypy src
 	cd web && npm run typecheck
 
-all: data train policy report export  ## the whole pipeline, end to end
+all: data train policy tracks export report  ## the whole pipeline, end to end
 
 clean-runs:  ## delete training runs (keeps data/)
 	rm -rf runs

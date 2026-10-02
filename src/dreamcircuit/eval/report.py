@@ -377,7 +377,8 @@ def gif_two_worlds(
     hist = [env.render()[0]]
     acts = []
     for _ in range(l - 1):  # a few real frames to wake the dream up with
-        a = policy(to_tensor(np.stack((hist * l)[-l:])[None], device).flatten(1, 2))
+        stack = [hist[0]] * (l - len(hist)) + hist  # left-pad with the first frame
+        a = policy(to_tensor(np.stack(stack)[None], device).flatten(1, 2))
         a = a.cpu().numpy().astype(np.float64)
         env.step(a)
         hist.append(env.render()[0])

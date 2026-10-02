@@ -164,10 +164,14 @@ def _random_centerline(rng: np.random.Generator, spec: TrackSpec) -> np.ndarray:
     return _resample_closed(center, spec.ds)
 
 
-def generate_track(seed: int, spec: TrackSpec | None = None, max_tries: int = 500) -> Track:
-    """Deterministically generate a valid circuit from ``seed``."""
-    spec = spec or TrackSpec()
-    rng = np.random.default_rng(seed)
+def sample_valid_centerline(
+    rng: np.random.Generator, spec: TrackSpec, max_tries: int = 500
+) -> np.ndarray:
+    """Rejection-sample one valid circuit centerline (geometry only, no texture).
+
+    The returned loop starts on the straightest 30 m of the lap and runs clockwise or
+    counter-clockwise with equal probability. Consumes ``rng`` exactly as ``generate_track``
+    always has, so seeds keep producing the same circuits."""
     for _ in range(max_tries):
         center = _random_centerline(rng, spec)
         _, _, curv = _frames(center, spec.ds)
@@ -187,22 +191,32 @@ def generate_track(seed: int, spec: TrackSpec | None = None, max_tries: int = 50
             np.abs(np.concatenate([curv, curv[:window]])), np.ones(window), mode="valid"
         )[: len(curv)]
         start = (int(np.argmin(straightness)) + window // 2) % len(center)
-        center = np.roll(center, -start, axis=0)
-        tangent, normal, curv = _frames(center, spec.ds)
-        texture, origin = rasterize(center, normal, curv, spec, rng)
-        return Track(
-            center,
-            tangent,
-            normal,
-            curv,
-            spec.ds,
-            spec.half_width,
-            texture,
-            origin,
-            spec.tex_res,
-            seed,
-        )
-    raise RuntimeError(f"could not generate a valid track for seed {seed}")
+        return np.roll(center, -start, axis=0)
+    raise RuntimeError("could not sample a valid circuit")
+
+
+def generate_track(seed: int, spec: TrackSpec | None = None, max_tries: int = 500) -> Track:
+    """Deterministically generate a valid circuit from ``seed``."""
+    spec = spec or TrackSpec()
+    rng = np.random.default_rng(seed)
+    try:
+        center = sample_valid_centerline(rng, spec, max_tries)
+    except RuntimeError as err:
+        raise RuntimeError(f"could not generate a valid track for seed {seed}") from err
+    tangent, normal, curv = _frames(center, spec.ds)
+    texture, origin = rasterize(center, normal, curv, spec, rng)
+    return Track(
+        center,
+        tangent,
+        normal,
+        curv,
+        spec.ds,
+        spec.half_width,
+        texture,
+        origin,
+        spec.tex_res,
+        seed,
+    )
 
 
 # --------------------------------------------------------------------------------------------

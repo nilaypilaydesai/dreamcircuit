@@ -122,18 +122,20 @@ def estimate_motion(
     with torch.enable_grad():  # safe to call from inside torch.no_grad() evaluation code
         mask = world_mask(cfg, frames_t.device)
         a_c, b_c = _blur(frames_t, 1.2), _blur(frames_t1, 1.2)
-        p = _coarse(a_c, b_c, mask, max_df).requires_grad_(True)
-        opt = torch.optim.Adam([p], lr=0.02)
+        p0 = _coarse(a_c, b_c, mask, max_df)
+        # Separate step sizes: 1 rad of rotation moves pixels far more than 1 m of translation.
+        # (Scaling the gradient would do nothing: Adam is invariant to per-parameter scale.)
+        trans = p0[:, :2].clone().requires_grad_(True)
+        rot = p0[:, 2:].clone().requires_grad_(True)
+        opt = torch.optim.Adam([{"params": [trans], "lr": 0.02}, {"params": [rot], "lr": 0.002}])
         a_f, b_f = _blur(frames_t, 0.6), _blur(frames_t1, 0.6)
         for i in range(iters):
             a, b = (a_c, b_c) if i < iters // 2 else (a_f, b_f)
-            loss = _loss(a, b, p, mask).sum()
+            loss = _loss(a, b, torch.cat([trans, rot], dim=1), mask).sum()
             opt.zero_grad()
             loss.backward()
-            with torch.no_grad():
-                assert p.grad is not None
-                p.grad[:, 2] *= 0.05  # rotation is far more sensitive per unit than translation
             opt.step()
+        p = torch.cat([trans, rot], dim=1)
     return p.detach()
 
 

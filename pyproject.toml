@@ -15,7 +15,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.26",
     "pillow>=10.0",
-    "torch>=2.4",
+    "torch>=2.4,<2.16",  # the ONNX export uses the TorchScript exporter
     "tqdm>=4.66",
 ]
 
