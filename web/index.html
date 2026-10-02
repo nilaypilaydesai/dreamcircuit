@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DreamCircuit</title>
+    <meta name="description" content="A racing game that exists only inside a neural network: a diffusion world model of an electric race car, running live in your browser on WebGPU." />
+    <meta name="theme-color" content="#06070b" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2306070b'/%3E%3Cpath d='M7 20c3-9 15-9 18 0' stroke='%23a78bfa' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='20' r='3' fill='%23fb923c'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin="anonymous" />
+    <link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="#drive" aria-label="DreamCircuit home">
+        <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><path d="M5 21c3.5-11 18.5-11 22 0" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round"/><circle cx="16" cy="21" r="3.2" fill="var(--real)"/></svg>
+        <span>DreamCircuit</span>
+      </a>
+      <nav>
+        <a href="#drive">Drive</a>
+        <a href="#how">How it works</a>
+        <a href="#audit">Physics audit</a>
+        <a href="#mind">Inside the model</a>
+        <a href="#engineering">Engineering</a>
+        <a class="gh" id="gh-link" href="https://github.com/" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="drive" class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Neural game engine <span class="dot"></span> running on your GPU</p>
+          <h1>This racing game <span class="nowrap">does not exist.</span></h1>
+          <p class="lede">
+            No physics engine, no renderer, no game code is running on the right. Every frame is
+            <em>imagined</em> by a diffusion model, live in your browser, from the last four frames
+            and the keys you press.
+          </p>
+        </div>
+
+        <div class="hero-grid">
+          <div class="stage">
+            <div class="screens" id="screens" data-mode="dream">
+              <figure class="screen real">
+                <div class="canvas-wrap"><canvas id="real-canvas" width="64" height="64" aria-label="Reality: the physics simulator"></canvas></div>
+                <figcaption><span class="tag real">Reality</span> physics engine + renderer</figcaption>
+              </figure>
+              <figure class="screen dream">
+                <div class="canvas-wrap">
+                  <canvas id="dream-canvas" width="64" height="64" aria-label="Dream: the neural network's imagination"></canvas>
+                  <div class="overlay" id="overlay">
+                    <div class="overlay-inner">
+                      <div class="spinner"></div>
+                      <p id="overlay-text">Loading the dream...</p>
+                    </div>
+                  </div>
+                </div>
+                <figcaption><span class="tag dream">Dream</span> neural network, 0 lines of game code</figcaption>
+              </figure>
+            </div>
+            <p class="drive-hint" id="drive-hint" aria-live="polite"></p>
+            <div class="pills" id="pills">
+              <span class="pill"><span class="led" id="led"></span><span id="pill-backend">--</span></span>
+              <span class="pill mono" id="pill-ms">-- ms / frame</span>
+              <span class="pill mono" id="pill-fps">-- fps</span>
+              <span class="pill mono" id="pill-div" hidden>divergence --</span>
+            </div>
+            <canvas id="spark" class="spark" width="600" height="56" hidden aria-label="Dream divergence over time"></canvas>
+          </div>
+
+          <aside class="console">
+            <div class="tabs" role="tablist" aria-label="Mode">
+              <button role="tab" class="tab active" data-mode="dream" aria-selected="true">Dream</button>
+              <button role="tab" class="tab" data-mode="split" aria-selected="false">Reality vs Dream</button>
+              <button role="tab" class="tab" data-mode="turing" aria-selected="false">Real or Dream?</button>
+            </div>
+
+            <div class="panel" id="panel-imagination">
+              <div class="panel-head"><h3>Watch it imagine</h3><span class="hint">noise to frame, every 1/15 s</span></div>
+              <div class="strip" id="strip"></div>
+            </div>
+
+            <div class="panel" id="panel-controls">
+              <div class="row">
+                <label for="steps">Denoising steps <output id="steps-out">2</output></label>
+                <input id="steps" type="range" min="1" max="4" step="1" value="2" />
+              </div>
+              <div class="row">
+                <label for="aug">Context noise <output id="aug-out">0.00</output></label>
+                <input id="aug" type="range" min="0" max="0.2" step="0.01" value="0" />
+              </div>
+              <div class="buttons">
+                <button class="btn primary" id="btn-wake" title="R">Wake up</button>
+                <button class="btn" id="btn-auto" title="Space" aria-pressed="false">Autopilot</button>
+                <button class="btn" id="btn-track" title="T">New circuit</button>
+              </div>
+            </div>
+
+            <div class="panel" id="panel-mind" hidden>
+              <div class="panel-head"><h3>Edit the dream's mind</h3><span class="hint">activation steering</span></div>
+              <p class="small">Directions in the network's 8&times;8 bottleneck, found by contrasting its activations for fast vs. slow and left vs. right driving. Push them and the dream changes its own physics: no throttle, no steering.</p>
+              <div id="mind-sliders"></div>
+            </div>
+
+            <div class="panel" id="panel-turing" hidden>
+              <div class="panel-head"><h3>Real or Dream?</h3><span class="hint" id="turing-score">0 / 0</span></div>
+              <p class="small" id="turing-text">Each clip is 3 seconds of driving: either the real simulator, or the network dreaming. Can you tell?</p>
+              <div class="buttons">
+                <button class="btn real" id="btn-guess-real" disabled>Real</button>
+                <button class="btn dream" id="btn-guess-dream" disabled>Dream</button>
+                <button class="btn" id="btn-turing-next">Play clip</button>
+              </div>
+            </div>
+
+            <div class="keys" aria-label="Controls">
+              <span><kbd>W</kbd><kbd>&uarr;</kbd> throttle</span>
+              <span><kbd>S</kbd><kbd>&darr;</kbd> brake</span>
+              <span><kbd>A</kbd><kbd>D</kbd> steer</span>
+              <span><kbd>Space</kbd> autopilot</span>
+              <span><kbd>R</kbd> wake up</span>
+            </div>
+            <div class="touch" id="touch" aria-hidden="true">
+              <button data-k="left">&larr;</button><button data-k="right">&rarr;</button>
+              <button data-k="brake">Brake</button><button data-k="gas">Gas</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="how" class="section">
+        <p class="eyebrow">How it works</p>
+        <h2>Build a world. Teach a network to dream it. Audit the dream.</h2>
+        <div class="pipeline" id="pipeline"></div>
+      </section>
+
+      <section id="audit" class="section">
+        <p class="eyebrow">Physics audit</p>
+        <h2>Does the dream obey physics?</h2>
+        <p class="section-lede">Video models produce plausible pixels; the question is whether they keep the laws of
+          motion. The audit reads the dream's own frames back into numbers (ego-motion by
+          differentiable image registration, speed from the dreamed speedometer) and checks them
+          against the simulator that generated the training data, on circuits the model never saw.</p>
+        <div class="cards" id="audit-cards"></div>
+        <div class="charts" id="audit-charts"></div>
+      </section>
+
+      <section id="mind" class="section">
+        <p class="eyebrow">Inside the model</p>
+        <h2>The network grew a speedometer.</h2>
+        <p class="section-lede">Linear probes on the 8&times;8 bottleneck recover the car's speed, yaw rate and the
+          curvature of road it has not reached yet. Adding a probe's direction back into the
+          activations causally changes the dream, the same intervention used to study world models
+          in language models and RL agents.</p>
+        <div class="charts" id="mind-charts"></div>
+      </section>
+
+      <section id="engineering" class="section">
+        <p class="eyebrow">Engineering</p>
+        <h2>Built like production software.</h2>
+        <div class="cards" id="eng-cards"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DreamCircuit. A world model of a Formula Student-class electric race car. Trained from scratch on one laptop.</p>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

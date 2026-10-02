@@ -1,0 +1,36 @@
+# Main world model: ~9.7M params, ~1.8 GMACs per denoiser call (browser-friendly).
+[model]
+context = 4
+channels = [32, 64, 128, 192]
+blocks_per_level = 2
+attn_levels = []          # self-attention only in the 8x8 bottleneck
+cond_dim = 256
+heads = 4
+groups = 8
+
+[edm]
+sigma_data = 0.5
+p_mean = -0.4
+p_std = 1.2
+sigma_min = 0.002
+sigma_max = 5.0
+rho = 7.0
+aug_max = 0.3
+aug_prob = 0.7
+
+[train]
+run_dir = "runs/wm_base"
+data = "data/train"
+test_data = "data/test"
+device = "auto"
+seed = 0
+batch_size = 32
+lr = 2e-4
+weight_decay = 0.01
+warmup = 1000
+steps = 60000
+ema = 0.9995
+grad_clip = 1.0
+log_every = 100
+eval_every = 5000
+ckpt_every = 2500

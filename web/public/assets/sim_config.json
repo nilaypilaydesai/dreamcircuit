@@ -1,0 +1,49 @@
+{
+  "dt": 0.06666666666666667,
+  "substeps": 8,
+  "vehicle": {
+    "mass": 300.0,
+    "iz": 160.0,
+    "lf": 0.8,
+    "lr": 0.75,
+    "mu": 1.6,
+    "mu_grass": 0.6,
+    "tire_b_front": 8.0,
+    "tire_b_rear": 12.0,
+    "tire_c": 1.4,
+    "max_drive_force": 2200.0,
+    "traction_limit": 0.8,
+    "abs_limit": 0.88,
+    "max_power": 80000.0,
+    "max_brake_force": 4000.0,
+    "brake_front_bias": 0.55,
+    "top_speed": 30.0,
+    "drag": 0.75,
+    "roll_res": 0.015,
+    "roll_res_grass": 0.12,
+    "max_steer": 0.42,
+    "steer_rate": 1.6,
+    "steer_speed_ref": 10.0,
+    "g": 9.81,
+    "wheelbase": 1.55
+  },
+  "render": {
+    "size": 64,
+    "meters_per_px": 0.5,
+    "car_col": 32.0,
+    "car_row": 46.0,
+    "supersample": 2,
+    "hud_rows": 4
+  },
+  "track": {
+    "ds": 0.5,
+    "half_width": 4.0,
+    "min_radius": 9.0,
+    "clearance": 10.0,
+    "tex_res": 0.25,
+    "margin": 34.0,
+    "kerb_curvature": 0.038461538461538464,
+    "cone_spacing": 5.0,
+    "cone_offset": 1.4
+  }
+}

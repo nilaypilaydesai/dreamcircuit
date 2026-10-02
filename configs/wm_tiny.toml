@@ -1,0 +1,29 @@
+# Tiny config for CI and tests: trains on CPU in seconds.
+[model]
+context = 4
+channels = [8, 16, 16, 16]
+blocks_per_level = 1
+attn_levels = []
+cond_dim = 32
+heads = 2
+groups = 2
+
+[edm]
+aug_max = 0.3
+
+[train]
+run_dir = "runs/wm_tiny"
+data = "data/train"
+test_data = "data/test"
+device = "cpu"
+seed = 0
+batch_size = 4
+lr = 1e-3
+weight_decay = 0.0
+warmup = 5
+steps = 20
+ema = 0.9
+grad_clip = 1.0
+log_every = 10
+eval_every = 20
+ckpt_every = 20

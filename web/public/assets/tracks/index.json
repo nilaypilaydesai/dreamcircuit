@@ -1,0 +1,32 @@
+[
+  {
+    "id": "track_00",
+    "seed": 1000500,
+    "length_m": 521.0
+  },
+  {
+    "id": "track_01",
+    "seed": 1000501,
+    "length_m": 621.0
+  },
+  {
+    "id": "track_02",
+    "seed": 1000502,
+    "length_m": 517.0
+  },
+  {
+    "id": "track_03",
+    "seed": 1000503,
+    "length_m": 469.0
+  },
+  {
+    "id": "track_04",
+    "seed": 1000504,
+    "length_m": 550.5
+  },
+  {
+    "id": "track_05",
+    "seed": 1000505,
+    "length_m": 564.5
+  }
+]
