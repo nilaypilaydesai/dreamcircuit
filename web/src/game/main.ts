@@ -15,6 +15,7 @@ import { CLASSES, type Controls, type Difficulty, FALL_SWAP, type Kart } from ".
 import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild, rivalBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
 import { TRACK_TYPES, type TrackTypeId, surpriseType, trackType } from "./race/tracktypes";
+import { type GameMap, SHOWCASE } from "./world/maps";
 import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
 import type { Face } from "./render/poly";
@@ -47,6 +48,7 @@ const HOT = hex("#ffd23f");
 const DREAM = hex("#c79bff");
 const DIM = hex("#8f87b8");
 const LOGO_ROWS = ["#ffe66d", "#ffd23f", "#ffb347", "#ff8c42", "#ff6b6b", "#f25f9c", "#c77dff", "#9d6bff"].map(hex);
+const MY_MAPS = 8; // the player's own maps kept
 const BACK_AIM = hex("#ffb347"); // the arrow sweeping behind the kart, in the mirror
 const DIFFS: Difficulty[] = ["rookie", "intermediate", "pro", "legend"];
 /** The TRACK row: a random type, or one of the track types (race/tracktypes.ts). */
@@ -72,13 +74,20 @@ interface Attract {
   driver: RivalDriver;
 }
 
-/** Read the saved garage build and settings; storage can be missing or blocked. */
-function loadSaved(): { build: Build; engine: number } {
+/** Read the saved garage build, settings and the player's maps; storage can be missing or blocked. */
+function loadSaved(): { build: Build; engine: number; maps: GameMap[]; dreams: number } {
   try {
-    const raw = JSON.parse(localStorage.getItem(SAVE) ?? "{}") as { build?: unknown; engine?: unknown };
-    return { build: cleanBuild(raw.build), engine: raw.engine === 1 ? 1 : 0 };
+    const raw = JSON.parse(localStorage.getItem(SAVE) ?? "{}") as { build?: unknown; engine?: unknown; maps?: unknown; dreams?: unknown };
+    const maps = Array.isArray(raw.maps) ? raw.maps.flatMap((m): GameMap[] => {
+      const { name, type, world, p } = (m ?? {}) as { name?: unknown; type?: unknown; world?: unknown; p?: unknown };
+      if (typeof name !== "string" || !Array.isArray(p) || p.length !== 2 * N || !p.every((v) => typeof v === "number")) return [];
+      const id = TRACK_TYPES.some((t) => t.id === type) ? (type as TrackTypeId) : "classic";
+      return [{ name: name.slice(0, 14), type: id, world: typeof world === "string" ? world : undefined, mine: true,
+                points: Float64Array.from(p as number[], (v) => v / 10) }];
+    }).slice(0, MY_MAPS) : [];
+    return { build: cleanBuild(raw.build), engine: raw.engine === 1 ? 1 : 0, maps, dreams: Number(raw.dreams) || maps.length };
   } catch {
-    return { build: DEFAULT_BUILD, engine: 0 }; // private window or blocked storage: defaults
+    return { build: DEFAULT_BUILD, engine: 0, maps: [], dreams: 0 }; // private window or blocked storage: defaults
   }
 }
 
@@ -116,8 +125,8 @@ class Game {
   private attractRuns = 0;
   private autoPaused = false; // paused because the tab was hidden
   private raceError = "";
-  private lastCircuit: Float64Array | null = null;
-  private lastCircuitType: TrackTypeId = "classic"; // re-raced with its own type's rules
+  private myMaps: GameMap[] = []; // the circuits the player dreamed, newest first (kept on this device)
+  private dreams = 0; // how many the player has dreamed (each map is named for its number)
   private surprised = false; // the race's track type was a SURPRISE ME pick (the dream says so)
   private seed = (Math.random() * 1e9) | 0;
   private shake = 0;
@@ -143,12 +152,15 @@ class Game {
     const saved = loadSaved();
     this.build = saved.build;
     this.settings.engine = saved.engine;
+    this.myMaps = saved.maps;
+    this.dreams = saved.dreams;
     this.sound.engineLevel = ENGINE_LEVELS[saved.engine].level;
   }
 
   private save(): void {
     try {
-      localStorage.setItem(SAVE, JSON.stringify({ build: this.build, engine: this.settings.engine }));
+      const maps = this.myMaps.map((m) => ({ name: m.name, type: m.type, world: m.world, p: Array.from(m.points, (v) => Math.round(v * 10)) }));
+      localStorage.setItem(SAVE, JSON.stringify({ build: this.build, engine: this.settings.engine, maps, dreams: this.dreams }));
     } catch {
       // storage blocked: the build lasts until the tab closes, which is fine
     }
@@ -228,9 +240,14 @@ class Game {
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + DIFFS.length - 1) % DIFFS.length; }, right: () => { s.diff = (s.diff + 1) % DIFFS.length; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); }, hint: () => (s.theme === THEMES.length ? "A WORLD PICKED AT RANDOM" : THEMES[s.theme].blurb) },
         { label: "TRACK", value: () => TRACKS[s.track].name, left: () => { s.track = (s.track + TRACKS.length - 1) % TRACKS.length; }, right: () => { s.track = (s.track + 1) % TRACKS.length; }, hint: () => trackHint(s.track) },
-        { label: "CIRCUIT", value: () => (s.circuit === 0 || !this.lastCircuit ? "NEW DREAM" : "LAST ONE"), left: () => { s.circuit = s.circuit ? 0 : 1; }, right: () => { s.circuit = s.circuit ? 0 : 1; }, hint: () => (s.circuit === 1 && this.lastCircuit ? `RE-RACE YOUR LAST LOCKED CIRCUIT (${trackType(this.lastCircuitType).name})` : "A FRESH DREAM, OR RE-RACE YOUR LAST LOCKED CIRCUIT") },
+        { label: "MAP", value: () => this.pickedMap()?.name ?? "NEW DREAM",
+          left: () => { s.circuit = (s.circuit + this.maps().length) % (this.maps().length + 1); },
+          right: () => { s.circuit = (s.circuit + 1) % (this.maps().length + 1); },
+          hint: () => { const m = this.pickedMap(); return !m ? "A FRESH CIRCUIT, DREAMED AS YOU RACE IT"
+            : m.mine ? `YOUR ${trackType(m.type).name} FROM ${m.world ?? "A DREAM"}, RACED AGAIN` : `DREAMED BY THE DESIGNER: ${trackType(m.type).name}`; },
+          preview: () => this.pickedMap()?.points ?? null },
         { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("setup"), hint: "OPEN THE GARAGE" },
-        { label: "START RACE", action: () => void this.startRace(s.circuit === 1 && !!this.lastCircuit) },
+        { label: "START RACE", action: () => void this.startRace(this.pickedMap()) },
         { label: "BACK", action: () => this.go("main") },
       ], 300),
       cupSetup: new Menu("GRAND PRIX", [
@@ -256,7 +273,7 @@ class Game {
       ], 240),
       results: new Menu("", [
         { label: "RACE AGAIN", action: () => this.raceAgain(), hint: "SAME CIRCUIT" },
-        { label: "NEW DREAM CIRCUIT", action: () => void this.startRace(false) },
+        { label: "NEW DREAM CIRCUIT", action: () => void this.startRace() },
         { label: "MAIN MENU", action: () => this.quitToMenu() },
       ], 240),
     };
@@ -349,12 +366,35 @@ class Game {
     const r = this.race;
     if (!r) return;
     const replay = r.track.locked ? Float64Array.from(r.track.points) : r.setup.replay;
-    void this.startRace(false, { ...r.setup, replay, build: this.build });
+    void this.startRace(undefined, { ...r.setup, replay, build: this.build });
   }
 
-  private async startRace(sameCircuit: boolean, again?: RaceSetup): Promise<void> {
+  /** A circuit the player dreamed has locked: keep it as a map (the newest first, MY_MAPS of them). */
+  private keepMap(race: Race): void {
+    this.dreams += 1;
+    const points = Float64Array.from(race.track.points);
+    this.myMaps = [{ name: `MY DREAM ${this.dreams}`, type: race.type.id, world: race.setup.theme.name, mine: true, points },
+                   ...this.myMaps].slice(0, MY_MAPS);
+    this.settings.circuit = 0;
+    this.save();
+  }
+
+  /** Every map Quick Race can race: the player's own, newest first, then the showcase. */
+  private maps(): GameMap[] {
+    return [...this.myMaps, ...SHOWCASE];
+  }
+
+  /** The map picked on the setup screen, or undefined for a fresh dream. */
+  private pickedMap(): GameMap | undefined {
+    const s = this.settings;
+    if (s.circuit > this.maps().length) s.circuit = 0;
+    return s.circuit ? this.maps()[s.circuit - 1] : undefined;
+  }
+
+  /** ``map``: race that map (no dreaming); none, a fresh dream. ``again``: this setup again. */
+  private async startRace(map?: GameMap, again?: RaceSetup): Promise<void> {
     this.raceError = "";
-    const live = again ? !again.replay : !(sameCircuit && this.lastCircuit);
+    const live = again ? !again.replay : !map;
     if (live && !this.designer) {
       // A quick player can press START before the designer has loaded: start once it has.
       if (this.waitingForDesigner) return;
@@ -367,11 +407,11 @@ class Game {
     const s = this.settings;
     const theme = s.theme === THEMES.length ? THEMES[(Math.random() * THEMES.length) | 0] : THEMES[s.theme];
     const seed = (Math.random() * 1e9) | 0;
-    const choice = TRACKS[s.track].id, replay = sameCircuit && this.lastCircuit ? this.lastCircuit : null;
+    const choice = TRACKS[s.track].id, replay = map ? Float64Array.from(map.points) : null;
     // a live race with the same seed dreams the same circuit again; a re-raced one keeps its type
     const setup: RaceSetup = again ?? {
       rivals: s.rivals, difficulty: DIFFS[s.diff], theme, seed, replay, build: this.build,
-      trackType: replay ? this.lastCircuitType : choice === "surprise" ? surpriseType(new Rand(seed + 5)) : choice,
+      trackType: map ? map.type : choice === "surprise" ? surpriseType(new Rand(seed + 5)) : choice,
     };
     if (!again) this.surprised = !replay && choice === "surprise";
     this.seed = setup.seed;
@@ -417,7 +457,7 @@ class Game {
     const type = choice === "surprise" ? surpriseType(new Rand(seed + 5), cup.types) : choice;
     cup.types[cup.index] = type;
     this.surprised = choice === "surprise";
-    await this.startRace(false, {
+    await this.startRace(undefined, {
       rivals: Math.max(1, s.rivals), difficulty: DIFFS[s.diff], theme: cup.world, seed, replay: null,
       trackType: type, build: this.build, rivalSeed: cup.seed,
     });
@@ -526,8 +566,7 @@ class Game {
           this.sound.locked();
           this.hud.banner("CIRCUIT LOCKED", now, HOT, 2.6, "THE DREAM IS NOW YOUR TRACK");
         }
-        this.lastCircuit = Float64Array.from(race.track.points);
-        this.lastCircuitType = race.type.id;
+        if (race.live && !this.cup) this.keepMap(race);
       } else if (e.kind === "finish") {
         this.sound.finish(e.place);
         const ord = ["1ST", "2ND", "3RD"][e.place - 1] ?? `${e.place}TH`;
@@ -1028,7 +1067,7 @@ class Game {
   debugRace(points: number[], theme = 0, rivals = 5, type: TrackTypeId = "classic"): void {
     this.cup = null;
     this.surprised = false;
-    void this.startRace(false, {
+    void this.startRace(undefined, {
       rivals, difficulty: "pro", theme: THEMES[theme], seed: 1234, replay: Float64Array.from(points), layout: "any",
       trackType: type, build: this.build,
     });

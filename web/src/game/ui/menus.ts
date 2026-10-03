@@ -14,6 +14,7 @@ export interface MenuItem {
   right?: () => void;
   action?: () => void;
   hint?: string | (() => string);
+  preview?: () => ArrayLike<number> | null; // a circuit's road points (x0, y0, ...): drawn beside the hint
 }
 
 const PANEL = hex("#0c0a1d");
@@ -117,10 +118,42 @@ export class Menu {
     });
     const raw = this.items[this.index]?.hint;
     const hint = note?.text ?? (typeof raw === "function" ? raw() : raw);
-    if (hint) {
+    const pts = note ? null : this.items[this.index]?.preview?.() ?? null;
+    if (pts && pts.length >= 6) {
+      // the circuit's shape in a small box, and the hint beside it
+      const bw = 44, bh = 26, bx = Math.round(cx - Math.min(width, W - 24) / 2), by = top + h + 3;
+      scr.dimRect(bx, by, bw, bh, PANEL, 0.8);
+      outline(scr, pts, bx + 3, by + 3, bw - 6, bh - 6);
+      if (hint) {
+        f.wrap(hint, Math.min(width, W - 24) - bw - 8).slice(0, this.hintLines).forEach((line, i) => {
+          f.draw(scr, line, bx + bw + 6, by + 4 + i * 10, { color: DIM, outline: INK });
+        });
+      }
+    } else if (hint) {
       f.wrap(hint, this.hintWidth || W - 24).slice(0, this.hintLines).forEach((line, i) => {
         f.draw(scr, line, cx, top + h + 7 + i * 10, { color: note?.color ?? DIM, align: "center", outline: INK });
       });
     }
   }
+}
+
+/** A circuit's road points drawn as a closed line, fitted into the box at (x, y), w by h, with its
+ * start line marked. */
+function outline(scr: Screen, pts: ArrayLike<number>, x: number, y: number, w: number, h: number): void {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < pts.length; i += 2) {
+    x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]);
+    y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]);
+  }
+  const k = Math.min(w / Math.max(1, x1 - x0), h / Math.max(1, y1 - y0));
+  const ox = x + (w - (x1 - x0) * k) / 2, oy = y + (h - (y1 - y0) * k) / 2;
+  const at = (i: number): [number, number] => [ox + (pts[i] - x0) * k, oy + (y1 - pts[i + 1]) * k];
+  const n = pts.length / 2;
+  for (let j = 0; j < n; j++) {
+    const [ax, ay] = at(2 * j), [bx, by] = at(2 * ((j + 1) % n));
+    const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay)));
+    for (let s = 0; s < steps; s++) scr.fillRect(Math.round(ax + ((bx - ax) * s) / steps), Math.round(ay + ((by - ay) * s) / steps), 1, 1, HOT);
+  }
+  const [sx, sy] = at(0);
+  scr.fillRect(Math.round(sx) - 1, Math.round(sy) - 1, 3, 3, TEXT);
 }

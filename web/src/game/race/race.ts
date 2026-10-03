@@ -348,7 +348,8 @@ export class Race {
     // Legend leans wild and Rookie calm (Intermediate a little calm); the mountains wind more
     const bias = { rookie: -0.1, intermediate: -0.05, pro: 0, legend: 0.1 }[this.setup.difficulty] +
       (this.setup.theme.mountain ? 0.12 : 0);
-    const v = 0.5 + 1.25 * (d.speed - 0.72) + 0.6 * d.drift - 1.1 * d.offroad - 0.25 * (1 - d.clean) + bias;
+    // (centred a little calm: dreamed laps had too many hairpins)
+    const v = 0.45 + 1.25 * (d.speed - 0.72) + 0.6 * d.drift - 1.1 * d.offroad - 0.25 * (1 - d.clean) + bias;
     return Math.max(0.05, Math.min(0.95, v));
   }
 

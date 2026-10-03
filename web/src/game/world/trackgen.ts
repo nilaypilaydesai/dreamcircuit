@@ -34,6 +34,11 @@ export const CHUNK = 32; // points per arc during lap 1 (about 130 m of game roa
 export const LOOKAHEAD = 72; // points of road kept ahead of the leader (~28% of a lap)
 const STEPS = 24; // Heun steps (47 network calls) per arc
 const ARC_SMOOTH = 1.0; // light smoothing of new points (in point spacings)
+// The radius (game m) every corner of new road should have: the architect allows bends of 12.4 m,
+// a hairpin a kart takes at 16 m/s, and dreamed laps had too many of them. An arc with a tighter
+// one is dreamed again, as one off its style is (and if every try has one, the widest is kept).
+export const WIDE_RADIUS = 20;
+const WILD_RADIUS = 16;
 const RETRIES = 3;
 const ONE_HOT: Record<Layout, number[]> = { any: [1, 0, 0], loop: [0, 1, 0], figure8: [0, 0, 1] };
 
@@ -239,6 +244,7 @@ export interface LiveStats {
   retries: number;
   fallbacks: number;
   offBand: number; // arcs that never landed in their band (the closest drivable one was kept)
+  tight: number; // arcs kept with a corner tighter than WIDE_RADIUS (every try had one)
   ms: number;
 }
 
@@ -251,7 +257,7 @@ export class LiveCircuit {
   busy = false;
   /** The style asked of the arc being dreamed (or last dreamed), for the HUD. */
   style: number | null = null;
-  stats: LiveStats = { arcs: 0, retries: 0, fallbacks: 0, offBand: 0, ms: 0 };
+  stats: LiveStats = { arcs: 0, retries: 0, fallbacks: 0, offBand: 0, tight: 0, ms: 0 };
   /** The measured style of each arc as it was committed (0..1). */
   readonly styles: number[] = [];
   onCommit: ((from: number, to: number) => void) | null = null;
@@ -332,7 +338,7 @@ export class LiveCircuit {
     this.style = this.styleSource?.(index) ?? null;
     const band = this.bandSource?.(index) ?? null;
     const mask = stepMask(this.mask), known = toSteps(this.known, this.mask, this.scale);
-    let best: { lap: Float64Array; miss: number; style: number } | null = null;
+    let best: { lap: Float64Array; miss: number; style: number; tight: number } | null = null;
     for (let attempt = 0; ; attempt++) {
       const sample = await this.designer.sample({
         mask, known, style: this.style, layout: this.layout, seed: this.rng.int(1, 2 ** 31),
@@ -347,15 +353,21 @@ export class LiveCircuit {
       if (checkLap(game, arcSet, this.layout, first).ok) {
         const style = arcStyle(game, arcSet, this.styleScale);
         const miss = band ? bandMiss(style, band) : 0;
-        if (miss === 0) return this.measured(smoothed, style);
-        if (!best || miss < best.miss) best = { lap: smoothed, miss, style };
+        // (m short of a wide enough corner; an arc asked to be wild, a Technical track's, may bend tighter)
+        const tight = Math.max(0, (band && band.lo >= 0.5 ? WILD_RADIUS : WIDE_RADIUS) - tightestBend(game, arcSet));
+        if (miss === 0 && tight === 0) return this.measured(smoothed, style);
+        // keep the best try: in its band first, then the widest corners, then the closest to its band
+        const better = !best || (miss === 0) !== (best.miss === 0) ? !best || miss === 0
+          : tight !== best.tight ? tight < best.tight : miss < best.miss;
+        if (better) best = { lap: smoothed, miss, style, tight };
       }
       if (attempt < RETRIES) {
         this.stats.retries += 1;
         continue;
       }
       if (best) {
-        this.stats.offBand += 1;
+        if (best.miss > 0) this.stats.offBand += 1;
+        if (best.tight > 0) this.stats.tight += 1;
         return this.measured(best.lap, best.style);
       }
       this.stats.fallbacks += 1;
@@ -402,6 +414,15 @@ function range(a: number, b: number): number[] {
   const out: number[] = [];
   for (let j = a; j < b; j++) out.push(((j % N) + N) % N);
   return out;
+}
+
+/** The radius (game m) of the tightest bend on the arc's points, as the checks measure bends (the
+ * dense spline through the points, its curvature over 6 m). */
+export function tightestBend(pts: ArrayLike<number>, arc: Set<number>): number {
+  const loop = previewLoop(pts);
+  let worst = 0;
+  for (let i = 0; i < loop.length; i++) if (arc.has(loop[i][2])) worst = Math.max(worst, loopCurvature(loop, i, 3));
+  return worst > 0 ? 1 / worst : Infinity;
 }
 
 /** Circular Gaussian smoothing of the points in ``arc`` only, both coordinate rows (existing

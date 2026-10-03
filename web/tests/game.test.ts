@@ -26,7 +26,8 @@ import {
   BRIDGE_DECK, BRIDGE_HEIGHT, BRIDGE_RAMP, HALF_WIDTH, N, SPACING, Track, bridgeLift, checkLap, crSegment,
 } from "../src/game/world/track";
 import {
-  CHUNK, type Designer, INITIAL, LiveCircuit, STEP_SCALE, arcStyle, bandMiss, fromSteps, smoothArc, stepMask, toModel, toSteps,
+  CHUNK, type Designer, INITIAL, LiveCircuit, STEP_SCALE, WIDE_RADIUS, arcStyle, bandMiss, fromSteps, smoothArc, stepMask,
+  tightestBend, toModel, toSteps,
 } from "../src/game/world/trackgen";
 import { BANK_EDGE } from "../src/game/world/texture";
 import circuits from "./circuits.json";
@@ -185,6 +186,7 @@ describe("arc smoothing", () => {
       }
     }
   });
+
 });
 
 describe("lap counting", () => {
@@ -1483,6 +1485,20 @@ describe("track types", () => {
     expect(live.stats.fallbacks).toBe(0);
     expect(calls).toBe(1 + (arcs - 1) * 4); // every arc after the first dreamed four times
     expect(live.styles.length).toBe(arcs);
+  });
+
+  it("dream an arc again when it has a hairpin, and keep the widest try", async () => {
+    // the twisty circuit has bends under WIDE_RADIUS: the arcs over them are dreamed again (here every
+    // try is the same, so in the end each is kept); the calm one is kept at once (the test below)
+    expect(tightestBend(twisty(), new Set(range(0, N)))).toBeLessThan(WIDE_RADIUS);
+    let calls = 0;
+    const d = fakeDesigner(() => false, twisty());
+    const live = new LiveCircuit({ sample: (req) => { calls++; return d.sample(req); } }, new Rand(7));
+    await live.start();
+    await driveLap(live);
+    expect(live.track.locked).toBe(true);
+    expect(live.stats.tight).toBeGreaterThan(0);
+    expect(calls).toBe(liveArcs().length + 3 * live.stats.tight);
   });
 
   it("keep an arc at once when it lands in its band", async () => {
