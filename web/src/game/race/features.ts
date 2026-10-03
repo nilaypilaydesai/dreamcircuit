@@ -1,7 +1,8 @@
 // Track features, placed on dreamed road as it is committed:
 //   jump ramps on long straights: fly off the lip, and hop (the drift button) right at the lip
 //   for a trick that pays a boost on landing;
-//   boost pads at corner exits.
+//   boost pads at corner exits;
+//   tunnels through rock on straights, in the mountains (their walls keep karts in).
 // Pure logic (no rendering), unit-tested headlessly.
 
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
@@ -13,6 +14,9 @@ export const PAD_LEN = 7; // m
 export const PAD_HALF = 2.6; // m, half the pad's width
 const RAMP_GAP = 260; // m between ramps
 const PAD_GAP = 170; // m between pads
+export const TUNNEL_LEN = 52; // m
+export const TUNNEL_H = 5.8; // m from the road to the ceiling
+const TUNNEL_GAP = 320; // m between tunnels
 
 export interface Ramp {
   start: number; // dense index of the foot of the ramp
@@ -25,10 +29,27 @@ export interface Pad {
   offset: number; // lateral position of the pad's centre
 }
 
+export interface Tunnel {
+  start: number; // dense index of the mouth
+  s0: number;
+  n: number; // dense points through it
+}
+
 export class Features {
   ramps: Ramp[] = [];
   pads: Pad[] = [];
+  tunnels: Tunnel[] = [];
   private straight = 0; // m of straight road in a row, at the end of what was scanned
+  private tunnelRun = 0; // m of gently curving flat road in a row
+  private lastTunnel = -Infinity;
+
+  /** ``tunnels``: bore tunnels (the mountain world). */
+  constructor(private readonly withTunnels = false) {}
+
+  /** Whether arc lengths [s, s + len) overlap a tunnel (with a margin either side). */
+  private tunnelNear(s: number, len: number, margin = 20): boolean {
+    return this.tunnels.some((t) => t.s0 < s + len + margin && t.s0 + TUNNEL_LEN > s - margin);
+  }
   private cornerSince = -1; // dense index where the last tight corner ended
   private lastRamp = -Infinity;
   private lastPad = -Infinity;
@@ -47,9 +68,20 @@ export class Features {
       if (this.straight > 85 && s - this.lastRamp > RAMP_GAP) {
         const s0 = s - 45;
         const start = i - Math.round(45 / SPACING);
-        if (!blocked(s0 - 30, RAMP_LEN + 70) && track.fromStart(start) > 140) {
+        if (!blocked(s0 - 30, RAMP_LEN + 70) && track.fromStart(start) > 140 && !this.tunnelNear(s0 - 30, RAMP_LEN + 70)) {
           this.ramps.push({ start, s0 });
           this.lastRamp = s;
+        }
+      }
+      // a tunnel through the rock on a long, gently curving stretch (the mountains)
+      this.tunnelRun = k < 1 / 110 && track.elev[i] === 0 ? this.tunnelRun + SPACING : 0;
+      if (this.withTunnels && this.tunnelRun > TUNNEL_LEN + 12 && s - this.lastTunnel > TUNNEL_GAP) {
+        const s0 = s - TUNNEL_LEN - 6, start = i - Math.round((TUNNEL_LEN + 6) / SPACING);
+        const rampHere = this.ramps.some((r) => r.s0 < s0 + TUNNEL_LEN + 30 && r.s0 + RAMP_LEN > s0 - 30);
+        if (!rampHere && !blocked(s0 - 10, TUNNEL_LEN + 20) && track.fromStart(start) > 160) {
+          this.tunnels.push({ start, s0, n: Math.round(TUNNEL_LEN / SPACING) });
+          this.lastTunnel = s;
+          this.tunnelRun = 0;
         }
       }
       // a boost pad as a tight corner opens up
@@ -73,6 +105,16 @@ export class Features {
       if (u >= 0 && u < 1) return { height: RAMP_HEIGHT * u, u };
     }
     return { height: 0, u: -1 };
+  }
+
+  /** Whether arc length ``s`` is inside a tunnel. */
+  tunnelAt(s: number): boolean {
+    return this.tunnels.some((t) => s >= t.s0 && s <= t.s0 + TUNNEL_LEN);
+  }
+
+  /** Whether the kart is driving through a tunnel (its walls keep it on the road). */
+  inTunnel(track: Track, k: Kart): boolean {
+    return Math.abs(k.offset) < HALF_WIDTH + 2 && this.tunnelAt(track.s[k.idx]);
   }
 
   /** Whether the kart is on a boost pad. */

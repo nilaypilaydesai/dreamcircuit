@@ -5,12 +5,13 @@
 // a shield), boosts and rockets breathe fire, a prism shimmers through the rainbow and a shocked
 // kart is drawn small.
 
-import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
+import { H, W, hex, mix, type Screen } from "../core/gfx";
 import type { Kart } from "../race/kart";
 import type { Placed } from "../world/scenery";
 import type { Camera } from "./mode7";
 import type { Face } from "./poly";
-import { KART_ANCHOR, KART_PX, KART_VIEWS, type SceneryArt } from "./sprites";
+import { KART_ANCHOR, KART_PX, KART_VIEWS, type KartViews, type SceneryArt } from "./sprites";
+import { drawDome } from "./underwater";
 
 /** Moving or animated objects drawn like scenery: item boxes, oil slicks, dream orbs. */
 export interface WorldSprite {
@@ -19,13 +20,15 @@ export interface WorldSprite {
   art: SceneryArt;
   lift?: number; // m above the surface under it (it casts a shadow when floating)
   base?: number; // m, height of that surface (a bridge deck)
+  flip?: boolean; // mirrored (a fish swimming the other way)
 }
 
 /** How to draw each kart: its 16 views, its drift sparks, and what it carries. */
 export interface KartLook {
-  sprites: (k: Kart) => Sprite[];
+  sprites: (k: Kart) => KartViews;
   sparks: (k: Kart) => number;
   held: (k: Kart) => SceneryArt | null;
+  dome?: boolean; // every driver wears a clear bubble helmet (under the sea)
 }
 
 interface Item {
@@ -59,7 +62,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   const fogAt = (z: number) => (z > cam.far * 0.45 ? Math.min(1, (z - cam.far * 0.45) / (cam.far * 0.55)) ** 1.5 : 0);
   /** A floating sprite at (x, y), ``lift`` m over a surface at height ``base``. */
   const billboard = (art: SceneryArt, x: number, y: number, base: number, lift: number, bias: number, shadowed = true,
-                     size = 1) => {
+                     size = 1, flip = false) => {
     const p = project(x, y, base);
     if (!p) return;
     const h = art.height * size * p.ppm;
@@ -71,7 +74,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       z: p.z + bias,
       draw: () => {
         if (up > 0 && shadowed) shadow(scr, p.sx, p.gy, w * 0.42, Math.max(1, w * 0.12));
-        scr.blitScaled(art.sprite, p.sx - w / 2, p.gy - h - up, w, h, false, fog, fogAt(p.z));
+        scr.blitScaled(art.sprite, p.sx - w / 2, p.gy - h - up, w, h, flip, fog, fogAt(p.z));
       },
     });
   };
@@ -87,7 +90,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   }
   for (const it of extras) {
     const base = it.base ?? 0;
-    billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowBias);
+    billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowBias, true, 1, it.flip);
   }
   for (const k of karts) {
     const p = project(k.x, k.y, k.elev);
@@ -114,7 +117,10 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       z: p.z + bias,
       draw: () => {
         shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
-        scr.blitScaled(s, p.sx - w / 2, p.gy - h * KART_ANCHOR + bounce, w, h, false, tint, tintAmount);
+        const top = p.gy - h * KART_ANCHOR + bounce;
+        scr.blitScaled(s, p.sx - w / 2, top, w, h, false, tint, tintAmount);
+        const head = look.dome && k.rocket <= 0 ? sprites.heads?.[vi] : undefined;
+        if (head) drawDome(scr, p.sx - w / 2 + (head[0] * w) / s.w, top + (head[1] * h) / s.h, (5.6 * 1.55 * h) / s.h);
         const sp = look.sparks(k);
         if (sp) drawSparks(scr, p.sx, p.gy, p.ppm, sp, k.driftDir);
       },
@@ -127,19 +133,23 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       const q = project(k.x - c * back, k.y - sn * back, k.elev + (k.rocket > 0 ? 0.55 : 0.3));
       if (q) items.push({ ...q, z: q.z + bias - 0.05, draw: () => drawFlames(scr, q.sx, q.gy, q.ppm, flames) });
     }
-    // what it carries, as in the classics: oil, an orb or a bomb held out behind the kart (button
-    // down) drags on the road behind it, and triple turbos and boomerangs ride along on the tail
+    // what it carries: the item it will use next floats over the driver's head, spare shots (a
+    // triple turbo, boomerangs) circle the kart slowly, and oil, an orb or a bomb held out behind
+    // (button down) drags on the road behind it
     const art = look.held(k);
-    const multi = k.item === "triple" || k.item === "boomerang";
-    if (art && k.rocket <= 0 && (k.trailing || multi)) {
-      const many = multi ? Math.max(1, k.uses) : 1;
-      const dist = k.trailing ? 1.45 : 0.55;
-      const lift = k.trailing ? 0.03 : 0.62 + 0.05 * Math.sin(now * 5 + k.id);
-      const size = (k.trailing ? 0.5 : 0.4) * (k.shrink > 0 ? 0.62 : 1);
-      for (let n = 0; n < many; n++) {
-        const lat = (n - (many - 1) / 2) * 0.5;
-        const hx = k.x - c * dist - sn * lat, hy = k.y - sn * dist + c * lat;
-        billboard(art, hx, hy, k.elev, lift, bias - 0.02, false, size);
+    if (art && k.rocket <= 0) {
+      const small = k.shrink > 0 ? 0.62 : 1;
+      if (k.trailing) {
+        billboard(art, k.x - c * 1.45, k.y - sn * 1.45, k.elev, 0.03, bias - 0.02, false, 0.5 * small);
+      } else {
+        // (a kart is about 0.8 m tall to the top of the helmet)
+        billboard(art, k.x, k.y, k.elev, (0.98 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.46 * small);
+      }
+      const spare = Math.max(0, k.uses - 1);
+      for (let n = 0; n < spare; n++) {
+        const ang = now * 1.3 + k.id + (n / spare) * Math.PI * 2;
+        const ox = Math.cos(ang) * 1.55 * small, oy = Math.sin(ang) * 1.55 * small;
+        billboard(art, k.x + ox, k.y + oy, k.elev, 0.65 * small, bias - 0.01, false, 0.4 * small);
       }
     }
   }

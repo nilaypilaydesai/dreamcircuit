@@ -9,7 +9,8 @@
 // on exactly the same road.
 //
 // Where new road crosses road that already exists, the new stretch becomes a bridge: it climbs a
-// ramp, crosses on a deck high enough to drive under, and comes back down.
+// ramp, crosses on a deck high enough to drive under, and comes back down. In the mountains the
+// road also climbs over hills, smooth rises and falls set along the lap as it is dreamed.
 
 export const N = 256;
 export const SCALE = 1.5; // model meters -> game meters (karts like wide roads)
@@ -35,6 +36,15 @@ export function bridgeLift(ds: number): number {
   const u = (a - BRIDGE_DECK / 2) / BRIDGE_RAMP;
   if (u >= 1) return 0;
   return BRIDGE_HEIGHT * (1 - u * u * (3 - 2 * u));
+}
+
+/** A climb in the mountains: the road rises and falls back over ``len`` m from arc length ``s0``. */
+export interface Hill { s0: number; len: number; h: number }
+
+/** Height of a hill's road ``ds`` m past its foot (a smooth sin^2 rise and fall). */
+export function hillLift(ds: number, len: number, h: number): number {
+  if (ds <= 0 || ds >= len) return 0;
+  return h * Math.sin((Math.PI * ds) / len) ** 2;
 }
 
 /** Centripetal Catmull-Rom between p1 and p2, sampled at roughly SPACING (excludes p2). */
@@ -73,6 +83,7 @@ export class Track {
   elev: number[] = []; // road height (bridges), m
   segOf: number[] = [];
   bridges: Bridge[] = [];
+  hills: Hill[] = [];
   /** Dense range whose height changed after it was committed (a bridge's approach ramp). */
   raised: [number, number] | null = null;
   startIndex = -1; // first point of segment 0: the start/finish line
@@ -133,11 +144,45 @@ export class Track {
     return [from, this.count];
   }
 
-  /** Height of the road at arc length ``s`` (0 except on bridges). */
+  /** Height of the road at arc length ``s`` (0 except on bridges and hills). */
   liftAt(s: number): number {
     let h = 0;
     for (const b of this.bridges) h = Math.max(h, bridgeLift(s - b.centerS));
+    for (const hl of this.hills) h = Math.max(h, hillLift(s - hl.s0, hl.len, hl.h));
     return h;
+  }
+
+  /** Height of bridges alone at dense index ``i`` (a hill is just the road climbing). */
+  bridgeAt(i: number): number {
+    let h = 0;
+    for (const b of this.bridges) h = Math.max(h, bridgeLift(this.s[i] - b.centerS));
+    return h;
+  }
+
+  /** Put the road over a hill: committed road on it rises at once, road dreamed later as it comes.
+   * Returns the dense range that changed height, if any. */
+  addHill(hill: Hill): [number, number] | null {
+    this.hills.push(hill);
+    return this.relift(hill.s0, hill.s0 + hill.len);
+  }
+
+  /** Flatten every hill that reaches into arc lengths [s0, s1) (a bridge needs the room). */
+  removeHills(s0: number, s1: number): [number, number] | null {
+    const gone = this.hills.filter((h) => h.s0 < s1 && h.s0 + h.len > s0);
+    if (!gone.length) return null;
+    this.hills = this.hills.filter((h) => !gone.includes(h));
+    return this.relift(Math.min(...gone.map((g) => g.s0)), Math.max(...gone.map((g) => g.s0 + g.len)));
+  }
+
+  private relift(s0: number, s1: number): [number, number] | null {
+    let a = -1, b = -1;
+    for (let i = 0; i < this.count; i++) {
+      if (this.s[i] < s0 || this.s[i] > s1) continue;
+      this.elev[i] = this.liftAt(this.s[i]);
+      if (a < 0) a = i;
+      b = i + 1;
+    }
+    return a < 0 ? null : [a, b];
   }
 
   private cellKey(x: number, y: number): number {

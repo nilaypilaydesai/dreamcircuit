@@ -457,11 +457,28 @@ function splat(vs: Lit[], th: number, scale: number, put: (px: number, py: numbe
   }
 }
 
-/** Bake a voxel model into 16 view sprites; view k shows it from angle 2*pi*k/16 behind. */
-export function bakeVoxels(vox: Map<number, number>, cx = 11.5): Sprite[] {
+/** A kart's 16 views, and where the driver's head is in each (sprite pixels). */
+export type KartViews = Sprite[] & { heads?: [number, number][] };
+
+/** Where the driver's head is on a build (model coordinates), for the reef's bubble helmets. */
+export function kartHead(build: Build): [number, number, number] {
+  const seat = (BODY_SHAPES[build.body] ?? BODY_SHAPES.classic)(new Model(), palette(build, LIVERIES[0])).seat;
+  return [8 + seat, -0.5, 13.5];
+}
+
+/** Bake a voxel model into 16 view sprites; view k shows it from angle 2*pi*k/16 behind. A
+ * ``marker`` (model coordinates) is projected into every view too (``heads``). */
+export function bakeVoxels(vox: Map<number, number>, cx = 11.5, marker?: [number, number, number]): KartViews {
   const vs = litVoxels(vox, cx);
-  const sprites: Sprite[] = [];
+  const sprites: KartViews = [];
+  if (marker) sprites.heads = [];
+  const cp = Math.cos(PITCH), sp = Math.sin(PITCH);
   for (let v = 0; v < KART_VIEWS; v++) {
+    if (marker && sprites.heads) {
+      const th = (v / KART_VIEWS) * Math.PI * 2, dx = Math.cos(th), dy = Math.sin(th);
+      const mx = marker[0] - cx, along = mx * dx + marker[1] * dy;
+      sprites.heads.push([(mx * dy - marker[1] * dx) * 1.55 + KW / 2, BASE - (marker[2] * cp + along * sp) * 1.55 * 0.9]);
+    }
     const s = makeSprite(KW, KH);
     const depth = new Float32Array(KW * KH).fill(Infinity);
     splat(vs, (v / KART_VIEWS) * Math.PI * 2, 1.55, (px, py, d, c) => {
@@ -475,15 +492,15 @@ export function bakeVoxels(vox: Map<number, number>, cx = 11.5): Sprite[] {
   return sprites;
 }
 
-const baked = new Map<string, Sprite[]>();
+const baked = new Map<string, KartViews>();
 
 /** A kart's 16 views, baked once per build and driver. */
-export function kartSprites(build: Build, livery: KartLivery, rocket = false): Sprite[] {
+export function kartSprites(build: Build, livery: KartLivery, rocket = false): KartViews {
   const key = `${rocket ? "R" : "K"}|${build.body}|${build.wheels}|${build.spoiler}|${build.exhaust}|${build.paint}|${build.accent}|${livery.helmet}|${livery.suit}`;
   let s = baked.get(key);
   if (!s) {
     if (baked.size > 80) baked.clear();
-    s = rocket ? bakeVoxels(rocketModel(build, livery), 10) : bakeVoxels(kartModel(build, livery));
+    s = rocket ? bakeVoxels(rocketModel(build, livery), 10) : bakeVoxels(kartModel(build, livery), 11.5, kartHead(build));
     baked.set(key, s);
   }
   return s;
@@ -729,8 +746,176 @@ export function chevron(right: boolean): SceneryArt {
   return { sprite: s, height: 2.2, solid: true };
 }
 
+// ---------------------------------------------------------------------------------- the reef
+
+function kelp(rng: Rand): SceneryArt {
+  const s = makeSprite(26, 64);
+  const greens = [hex("#2f8f4e"), hex("#3d9b3f"), hex("#5a9a2e")];
+  const fronds = rng.int(3, 5);
+  for (let f = 0; f < fronds; f++) {
+    const x0 = 6 + f * (14 / fronds) + rng.range(-1, 1), ph = rng.range(0, 6), c = rng.pick(greens);
+    const top = rng.int(2, 16);
+    for (let y = 63; y > top; y--) {
+      const x = x0 + Math.sin(y / 7 + ph) * 3;
+      rect(s, Math.round(x), y, Math.round(x) + 2, y + 1, (y >> 2) & 1 ? c : shade(c, 1.2));
+      if (y % 9 === 0) rect(s, Math.round(x) + 2, y, Math.round(x) + 5, y + 2, shade(c, 1.1)); // a leaf
+    }
+  }
+  outline(s, hex("#0d2e1c"));
+  return { sprite: s, height: 8 + rng.range(-1.5, 3), solid: false };
+}
+
+function coral(rng: Rand): SceneryArt {
+  const s = makeSprite(28, 24);
+  const c = rng.pick([hex("#ff6f91"), hex("#ff9a52"), hex("#b06bff"), hex("#ffcf4a"), hex("#ff5f5f")]);
+  const branch = (x: number, y: number, a: number, len: number, depth: number) => {
+    for (let k = 0; k < len; k++) {
+      const xx = x + Math.cos(a) * k, yy = y - Math.sin(a) * k;
+      disc(s, xx, yy, depth > 1 ? 1.4 : 1, () => (k > len - 2 ? shade(c, 1.25) : c));
+    }
+    if (depth > 0) {
+      const ex = x + Math.cos(a) * len, ey = y - Math.sin(a) * len;
+      branch(ex, ey, a + 0.5, len * 0.7, depth - 1);
+      branch(ex, ey, a - 0.5, len * 0.7, depth - 1);
+    }
+  };
+  branch(14, 23, Math.PI / 2 + rng.range(-0.2, 0.2), 8, 2);
+  outline(s, shade(c, 0.4));
+  return { sprite: s, height: 2.6 + rng.range(0, 1.2), solid: true };
+}
+
+function anemone(rng: Rand): SceneryArt {
+  const s = makeSprite(18, 14);
+  const c = rng.pick([hex("#c86bff"), hex("#ff6fb0"), hex("#5fe0c8")]);
+  disc(s, 9, 11, 5, () => shade(c, 0.75));
+  for (let k = 0; k < 9; k++) {
+    const a = Math.PI * (0.1 + 0.8 * (k / 8));
+    for (let t = 0; t < 6; t++) px(s, 9 + Math.cos(a) * (3 + t), 10 - Math.sin(a) * (2 + t * 1.2), t > 4 ? hex("#ffffff") : c);
+  }
+  outline(s, shade(c, 0.35));
+  return { sprite: s, height: 1.3, solid: false };
+}
+
+function shell(rng: Rand): SceneryArt {
+  const s = makeSprite(14, 9);
+  if (rng.next() > 0.5) { // a starfish
+    const c = rng.pick([hex("#ff8a3d"), hex("#ff5f7a")]);
+    for (let k = 0; k < 5; k++) {
+      const a = -Math.PI / 2 + (k / 5) * Math.PI * 2;
+      for (let t = 0; t < 5; t++) px(s, 7 + Math.cos(a) * t, 5 + Math.sin(a) * t * 0.7, c);
+    }
+    outline(s, shade(c, 0.4));
+  } else { // a scallop shell
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 14; x++) {
+      if (Math.hypot((x - 7) / 6.5, (y - 8) / 7.5) <= 1) px(s, x, y, x % 3 === 0 ? hex("#e8c9b0") : hex("#fff1e4"));
+    }
+    outline(s, hex("#7a5a48"));
+  }
+  return { sprite: s, height: 0.6, solid: false };
+}
+
+function wreck(rng: Rand): SceneryArt {
+  const s = makeSprite(74, 46);
+  const wood = hex("#5a4636"), dark = hex("#3a2c22"), moss = hex("#3f7f4f");
+  // a hull lying tilted in the sand, broken open, and a snapped mast
+  for (let x = 4; x < 70; x++) {
+    const top = 26 + Math.round(Math.abs(x - 38) * 0.18) + (x > 50 ? -4 : 0);
+    for (let y = top; y < 44; y++) px(s, x, y, (x + y) % 9 === 0 ? dark : y < top + 2 ? moss : wood);
+  }
+  for (let x = 30; x < 44; x++) for (let y = 30; y < 40; y++) px(s, x, y, hex("#1c1612")); // the hole
+  for (let y = 4; y < 30; y++) rect(s, 22 + Math.round(y * 0.15), y, 25 + Math.round(y * 0.15), y + 1, dark);
+  rect(s, 14, 12, 34, 14, dark); // the yard
+  if (rng.next() > 0.5) for (let k = 0; k < 10; k++) px(s, 36 + k, 36 - (k % 3), hex("#ffd23f")); // gold spilling out
+  outline(s, hex("#140f0b"));
+  return { sprite: s, height: 13 + rng.range(0, 3), solid: true };
+}
+
+/** A small fish (two frames: the tail flicks). */
+export function fishFrames(color: number): SceneryArt[] {
+  return [0, 1].map((f) => {
+    const s = makeSprite(14, 8);
+    for (let y = 0; y < 8; y++) for (let x = 2; x < 12; x++) {
+      if (Math.hypot((x - 7) / 5, (y - 4) / 3.2) <= 1) px(s, x, y, y < 3 ? shade(color, 1.2) : color);
+    }
+    for (let y = 1; y < 7; y++) px(s, 1 - (f && y % 2 ? 1 : 0), y, shade(color, 0.85)); // the tail
+    px(s, 10, 3, hex("#101018")); // an eye
+    outline(s, shade(color, 0.4));
+    return { sprite: s, height: 0.55, solid: false };
+  });
+}
+
+// ---------------------------------------------------------------------------------- the mountains
+
+function snowpine(rng: Rand): SceneryArt {
+  const p = pine(rng);
+  const s = p.sprite;
+  const snow = hex("#f6f9ff");
+  for (let y = 0; y < s.h - 10; y++) {
+    for (let x = 0; x < s.w; x++) {
+      const c = s.data[y * s.w + x];
+      // snow lies on the top edge of every tier
+      if (c && c !== hex("#0e2416") && (y === 0 || !s.data[(y - 1) * s.w + x] || s.data[(y - 1) * s.w + x] === hex("#0e2416"))) {
+        s.data[y * s.w + x] = snow;
+        if (y + 1 < s.h && rng.next() > 0.5) s.data[(y + 1) * s.w + x] = snow;
+      }
+    }
+  }
+  return p;
+}
+
+function cliff(rng: Rand): SceneryArt {
+  const s = makeSprite(44, 46);
+  const base = rng.pick([hex("#7d7a74"), hex("#8a8174"), hex("#6f6c69")]);
+  const tops = Array.from({ length: 6 }, () => rng.int(2, 18));
+  for (let x = 0; x < 44; x++) {
+    const k = (x / 44) * 5, i = Math.floor(k), t = k - i;
+    const top = Math.round(tops[i] * (1 - t) + tops[i + 1] * t);
+    for (let y = top; y < 46; y++) {
+      const strata = (y + Math.floor(x / 7)) % 8 === 0;
+      px(s, x, y, y < top + 2 ? hex("#f6f9ff") : strata ? shade(base, 0.78) : x < 14 ? shade(base, 1.1) : base);
+    }
+  }
+  outline(s, hex("#2b2a28"));
+  return { sprite: s, height: 7 + rng.range(0, 3.5), solid: true };
+}
+
+function peak(rng: Rand): SceneryArt {
+  const s = makeSprite(120, 80);
+  const rock = hex("#6f6f80"), dark = hex("#4f4f60"), snow = hex("#f6f9ff");
+  const apex = rng.int(48, 72);
+  for (let x = 0; x < 120; x++) {
+    const slope = x < apex ? (apex - x) / apex : (x - apex) / (120 - apex);
+    const top = Math.round(4 + slope * 74);
+    for (let y = top; y < 80; y++) {
+      const snowline = top + 10 + Math.sin(x * 0.7) * 3;
+      px(s, x, y, y < snowline ? snow : x > apex ? dark : rock);
+    }
+  }
+  outline(s, hex("#5a5a6a"));
+  return { sprite: s, height: 55 + rng.range(0, 25), solid: false };
+}
+
+function snowbank(rng: Rand): SceneryArt {
+  const s = makeSprite(24, 10);
+  for (const [cx, cy, r] of [[7, 8, 5], [13, 7, 6], [18, 8, 5]]) {
+    disc(s, cx, cy, r, (_x, y) => (y < cy - 2 ? hex("#ffffff") : hex("#dfe8f4")));
+  }
+  if (rng.next() > 0.5) px(s, 12, 3, hex("#bfcde0"));
+  outline(s, hex("#8fa0b8"));
+  return { sprite: s, height: 1.1, solid: false };
+}
+
 export function makeScenery(kind: SceneryKind, rng: Rand): SceneryArt {
   switch (kind) {
+    case "kelp": return kelp(rng);
+    case "coral": return coral(rng);
+    case "anemone": return anemone(rng);
+    case "shell": return shell(rng);
+    case "wreck": return wreck(rng);
+    case "snowpine": return snowpine(rng);
+    case "cliff": return cliff(rng);
+    case "peak": return peak(rng);
+    case "snowbank": return snowbank(rng);
     case "pine": return pine(rng);
     case "oak": return oak(rng);
     case "bush": return bush(rng);

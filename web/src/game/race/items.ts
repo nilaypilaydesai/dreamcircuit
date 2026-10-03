@@ -3,8 +3,12 @@
 //   TURBO         an instant boost.          TRIPLE TURBO  three of them.
 //   OIL SLICK     dropped behind the kart; whoever drives through it spins out.
 //   DREAM ORB     fired up the road; it homes onto the next kart ahead.
-//   BOOMERANG     thrown up the road and back, three times; it spins out every kart it touches.
-//   BOMB          lobbed ahead; it blows up when someone comes close (or its fuse runs out).
+//   BOOMERANG     thrown where the aiming arrow points and back, three times; it spins out every
+//                 kart it touches on the way.
+//   BOMB          lobbed at the racer one place ahead, and only them; thrown by the leader, it
+//                 lands where it was aimed and waits on the track for anyone, its thrower too.
+// Boomerangs and bombs are aimed: an arrow sweeps left and right in front of the kart, and the
+// press of the button locks the direction for that throw.
 //   PRISM         invincible for a while: faster, nothing spins you, you spin whoever you touch.
 //   SHOCK         a jolt to everyone else: they spin, shrink, slow down and drop their items.
 //   ROCKET        the kart becomes a rocket and flies itself up the road, scattering the pack.
@@ -43,9 +47,15 @@ const BOOM_SPEED = 20; // m/s on top of the thrower's speed, going out
 const BOOM_HOME = 34; // m/s coming back
 const BOOM_R = 1.5;
 const BOOM_LIFE = 4.5; // s
-const BOMB_FUSE = 2.6; // s
-const BOMB_TRIGGER = 2.6; // m: a kart this close sets it off
-export const BOMB_BLAST = 5.5; // m: everyone this close spins
+const BOMB_CHASE = 7; // s a bomb chases its target before it fizzles
+const BOMB_HIT = 1.7; // m: close enough to the target to go off
+const MINE_LIFE = 25; // s a leader's bomb waits on the track
+const BOMB_TRIGGER = 2.6; // m: a kart this close sets a waiting bomb off
+export const BOMB_BLAST = 5.5; // m: everyone this close to a waiting bomb spins
+/** Items thrown where the arrow points, and how far it sweeps either side of straight ahead. */
+export const AIMED: ReadonlySet<ItemKind> = new Set<ItemKind>(["boomerang", "bomb"]);
+export const AIM_MAX = 0.75; // rad
+export const AIM_RATE = 3.1; // rad/s of sweep phase: one sweep across and back in about 2 s
 export const BLAST_TIME = 0.6; // s the explosion is drawn for
 export const PRISM_TIME = 7; // s
 export const ROCKET_TIME = 6; // s
@@ -58,12 +68,13 @@ export interface Orb {
   owner: Kart; target: Kart | null;
 }
 export interface Boomerang {
-  idx: number; carry: number; x: number; y: number; z: number; offset: number; v: number; t: number;
+  idx: number; x: number; y: number; z: number; vx: number; vy: number; t: number;
   home: boolean; owner: Kart; hit: Kart[];
 }
 export interface Bomb {
   idx: number; x: number; y: number; z: number; vx: number; vy: number; vz: number;
-  fuse: number; landed: boolean; owner: Kart;
+  age: number; landed: boolean; owner: Kart;
+  target: Kart | null; // the racer one place ahead of the thrower; null: a waiting bomb
 }
 export interface Blast { x: number; y: number; z: number; age: number }
 
@@ -165,6 +176,7 @@ export class Items {
     if (!k.item || k.roulette > 0 || k.spin > 0 || k.rocket > 0) return false;
     if (TRAILS.has(k.item)) {
       k.trailing = true;
+      k.aimLocked = k.aim; // a bomb goes where the arrow pointed when the button went down
       return true;
     }
     return this.use(k, karts);
@@ -197,16 +209,19 @@ export class Items {
           ttl: 6, owner: k, target: this.targetAhead(k, karts),
         });
         break;
-      case "boomerang":
+      case "boomerang": {
+        const a = k.heading + k.aim, v = Math.max(k.v, 8) + BOOM_SPEED;
         this.boomerangs.push({
-          idx: k.idx, carry: 0, x: k.x + c * 2, y: k.y + s * 2, z: k.elev + 0.9, offset: k.offset,
-          v: Math.max(k.v, 8) + BOOM_SPEED, t: 0, home: false, owner: k, hit: [],
+          idx: k.idx, x: k.x + c * 2, y: k.y + s * 2, z: k.elev + 0.9, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+          t: 0, home: false, owner: k, hit: [],
         });
         break;
+      }
       case "bomb": {
-        const v = Math.max(k.v, 0) + 9;
-        this.bombs.push({ idx: k.idx, x: k.x + c * 2, y: k.y + s * 2, z: k.elev + 1.2, vx: c * v, vy: s * v, vz: 7.5,
-                          fuse: BOMB_FUSE, landed: false, owner: k });
+        const a = k.heading + (k.aimLocked ?? k.aim), v = Math.max(k.v, 0) + 9;
+        const target = k.place > 1 ? karts.find((o) => o.place === k.place - 1 && !o.finished) ?? null : null;
+        this.bombs.push({ idx: k.idx, x: k.x + c * 2, y: k.y + s * 2, z: k.elev + 1.2, vx: Math.cos(a) * v,
+                          vy: Math.sin(a) * v, vz: 7.5, age: 0, landed: false, owner: k, target });
         break;
       }
       case "prism":
@@ -232,6 +247,7 @@ export class Items {
         k.drifting = false;
         break;
     }
+    k.aimLocked = null;
     k.uses -= 1;
     if (k.uses <= 0) {
       k.item = null;
@@ -281,6 +297,18 @@ export class Items {
     if (!track.locked && next >= track.count - 1) return false;
     p.idx = next;
     return true;
+  }
+
+  /** A bomb goes off: everyone in ``karts`` within the blast spins; returns false (it is gone). */
+  private blast(bm: Bomb, karts: Kart[]): false {
+    for (const k of karts) {
+      if (Math.abs(k.elev - bm.z) > 3) continue;
+      if ((k.x - bm.x) ** 2 + (k.y - bm.y) ** 2 > BOMB_BLAST ** 2) continue;
+      if (k.spinOut(1.25)) this.events.push({ kind: "spun", kart: k, by: "bomb", owner: bm.owner });
+    }
+    this.blasts.push({ x: bm.x, y: bm.y, z: bm.z, age: 0 });
+    this.events.push({ kind: "boom", x: bm.x, y: bm.y });
+    return false;
   }
 
   update(dt: number, track: Track, karts: Kart[], places: (k: Kart) => number): void {
@@ -358,16 +386,14 @@ export class Items {
       }
       return true;
     });
-    // boomerangs: out up the road, then home to the thrower, hitting everyone on the way
+    // boomerangs: out where they were aimed, then home to the thrower, hitting everyone on the way
     this.boomerangs = this.boomerangs.filter((b) => {
       b.t += dt;
       if (b.t > BOOM_LIFE) return false;
       if (!b.home) {
-        if (b.t > BOOM_OUT || !this.advance(b, track, b.v * dt)) b.home = true;
-        const [tx, ty] = track.tangent(b.idx);
-        b.x = track.xs[b.idx] - ty * b.offset;
-        b.y = track.ys[b.idx] + tx * b.offset;
-        b.z = (track.elev[b.idx] ?? 0) + 0.9;
+        if (b.t > BOOM_OUT) b.home = true;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
       } else {
         const o = b.owner;
         const d = Math.hypot(o.x - b.x, o.y - b.y);
@@ -376,8 +402,8 @@ export class Items {
         b.x += ((o.x - b.x) / d) * step;
         b.y += ((o.y - b.y) / d) * step;
         b.z += (o.elev + 0.9 - b.z) * Math.min(1, dt * 4);
-        b.idx = track.nearest(b.x, b.y, b.idx);
       }
+      b.idx = track.nearest(b.x, b.y, b.idx);
       for (const k of karts) {
         if (k === b.owner || b.hit.includes(k) || Math.abs(k.elev + 0.9 - b.z) > 2.2) continue;
         if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > BOOM_R * BOOM_R) continue;
@@ -387,8 +413,36 @@ export class Items {
       }
       return true;
     });
-    // bombs: a lob, a landing, a fuse
+    // bombs: a lob, then either a chase after the racer one place ahead (and only them), or, from
+    // the leader, a landing where it was aimed and a wait for whoever comes close
     this.bombs = this.bombs.filter((bm) => {
+      bm.age += dt;
+      const t = bm.target;
+      if (t) {
+        if (t.finished || bm.age > BOMB_CHASE) return this.blast(bm, []); // it fizzles
+        if (bm.age > 0.25) {
+          // homing: steer toward the target, skimming over the road at its height
+          const dx = t.x - bm.x, dy = t.y - bm.y, d = Math.hypot(dx, dy) || 1;
+          const speed = Math.max(Math.hypot(bm.vx, bm.vy), Math.max(t.v, 0) + 14);
+          const turn = Math.min(1, dt * 5);
+          bm.vx += ((dx / d) * speed - bm.vx) * turn;
+          bm.vy += ((dy / d) * speed - bm.vy) * turn;
+          bm.vz = 0;
+          bm.z += (t.elev + 1.1 - bm.z) * Math.min(1, dt * 4);
+        } else {
+          bm.vz -= GRAVITY * dt;
+          bm.z += bm.vz * dt;
+        }
+        bm.x += bm.vx * dt;
+        bm.y += bm.vy * dt;
+        bm.idx = track.nearest(bm.x, bm.y, bm.idx);
+        const close = (t.x - bm.x) ** 2 + (t.y - bm.y) ** 2 < BOMB_HIT ** 2 && Math.abs(t.elev + 1.1 - bm.z) < 2.5;
+        if (!close) return true;
+        if (!this.shielded(t, bm.x, bm.y) && t.spinOut(1.25)) {
+          this.events.push({ kind: "spun", kart: t, by: "bomb", owner: bm.owner });
+        }
+        return this.blast(bm, []);
+      }
       if (!bm.landed) {
         bm.x += bm.vx * dt;
         bm.y += bm.vy * dt;
@@ -399,21 +453,15 @@ export class Items {
         if (bm.z <= ground && bm.vz < 0) {
           bm.z = ground;
           bm.landed = true;
+          bm.age = 0; // from here on, age counts the wait
         }
+        return true;
       }
-      bm.fuse -= dt;
-      const armed = bm.fuse < BOMB_FUSE - 0.6;
-      const close = bm.landed && armed && karts.some((k) =>
+      const armed = bm.age > 0.6; // its thrower gets a moment to drive clear
+      const close = armed && karts.some((k) =>
         Math.abs(k.elev - bm.z) < 2 && (k.x - bm.x) ** 2 + (k.y - bm.y) ** 2 < BOMB_TRIGGER ** 2);
-      if (bm.fuse > 0 && !close) return true;
-      for (const k of karts) {
-        if (Math.abs(k.elev - bm.z) > 3) continue;
-        if ((k.x - bm.x) ** 2 + (k.y - bm.y) ** 2 > BOMB_BLAST ** 2) continue;
-        if (k.spinOut(1.25)) this.events.push({ kind: "spun", kart: k, by: "bomb", owner: bm.owner });
-      }
-      this.blasts.push({ x: bm.x, y: bm.y, z: bm.z, age: 0 });
-      this.events.push({ kind: "boom", x: bm.x, y: bm.y });
-      return false;
+      if (bm.age < MINE_LIFE && !close) return true;
+      return this.blast(bm, karts);
     });
     this.blasts = this.blasts.filter((b) => (b.age += dt) < BLAST_TIME);
   }

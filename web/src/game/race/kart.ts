@@ -69,6 +69,8 @@ export class Kart {
   itemAge = 0; // s since the current item arrived
   itemHeld = false; // the item button was down last frame
   trailing = false; // the item is held out behind the kart (it blocks one hit from behind)
+  aim = 0; // rad off the heading where a boomerang or a bomb will go (the sweeping arrow)
+  aimLocked: number | null = null; // the aim when a held bomb's button went down
   spin = 0; // s left in a spin-out
   spinAngle = 0; // the sprite's extra rotation while spinning
   prism = 0; // s left invincible (a prism)
@@ -85,6 +87,7 @@ export class Kart {
   air = false;
   airTime = 0;
   rampU = -1; // 0..1 while on a jump ramp (set by the race), -1 elsewhere
+  walled = false; // in a tunnel, between its walls (set by the race)
   trick: TrickGrade = 0; // pending: paid out as a boost on landing
   burnout = 0; // s of wheelspin after a too-early start
   trickAngle = 0; // the sprite's extra rotation during a trick
@@ -212,8 +215,8 @@ export class Kart {
       this.vz = (this.ground - this.elev) / Math.max(dt, 1e-3); // climbing a ramp: the launch speed
       this.elev = this.ground;
     }
-    // guard rails on raised road: no falling off a bridge
-    if (!this.air && this.ground > 0.8 && a > HALF_WIDTH - 0.7) {
+    // guard rails on raised road (no falling off a bridge or a hill), and a tunnel's walls
+    if (!this.air && (this.ground > 0.8 || this.walled) && a > HALF_WIDTH - 0.7) {
       const [tx, ty] = track.tangent(this.idx);
       const sgn = Math.sign(this.offset), push = a - (HALF_WIDTH - 0.7);
       this.x += ty * sgn * push;

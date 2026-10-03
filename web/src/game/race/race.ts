@@ -9,8 +9,8 @@ import { WorldTexture } from "../world/texture";
 import { HALF_WIDTH, type Layout, N, Track } from "../world/track";
 import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
-import { Features } from "./features";
-import { type ItemKind, Items } from "./items";
+import { Features, TUNNEL_LEN } from "./features";
+import { AIMED, AIM_MAX, AIM_RATE, type ItemKind, Items } from "./items";
 import { CLASSES, type Controls, type Difficulty, Kart, collideKarts } from "./kart";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
 import { LIVERIES } from "../render/sprites";
@@ -50,6 +50,7 @@ export interface RaceSetup {
   replay: Float64Array | null; // points of a locked circuit to race again (game meters)
   layout?: Layout; // what the designer is asked for (default: anything)
   build?: Build; // the player's kart from the garage (default: the classic kart)
+  rivalSeed?: number; // the rivals' karts (a Grand Prix keeps them for every race)
 }
 
 /** Whether the player's controls reach the race: while racing, and during the countdown, where
@@ -68,7 +69,7 @@ export class Race {
   readonly tex: WorldTexture;
   readonly scenery: Scenery;
   readonly items: Items;
-  readonly features = new Features();
+  readonly features: Features;
   readonly karts: Kart[] = [];
   readonly player: Kart;
   private readonly drivers: RivalDriver[] = [];
@@ -81,12 +82,17 @@ export class Race {
   private readonly rng: Rand;
   private doneTimer = 0;
   private throttleHeld = 0; // s the player has held the throttle during the countdown
+  private nextHill = 170; // m of road before the next climb may start (the mountains)
+  private readonly hillRng: Rand;
+  private aimPhase = 0; // where the player's aiming arrow is in its sweep
   private bridgesSeen = 0;
   /** How the player is driving lap 1 (smoothed), which sets the style of the road ahead. */
   readonly driving = { speed: 0.7, offroad: 0, drift: 0, clean: 1 };
 
   constructor(readonly setup: RaceSetup, designer: Designer | null, banner: (s: Sprite) => void) {
     this.rng = new Rand(setup.seed);
+    this.hillRng = new Rand(setup.seed + 21);
+    this.features = new Features(!!setup.theme.mountain);
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
@@ -112,7 +118,7 @@ export class Race {
     // from the garage, better ones in the harder classes
     const playerSlot = Math.min(n - 1, Math.floor(n / 2));
     this.player = new Kart(0, LIVERIES[0].name, 0, true).equip(setup.build ?? DEFAULT_BUILD);
-    const garage = new Rand(setup.seed + 11);
+    const garage = new Rand(setup.rivalSeed ?? setup.seed + 11);
     let rivalNo = 1;
     for (const slot of order) {
       const k = slot === playerSlot ? this.player
@@ -124,9 +130,6 @@ export class Race {
   }
 
   private onCommit(from: number, to: number): void {
-    this.tex.paintRoad(this.track, from, to);
-    this.scenery.onCommit(this.track, from, to);
-    this.items.onCommit(this.track, from, to);
     const t = this.track;
     const blocked = (s: number, len: number) =>
       this.items.rowS.some((r) => r > s - 12 && r < s + len + 12) ||
@@ -135,7 +138,15 @@ export class Race {
       t.bridges.some((b) => Math.abs(b.centerS - s - len / 2) < BRIDGE_CLEAR ||
         Math.abs(t.s[b.lower] - s - len / 2) < UNDER_CLEAR) ||
       t.locked && (s + len > t.length - 80);
+    // in the mountains the road climbs: lift it before it is painted (raised road leaves a shadow)
+    if (this.setup.theme.mountain) this.placeHills(from, to, blocked);
+    this.tex.paintRoad(t, from, to);
+    this.scenery.onCommit(t, from, to);
+    this.items.onCommit(t, from, to);
+    const tunnels = this.features.tunnels.length;
     this.features.onCommit(t, from, to, blocked, () => this.rng.next());
+    // nothing grows inside a new tunnel's rock
+    for (const tn of this.features.tunnels.slice(tunnels)) this.scenery.clearAlong(t, tn.start, tn.start + tn.n, HALF_WIDTH + 10);
     while (this.bridgesSeen < t.bridges.length) {
       const b = t.bridges[this.bridgesSeen++];
       this.scenery.onBridge(t, b);
@@ -144,7 +155,32 @@ export class Race {
       const under = t.s[b.lower];
       this.features.ramps = this.features.ramps.filter((r) =>
         Math.abs(r.s0 - under) > UNDER_CLEAR && Math.abs(r.s0 - b.centerS) > BRIDGE_CLEAR);
+      // and a climb where the bridge, or the road under it, goes would leave no headroom: flatten it
+      for (const [s0, s1] of [[b.centerS - BRIDGE_CLEAR, b.centerS + BRIDGE_CLEAR], [under - UNDER_CLEAR, under + UNDER_CLEAR]]) {
+        const r = t.removeHills(s0, s1);
+        if (r) this.tex.repaint(t, r[0], r[1]);
+      }
       this.events.push({ kind: "bridge" });
+    }
+  }
+
+  /** Set climbs along newly committed road: 110-170 m long, 3.5-6.2 m high, in the middle of the
+   * lap (clear of the grid and the line), away from bridges, item rows and tunnels. */
+  private placeHills(from: number, to: number, blocked: (s: number, len: number) => boolean): void {
+    const t = this.track;
+    for (let i = Math.max(1, from); i < to; i++) {
+      const s = t.s[i];
+      if (s < this.nextHill) continue;
+      const seg = t.segOf[i];
+      if (seg < 24 || seg > 180) continue;
+      const len = this.hillRng.range(110, 170), h = this.hillRng.range(3.5, 6.2);
+      const tunnel = this.features.tunnels.some((tn) => tn.s0 < s + len + 20 && tn.s0 + TUNNEL_LEN > s - 20);
+      if (tunnel || blocked(s - 10, len + 20)) {
+        this.nextHill = s + 15;
+        continue;
+      }
+      t.addHill({ s0: s, len, h });
+      this.nextHill = s + len + this.hillRng.range(90, 180);
     }
   }
 
@@ -157,7 +193,9 @@ export class Race {
    * fast, clean and drifting raises it; running wide or slow calms the dream down. */
   styleWanted(): number {
     const d = this.driving;
-    const bias = this.setup.difficulty === "legend" ? 0.1 : this.setup.difficulty === "rookie" ? -0.1 : 0;
+    // Legend leans wild and Rookie calm; the mountains wind more
+    const bias = (this.setup.difficulty === "legend" ? 0.1 : this.setup.difficulty === "rookie" ? -0.1 : 0) +
+      (this.setup.theme.mountain ? 0.12 : 0);
     const v = 0.5 + 1.25 * (d.speed - 0.72) + 0.6 * d.drift - 1.1 * d.offroad - 0.25 * (1 - d.clean) + bias;
     return Math.max(0.05, Math.min(0.95, v));
   }
@@ -232,6 +270,12 @@ export class Race {
       if (this.player.boostTime < 0.85) this.events.push({ kind: "pad" });
       this.player.boostTime = Math.max(this.player.boostTime, 1.0);
     }
+    // the aiming arrow sweeps left and right while a boomerang or a bomb is ready to throw
+    const p = this.player;
+    if (p.item && AIMED.has(p.item) && p.roulette <= 0 && !p.trailing) {
+      this.aimPhase += dt * AIM_RATE;
+      p.aim = AIM_MAX * Math.sin(this.aimPhase);
+    }
     this.fire(this.player, controls);
     this.items.update(dt, this.track, this.karts, (k) => k.place || 1);
     const me = this.player;
@@ -290,6 +334,7 @@ export class Race {
     const r = this.features.rampUnder(this.track, k);
     k.rampU = r.u;
     k.ground = (this.track.elev[k.idx] ?? 0) + r.height;
+    k.walled = this.features.inTunnel(this.track, k);
   }
 
   /** Items act on the press of the button, never while it is merely held: most fire at once;

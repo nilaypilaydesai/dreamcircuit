@@ -247,17 +247,17 @@ export class Hud {
     }
     // committed road, then bridges drawn over the road they cross (with a dark edge)
     for (let i = 0; i < t.count; i += 3) {
-      if (t.elev[i] > 2) continue;
+      if (t.bridgeAt(i) > 2) continue;
       const [px, py] = map(t.xs[i], t.ys[i]);
       scr.fillRect(px - 1, py - 1, 2, 2, SILVER);
     }
     for (let i = 0; i < t.count; i += 2) {
-      if (t.elev[i] <= 2) continue;
+      if (t.bridgeAt(i) <= 2) continue;
       const [px, py] = map(t.xs[i], t.ys[i]);
       scr.fillRect(px - 2, py - 2, 4, 4, INK);
     }
     for (let i = 0; i < t.count; i += 2) {
-      if (t.elev[i] <= 2) continue;
+      if (t.bridgeAt(i) <= 2) continue;
       const [px, py] = map(t.xs[i], t.ys[i]);
       scr.fillRect(px - 1, py - 1, 2, 2, GOLD);
     }

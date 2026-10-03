@@ -1,6 +1,6 @@
 // The garage: build your kart. A showroom with the kart turning slowly on a lit pedestal, the
-// part pickers (body, wheels, spoiler, exhaust, paint, accent) and the six stat bars, which show
-// what the last change gained (green) or cost (red) for a moment.
+// part pickers (body, wheels, spoiler, exhaust, paint, accent) and the six stat bars, each with
+// its total out of 20.
 
 import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen } from "../core/gfx";
@@ -12,22 +12,18 @@ import { Menu } from "./menus";
 
 const INK = hex("#0b0b14");
 const DIM = hex("#8f87b8");
-const GAIN = hex("#5dff7a");
-const LOSS = hex("#ff4d4d");
 const BAR = hex("#c79bff");
+const TEXT = hex("#e9e6ff");
 
 export class Garage {
   readonly menu: Menu;
   private readonly table = new Turntable();
   private shown: Stats;
-  private before: Stats;
-  private changedAt = -9;
-  private now = 0;
   private model: Map<number, number> | null = null;
   private modelKey = "";
 
   constructor(private build: Build, private readonly onChange: (b: Build) => void, done: () => void) {
-    this.shown = this.before = statsOf(build);
+    this.shown = statsOf(build);
     const cycle = <T extends { id: string }>(list: readonly T[], id: string, d: number) =>
       list[(list.findIndex((p) => p.id === id) + d + list.length) % list.length].id;
     const part = (slot: (typeof SLOTS)[number]) => ({
@@ -54,15 +50,12 @@ export class Garage {
   }
 
   private set(change: Partial<Build>): void {
-    this.before = this.shown;
     this.build = { ...this.build, ...change };
     this.shown = statsOf(this.build);
-    this.changedAt = this.now;
     this.onChange(this.build);
   }
 
   draw(scr: Screen, f: PixelFont, now: number): void {
-    this.now = now;
     backdrop(scr);
     // side by side on a landscape screen (the showroom on the left, two-line rows on the right);
     // on a phone held upright, the showroom on top and one-line rows under it
@@ -88,18 +81,16 @@ export class Garage {
     const sx = wide ? Math.max(6, cx - 92) : Math.round(W / 2 - 92);
     const sy = stage + Math.round(ry) + (wide ? 14 : 10);
     const gap = wide ? 9 : 8;
-    const barX = sx + 84, barW = 96;
-    const fresh = now - this.changedAt < 1.6;
+    const barX = sx + 84, barW = 80;
     STAT_KEYS.forEach((k, i) => {
       const y = sy + i * gap;
+      const v = this.shown[k];
+      const px = (s: number) => Math.round((barW * s) / STAT_MAX);
       f.draw(scr, STAT_LABELS[k], sx, y, { color: DIM, outline: INK });
       scr.fillRect(barX - 1, y, barW + 2, 7, INK);
-      const v = this.shown[k], was = this.before[k];
-      const px = (s: number) => Math.round((barW * s) / STAT_MAX);
       scr.fillRect(barX, y + 1, px(v), 5, BAR);
-      if (fresh && v > was) scr.fillRect(barX + px(was), y + 1, px(v) - px(was), 5, GAIN);
-      if (fresh && v < was) scr.fillRect(barX + px(v), y + 1, px(was) - px(v), 5, LOSS);
       for (let t = 1; t < 4; t++) scr.fillRect(barX + px(t * 5), y + 1, 1, 5, INK); // quarter ticks
+      f.draw(scr, String(v).padStart(2, " "), barX + barW + 5, y, { color: TEXT, outline: INK }); // the total
     });
     // the parts, and a line about the one picked
     this.menu.hintWidth = panel - 8;

@@ -1,5 +1,6 @@
 // DREAM CIRCUIT: the retro kart racer whose circuit is dreamed live by a diffusion model.
-// Screens: title (with an AI attract race behind it), main menu, the garage, race setup, how to
+// Screens: title (with an AI attract race behind it), main menu, the garage, quick race setup, the
+// Grand Prix (setup, a race in every world, the standings after each, the award ceremony), how to
 // play, the "dreaming" intro, the race itself, pause and results. DATA and DREAM LAB open data.html.
 
 import "./game.css";
@@ -8,27 +9,31 @@ import { PixelFont, drawTextToSprite } from "./core/font";
 import { H, Rand, Screen, W, hex, mix, type Sprite } from "./core/gfx";
 import { GameInput, type MenuEvent } from "./core/input";
 import { RivalDriver } from "./race/ai";
-import { type ItemKind, BLAST_TIME } from "./race/items";
+import { Cup, type CupRow, type Entrant } from "./race/cup";
+import { AIMED, type ItemKind, BLAST_TIME } from "./race/items";
 import { CLASSES, type Controls, type Difficulty, type Kart } from "./race/kart";
-import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild } from "./race/parts";
+import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild, rivalBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
 import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
 import type { Face } from "./render/poly";
-import { bridgeFaces, padFaces, rampFaces } from "./render/structures";
+import { aimArrow, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
 import { Sky } from "./render/sky";
 import {
   LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, heldArt, itemBoxFrames, kartSprites, orbArt,
   slickArt,
 } from "./render/sprites";
 import { THEMES } from "./themes";
+import { CAUSTIC, caustics, fishSprites, makeSchools, waterOverlay } from "./render/underwater";
+import { Ceremony, STANDINGS_SETTLE, drawStandings } from "./ui/ceremony";
 import { Garage } from "./ui/garage";
 import { Hud, formatTime, kartColor } from "./ui/hud";
 import { Menu } from "./ui/menus";
 import { type Layout, N, checkLap } from "./world/track";
 import { CircuitDesigner, fromSteps, smoothArc, toGame } from "./world/trackgen";
 
-type Mode = "boot" | "title" | "main" | "garage" | "setup" | "howto" | "dreaming" | "race" | "pause" | "results";
+type Mode = "boot" | "title" | "main" | "garage" | "setup" | "cupSetup" | "howto" | "dreaming" | "race" | "pause"
+  | "results" | "standings" | "podium";
 
 const INK = hex("#0b0b14");
 const HOT = hex("#ffd23f");
@@ -96,7 +101,11 @@ class Game {
   private build: Build = DEFAULT_BUILD;
   private garage!: Garage;
   private garageReturn: Mode = "main";
-  private menus!: Record<"main" | "setup" | "pause" | "results", Menu>;
+  private menus!: Record<"main" | "setup" | "cupSetup" | "pause" | "pauseCup" | "results" | "standings", Menu>;
+  private cup: Cup | null = null; // a Grand Prix in progress
+  private cupRows: CupRow[] = []; // the standings after its last race
+  private standingsAt = 0; // when they were shown (they animate)
+  private ceremony: Ceremony | null = null;
 
   constructor() {
     const canvas = document.getElementById("game") as HTMLCanvasElement;
@@ -177,7 +186,8 @@ class Game {
     const s = this.settings;
     this.menus = {
       main: new Menu("MAIN MENU", [
-        { label: "GRAND PRIX", action: () => this.go("setup"), hint: "3 LAPS ON A CIRCUIT THE AI DREAMS FOR YOU" },
+        { label: "QUICK RACE", action: () => this.go("setup"), hint: "ONE RACE, 3 LAPS, ON A CIRCUIT THE AI DREAMS FOR YOU" },
+        { label: "GRAND PRIX", action: () => this.go("cupSetup"), hint: "A RACE IN EVERY WORLD, POINTS FOR EVERY FINISH, AND A PODIUM" },
         { label: "GARAGE", action: () => this.openGarage("main"), hint: "BUILD YOUR KART: BODY, WHEELS, SPOILER, EXHAUST, PAINT" },
         { label: "DREAM LAB", action: () => { location.href = "data.html#lab"; }, hint: "DRIVE INSIDE THE NEURAL WORLD MODEL" },
         { label: "DATA", action: () => { location.href = "data.html"; }, hint: "THE MODELS, THE PHYSICS AUDIT, THE CHARTS" },
@@ -186,7 +196,7 @@ class Game {
         { label: "ENGINE", value: () => ENGINE_LEVELS[s.engine].label, hint: "THE ENGINE HUM UNDER THE MUSIC",
           left: () => this.setEngine(), right: () => this.setEngine() },
       ]),
-      setup: new Menu("GRAND PRIX", [
+      setup: new Menu("QUICK RACE", [
         { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(0, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "HOW MANY AI KARTS RACE YOU (0-7)" },
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); } },
@@ -196,11 +206,27 @@ class Game {
         { label: "START RACE", action: () => void this.startRace(s.circuit === 1 && !!this.lastCircuit) },
         { label: "BACK", action: () => this.go("main") },
       ], 300),
+      cupSetup: new Menu("GRAND PRIX", [
+        { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(1, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "THE SAME RIVALS IN THE SAME KARTS ALL THE WAY (1-7)" },
+        { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
+        { label: "LAYOUT", value: () => LAYOUTS[s.layout].label, left: () => { s.layout = (s.layout + LAYOUTS.length - 1) % LAYOUTS.length; }, right: () => { s.layout = (s.layout + 1) % LAYOUTS.length; }, hint: "LOOP, OR A FIGURE 8 THAT CROSSES ITSELF ON A BRIDGE" },
+        { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("cupSetup"), hint: "OPEN THE GARAGE" },
+        { label: "START GRAND PRIX", action: () => void this.startCup(), hint: `${THEMES.length} WORLDS. POINTS BY PLACE: 15 12 10 8 6 4 2 1` },
+        { label: "BACK", action: () => this.go("main") },
+      ], 300),
       pause: new Menu("PAUSED", [
         { label: "RESUME", action: () => this.go("race") },
         { label: "RESTART", action: () => this.raceAgain(), hint: "SAME CIRCUIT, FRESH START" },
         { label: "QUIT TO MENU", action: () => this.quitToMenu() },
       ]),
+      pauseCup: new Menu("PAUSED", [
+        { label: "RESUME", action: () => this.go("race") },
+        { label: "QUIT GRAND PRIX", action: () => this.quitToMenu(), hint: "THE POINTS SO FAR ARE LOST" },
+      ]),
+      standings: new Menu("", [
+        { label: "NEXT RACE", action: () => this.nextInCup() },
+        { label: "QUIT GRAND PRIX", action: () => this.quitToMenu() },
+      ], 240),
       results: new Menu("", [
         { label: "RACE AGAIN", action: () => this.raceAgain(), hint: "SAME CIRCUIT" },
         { label: "NEW DREAM CIRCUIT", action: () => void this.startRace(false) },
@@ -224,6 +250,7 @@ class Game {
   private go(m: Mode): void {
     this.mode = m;
     if (m === "setup") this.menus.setup.index = this.menus.setup.items.length - 2;
+    if (m === "cupSetup") this.menus.cupSetup.index = this.menus.cupSetup.items.length - 2;
     if (m === "pause") this.sound.setEngine(0, false, false);
     if (m !== "pause") this.autoPaused = false;
     this.input.setRacing(m === "race", m === "race" || m === "dreaming");
@@ -233,7 +260,7 @@ class Game {
   /** The soundtrack follows the screen: the title loop in menus, the world's loop in a race. */
   private music(): void {
     const mu = this.sound.music;
-    if (this.mode === "pause" || this.mode === "results" || this.mode === "boot") mu.stop();
+    if (["pause", "results", "boot", "standings", "podium"].includes(this.mode)) mu.stop();
     else if (this.mode === "race" || this.mode === "dreaming") {
       const id = this.race?.setup.theme.id ?? "valley";
       mu.play(id);
@@ -242,6 +269,8 @@ class Game {
 
   private quitToMenu(): void {
     this.race = null;
+    this.cup = null;
+    this.ceremony = null;
     this.go("main");
     this.sound.setEngine(0, false, false);
   }
@@ -298,13 +327,15 @@ class Game {
 
   private async startRace(sameCircuit: boolean, again?: RaceSetup): Promise<void> {
     this.raceError = "";
-    if (!again && !this.designer && !(sameCircuit && this.lastCircuit)) {
+    const live = again ? !again.replay : !(sameCircuit && this.lastCircuit);
+    if (live && !this.designer) {
       // A quick player can press START before the designer has loaded: start once it has.
       if (this.waitingForDesigner) return;
+      const from = this.mode;
       this.waitingForDesigner = true;
       await this.designerReady;
       this.waitingForDesigner = false;
-      if (!this.designer || this.mode !== "setup") return;
+      if (!this.designer || this.mode !== from) return;
     }
     const s = this.settings;
     const theme = s.theme === THEMES.length ? THEMES[(Math.random() * THEMES.length) | 0] : THEMES[s.theme];
@@ -329,12 +360,72 @@ class Game {
       if (this.race !== race) return;
       this.race = null;
       this.raceError = "THE DREAM FAILED. TRY AGAIN";
-      this.go("setup");
+      this.go(this.cup ? "cupSetup" : "setup");
+      this.cup = null;
       return;
     }
     if (this.race !== race) return; // the player backed out while it was dreaming
     this.snapCamera(this.cam, race);
     this.go("race");
+  }
+
+  // ----------------------------------------------------------------------------------------
+  // the Grand Prix
+
+  /** A Grand Prix: one race in every world, the same rivals in the same karts throughout. */
+  private async startCup(): Promise<void> {
+    this.cup = new Cup(THEMES.slice(), (Math.random() * 1e9) | 0);
+    await this.startCupRace();
+  }
+
+  private async startCupRace(): Promise<void> {
+    const cup = this.cup;
+    if (!cup) return;
+    const s = this.settings;
+    await this.startRace(false, {
+      rivals: Math.max(1, s.rivals), difficulty: DIFFS[s.diff], theme: cup.world,
+      seed: (cup.seed + 7919 * (cup.index + 1)) | 0, replay: null, layout: LAYOUTS[s.layout].id,
+      build: this.build, rivalSeed: cup.seed,
+    });
+  }
+
+  private entrant(k: Kart): Entrant {
+    return { id: k.id, name: k.name, livery: k.livery, build: k.build, isPlayer: k.isPlayer };
+  }
+
+  /** A Grand Prix race is over: score it and show the standings. */
+  private finishCupRace(r: Race): void {
+    const cup = this.cup!;
+    this.cupRows = cup.award(r.results().map((row) => ({ entrant: this.entrant(row.kart), time: row.time })));
+    this.standingsAt = this.time;
+    const next = this.menus.standings;
+    next.items[0].label = cup.done ? "AWARD CEREMONY" : `NEXT: ${cup.world.name}`;
+    next.index = 0;
+    this.go("standings");
+  }
+
+  private nextInCup(): void {
+    const cup = this.cup;
+    if (!cup) return;
+    if (!cup.done) {
+      void this.startCupRace();
+      return;
+    }
+    const place = cup.ranking().findIndex((e) => e.isPlayer) + 1;
+    this.ceremony = new Ceremony(cup.podium(), place);
+    this.race = null;
+    this.go("podium");
+  }
+
+  /** The standings are still animating (their menu is not up yet). */
+  private standingsSettling(): boolean {
+    return this.mode === "standings" && this.time - this.standingsAt < STANDINGS_SETTLE;
+  }
+
+  /** The ceremony is over (after the camera has pulled back): back to the main menu. */
+  private endCeremony(): void {
+    if ((this.ceremony?.elapsed ?? 99) < 7.5) return;
+    this.quitToMenu();
   }
 
   private snapCamera(cam: Camera, race: Race): void {
@@ -478,13 +569,16 @@ class Game {
       this.music();
     }
     const menuFor: Partial<Record<Mode, Menu>> = {
-      main: this.menus.main, setup: this.menus.setup, pause: this.menus.pause, results: this.menus.results,
-      garage: this.garage.menu,
+      main: this.menus.main, setup: this.menus.setup, cupSetup: this.menus.cupSetup,
+      pause: this.cup ? this.menus.pauseCup : this.menus.pause, results: this.menus.results,
+      standings: this.menus.standings, garage: this.garage.menu,
     };
     for (const e of evs) this.onEvent(e, menuFor[this.mode]);
     if (click) {
       if (this.mode === "title") this.go("main");
       else if (this.mode === "howto") this.go("main");
+      else if (this.mode === "podium") this.endCeremony();
+      else if (this.standingsSettling()) this.standingsAt = this.time - STANDINGS_SETTLE;
       else menuFor[this.mode]?.click(click.x, click.y, this.sound);
     }
   }
@@ -496,6 +590,10 @@ class Game {
     }
     if (this.mode === "howto") {
       this.go("main");
+      return;
+    }
+    if (this.mode === "podium") {
+      if (e === "confirm" || e === "back" || e === "pause") this.endCeremony();
       return;
     }
     if (this.mode === "race") {
@@ -510,11 +608,17 @@ class Game {
       if (e === "back" || e === "cancel" || e === "pause") this.quitToMenu(); // pause: the touch II button
       return;
     }
+    if (this.standingsSettling()) {
+      // still counting up (and a drift or gas press from the finish must not skip them): a press
+      // jumps to the final order, and the menu takes input once it shows
+      if (e === "confirm") this.standingsAt = this.time - STANDINGS_SETTLE;
+      return;
+    }
     if (menu) {
       const r = menu.handle(e, this.sound);
       if (r === "back") {
         if (this.mode === "pause") this.go("race");
-        else if (this.mode === "setup") this.go("main");
+        else if (this.mode === "setup" || this.mode === "cupSetup") this.go("main");
         else if (this.mode === "main") this.go("title");
         else if (this.mode === "garage") this.go(this.garageReturn);
       }
@@ -523,6 +627,7 @@ class Game {
 
   private update(dt: number): void {
     if (this.shake > 0) this.shake -= dt;
+    if (this.mode === "podium") this.ceremony?.update(dt, this.sound);
     if (this.flash > 0) this.flash -= dt;
     const a = this.attract;
     if (a && (this.mode === "title" || this.mode === "main" || this.mode === "setup" || this.mode === "howto")) {
@@ -545,8 +650,11 @@ class Game {
       this.sound.setEngine(Math.abs(p.v) / r.cls.vmax, r.phase !== "done", p.surface === "grass");
       if (r.phase === "done" && this.mode === "race") {
         this.sound.setEngine(0, false, false);
-        this.menus.results.index = 0;
-        this.go("results");
+        if (this.cup) this.finishCupRace(r);
+        else {
+          this.menus.results.index = 0;
+          this.go("results");
+        }
       }
     }
   }
@@ -568,7 +676,9 @@ class Game {
         return (1 - d / 46) * (0.45 + 0.25 * Math.sin(ph + x * 0.37 + y * 0.29));
       };
     }
-    drawGround(this.scr, cam, race.tex, race.setup.theme.fog, mist);
+    const theme = race.setup.theme;
+    drawGround(this.scr, cam, race.tex, theme.fog, mist,
+               theme.underwater ? { color: CAUSTIC, at: caustics(this.time) } : undefined);
     const extras: WorldSprite[] = [];
     const now = this.time;
     const it = race.items;
@@ -592,16 +702,45 @@ class Game {
       const f = Math.min(this.blastArt.length - 1, Math.floor((b.age / BLAST_TIME) * this.blastArt.length));
       extras.push({ x: b.x, y: b.y, art: this.blastArt[f], base: b.z });
     }
+    if (theme.underwater) extras.push(...fishSprites(this.schools(race), now, cam.heading));
     const faces: Face[] = [];
     const painter = { cam, scr: this.scr, fog: race.setup.theme.fog, faces };
     bridgeFaces(painter, t, race.setup.theme);
+    hillFaces(painter, t, theme);
+    tunnelFaces(painter, t, race.features);
     rampFaces(painter, t, race.features, race.setup.theme);
     padFaces(painter, t, race.features, now);
+    // the player's aiming arrow while a boomerang or a bomb is ready (locked, it turns blue)
+    const me = race.player;
+    if (me.item && AIMED.has(me.item) && me.roulette <= 0 && me.rocket <= 0 && race === this.race) {
+      aimArrow(painter, me, me.trailing ? me.aimLocked ?? me.aim : me.aim, me.trailing ? hex("#63c8ff") : HOT);
+    }
     drawWorldSprites(this.scr, cam, race.scenery.items, race.karts, {
       sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0),
       sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
       held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
-    }, race.setup.theme.fog, extras, faces);
+      dome: !!theme.underwater,
+    }, theme.fog, extras, faces);
+    if (theme.underwater) waterOverlay(this.scr, now);
+    // inside a tunnel the light drops
+    if (race.features.tunnels.length) {
+      const ci = t.nearest(cam.x, cam.y, race.player.idx);
+      if (race.features.tunnelAt(t.s[ci]) && Math.abs(t.offset(cam.x, cam.y, ci)) < 7) {
+        this.scr.dimRect(0, 0, W, H, hex("#0b0b14"), 0.34);
+      }
+    }
+  }
+
+  private readonly fish = new WeakMap<Race, ReturnType<typeof makeSchools>>();
+
+  /** The reef's schools of fish, made once per race, scattered over the world around the lap. */
+  private schools(race: Race): ReturnType<typeof makeSchools> {
+    let s = this.fish.get(race);
+    if (!s) {
+      s = makeSchools(race.setup.seed + 5, (rng) => [rng.range(-180, 180), rng.range(-180, 180)]);
+      this.fish.set(race, s);
+    }
+    return s;
   }
 
   private render(): void {
@@ -635,16 +774,17 @@ class Game {
         break;
       }
       case "main":
-      case "setup": {
+      case "setup":
+      case "cupSetup": {
         background();
-        const menu = this.mode === "main" ? this.menus.main : this.menus.setup;
+        const menu = this.mode === "main" ? this.menus.main : this.mode === "setup" ? this.menus.setup : this.menus.cupSetup;
         const logo = H < 214 ? 6 : 16;
         f.draw(scr, "DREAM CIRCUIT", W / 2, logo, { scale: 2, rows: LOGO_ROWS, outline: INK, align: "center" });
         // the panel and its hint (up to two lines) sit in the space under the logo; on the setup
         // screen, a designer that is still loading (or a failed dream) takes the hint's place
         const top = Math.max(logo + 22, Math.min(46, Math.round((H - menu.height() - 24 + logo + 22) / 2)));
         const err = this.raceError || this.designerError;
-        const note = this.mode === "setup" && (!this.designer || this.raceError)
+        const note = this.mode !== "main" && (!this.designer || this.raceError)
           ? { text: err || "WAKING THE DREAMER...", color: err ? HOT : DREAM } : undefined;
         menu.draw(scr, f, W / 2, top, now, note);
         break;
@@ -659,9 +799,13 @@ class Game {
       case "dreaming":
         this.dreamingScreen();
         break;
+      case "podium":
+        this.ceremony?.draw(scr, f, this.input.touchMode);
+        break;
       case "race":
       case "pause":
-      case "results": {
+      case "results":
+      case "standings": {
         const r = this.race;
         if (!r || !this.sky) break;
         this.drawWorld(r, this.sky, this.cam);
@@ -670,9 +814,15 @@ class Game {
         if (this.mode === "race") this.hud.draw(scr, r, now);
         if (this.mode === "pause") {
           scr.dimRect(0, 0, W, H, INK, 0.45);
-          this.menus.pause.draw(scr, f, W / 2, Math.max(20, Math.round((H - this.menus.pause.height()) / 2) - 10), now);
+          const pm = this.cup ? this.menus.pauseCup : this.menus.pause;
+          pm.draw(scr, f, W / 2, Math.max(20, Math.round((H - pm.height()) / 2) - 10), now);
         }
         if (this.mode === "results") this.results(r);
+        if (this.mode === "standings" && this.cup) {
+          drawStandings(scr, f, this.cup, this.cupRows, now - this.standingsAt);
+          const sm = this.menus.standings;
+          if (now - this.standingsAt >= STANDINGS_SETTLE) sm.draw(scr, f, W / 2, H - sm.height() - 4, now);
+        }
         break;
       }
     }
@@ -722,10 +872,35 @@ class Game {
 
   /** Dev only: race a given circuit (game meters, x0 y0 x1 y1 ...) without the designer. */
   debugRace(points: number[], theme = 0, rivals = 5): void {
+    this.cup = null;
     void this.startRace(false, {
       rivals, difficulty: "pro", theme: THEMES[theme], seed: 1234, replay: Float64Array.from(points), layout: "any",
       build: this.build,
     });
+  }
+
+  /** Dev only: a made-up Grand Prix, to see its standings (over the current race) or, with
+   * ``ceremony``, its award ceremony. */
+  debugCup(ceremony: boolean, playerPlace = 1): void {
+    const cup = new Cup(THEMES.slice(), 7);
+    const rng = new Rand(3);
+    const field: Entrant[] = LIVERIES.slice(0, 6).map((l, i) => ({
+      id: i, name: l.name, livery: i, build: i ? rivalBuild(rng, "legend") : this.build, isPlayer: i === 0,
+    }));
+    const races = ceremony ? THEMES.length : 2;
+    for (let r = 0; r < races; r++) {
+      const order = [...field].sort((a, b) => (a.isPlayer ? playerPlace - 0.5 : a.id) - (b.isPlayer ? playerPlace - 0.5 : b.id))
+        .map((e, i) => ({ entrant: e, time: 110 + i * 2.5 + r }));
+      this.cupRows = cup.award(order);
+    }
+    this.cup = cup;
+    if (ceremony) {
+      this.nextInCup();
+      return;
+    }
+    this.standingsAt = this.time;
+    this.menus.standings.items[0].label = `NEXT: ${cup.world.name}`;
+    this.go("standings");
   }
 
   /** Dev only: hand the player an item, as if from a box. */
@@ -788,6 +963,7 @@ class Game {
       ["DRIVE", "ARROWS OR W A S D"],
       ["DRIFT", "HOLD SHIFT OR SPACE IN A TURN, LET GO FOR A MINI-TURBO"],
       ["ITEM", "E: TAP TO USE. HOLD TO KEEP OIL, ORBS OR A BOMB BEHIND YOU AS A SHIELD"],
+      ["AIM", "BOOMERANGS AND BOMBS GO WHERE THE SWEEPING ARROW POINTS WHEN YOU PRESS E"],
       ["RAMP", "SPACE AT THE LIP FOR A TRICK BOOST"],
       ["START", "GAS JUST BEFORE GO: ROCKET START"],
       ["TOUCH", "THE STICK STEERS. PUSH IT ALL THE WAY OVER TO DRIFT, PULL BACK TO BRAKE"],
@@ -805,7 +981,7 @@ class Game {
       y += 1;
     }
     y += 4;
-    const story = "NOBODY DESIGNED YOUR CIRCUIT: A DIFFUSION MODEL DREAMS THE ROAD AHEAD OF THE PACK ON LAP 1, THEN IT LOCKS.";
+    const story = "NOBODY DESIGNED YOUR CIRCUIT: A DIFFUSION MODEL DREAMS THE ROAD AHEAD OF THE PACK ON LAP 1, THEN IT LOCKS. THE GRAND PRIX RACES EVERY WORLD FOR POINTS.";
     for (const line of f.wrap(story, right - x0 - 20)) {
       if (y > H - 30) break;
       f.draw(scr, line, W / 2, y, { color: DIM, align: "center" });
@@ -820,6 +996,10 @@ class Game {
     const r = this.race;
     const pv = r?.live?.preview;
     f.draw(scr, "THE AI IS DREAMING YOUR CIRCUIT", W / 2, 22, { color: DREAM, outline: INK, align: "center" });
+    if (r) {
+      const where = this.cup ? `GRAND PRIX RACE ${this.cup.index + 1} OF ${this.cup.worlds.length}: ` : "";
+      f.draw(scr, where + r.setup.theme.name, W / 2, 34, { color: HOT, outline: INK, align: "center" });
+    }
     if (pv && r) {
       // the designer's current whole-circuit guess, sharpening with every denoising step
       let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
@@ -887,5 +1067,6 @@ if (import.meta.env.DEV) {
     give: (item: ItemKind) => game.debugGive(item),
     pin: (size: [number, number] | null) => game.debugPin(size),
     go: (mode: Mode) => game.debugGo(mode),
+    cup: (ceremony = false, place = 1) => game.debugCup(ceremony, place),
   };
 }

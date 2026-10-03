@@ -69,6 +69,38 @@ const SONGS: Record<string, Song> = {
     arp: 8,
     drums: { kick: "x.....x...x.....", snare: "....x.......x..x", hat: "..x...x...x...x." },
   },
+  // the reef: slow and floaty, long notes over a bubbling arpeggio
+  reef: {
+    bpm: 108,
+    chords: ["Am7", "Fmaj7", "Cmaj7", "Em7"],
+    lead: [
+      "E5 - - - - - G5 - A5 - - - - - - .",
+      "C6 - - - A5 - - - G5 - - - E5 - - .",
+      "G5 - - - - - E5 - D5 - - - C5 - - .",
+      "B4 - - - D5 - - - E5 - - - - - - .",
+    ],
+    bass: "pad",
+    arp: 16,
+    drums: { kick: "x.......x.......", snare: "................", hat: "..x...x...x...x." },
+  },
+  // the mountains: a quick, bouncing climb
+  mountain: {
+    bpm: 156,
+    chords: ["D", "G", "D", "A", "D", "G", "A", "D"],
+    lead: [
+      "F#5 . A5 . D6 - A5 . F#5 . A5 . D6 - - .",
+      "G5 . B5 . D6 - B5 . G5 . B5 . D6 - - .",
+      "A5 . F#5 . D5 - F#5 . A5 . D6 . A5 - - .",
+      "E5 . A5 . C#6 - A5 . E5 . G5 . A5 - - .",
+      "D6 . C#6 . B5 . A5 . F#5 . A5 . D6 - - .",
+      "B5 . A5 . G5 . F#5 . G5 . B5 . D6 - - .",
+      "C#6 . E6 . A5 . C#6 . E6 - - . A5 . . .",
+      "D6 - - . A5 - - . F#5 - - . D5 - - .",
+    ],
+    bass: "bounce",
+    arp: 8,
+    drums: { kick: "x...x...x...x...", snare: "....x.......x...", hat: "x.x.x.x.x.x.x.x." },
+  },
 };
 
 const NAMES: Record<string, number> = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };

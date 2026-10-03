@@ -276,6 +276,38 @@ intakes, stripes; wheels with rims painted on their outer faces; the spoiler and
 where the body says) and baked into its 16 views once per build; the garage's turntable splats
 the same voxels live at any angle, so the kart can turn slowly on its pedestal.
 
+**The reef and the mountains.** Two worlds are more than palettes. Under the sea (Coral Reef)
+the ground is lit by caustics, two layers of a tiling 64x64 sine pattern drifting against each
+other and multiplied, so bright filaments ripple over the sand at the cost of two table lookups
+per ground pixel; shafts of light slant down over the view, bubbles rise past the camera, and
+schools of fish circle points around the lap, each fish turned to face the way it swims across the
+screen. Every driver wears a clear bubble helmet: when a kart is baked, the centre of its
+driver's helmet is projected into each of the 16 views, and a translucent dome with a bright rim
+and a glint is drawn there over the sprite. In the mountains (Mountain Pass) the road climbs.
+Hills are a second kind of raised road next to bridges: as road is committed, climbs 110-170 m
+long and 3.5-6.2 m high (a sin^2 rise and fall, never steeper than about 15%) are set along the
+middle of the lap, clear of the grid, the start, item rows and tunnels, and lift the road before
+it is painted. The renderer builds them like bridge decks, on earth embankments that fall away
+to the ground, with low stone walls the karts cannot leave by. If the dream later crosses itself,
+the climbs near the new bridge and the road under it are flattened (the bridge needs the
+headroom) and the ground is repainted. Tunnels are bored on long, gently curving straights: walls
+the karts are kept between, a ceiling and lamps inside, a rock mound over the top and a rock face
+around each mouth outside; the view darkens while the camera is in one. The designer is asked for
+a more winding road there (the style signal leans 0.12 wilder), and the far hills on the horizon
+are tall and snow-capped.
+
+**The Grand Prix.** A cup (`race/cup.ts`) runs one race in every world, back to back. The rivals
+keep the same karts throughout (their builds come from the cup's seed, not each race's), and each
+race pays points by finishing place, 15, 12, 10, 8, 6, 4, 2 and 1; the standings rank by points,
+then by total race time. After each race the standings animate (`ui/ceremony.ts`): each racer's
+points pop in, the totals count up, and the rows slide from the old order to the new. After the
+last race comes the award ceremony: a scripted camera finds third, second and first on their
+pedestals (each racer's own kart model, drawn live by the garage's turntable, with their name
+floating over it), then pulls back while rockets climb and burst into sparks, confetti falls and
+spotlights sweep; a fanfare, a cheering crowd (band-passed noise swelling up) and the fireworks are
+all synthesized. The size of the show follows the player's result: a win gets the most fireworks
+and gold confetti.
+
 **Controls.** Keyboard, gamepad and touch feed one set of driving controls. On touch the left
 half of the screen is a floating joystick: it appears under the thumb, its base follows a thumb
 that slides past the rim, it has a dead zone and a gentle curve for small corrections, pushed all
@@ -289,25 +321,33 @@ shortly after the start, none in the last 70 m before the line), so boxes appear
 dreamed. Driving through one gives an item; the player's slot spins for 1.2 s first. There are
 nine (`race/items.ts`). Turbo and Triple Turbo (three shots) boost. A slick spins out the first
 kart that drives through it (its owner is spared for a second). An orb travels up the centerline
-at the shooter's speed plus 12 m/s, eases toward its target's lane, homes in directly within
-22 m, and vanishes into the dream mist if it reaches road that does not exist yet. A boomerang
-(three throws) flies up the road for a second, then turns and homes on its thrower, spinning
-every kart it passes through once. A bomb is lobbed ahead on a ballistic arc, arms after 0.6 s,
-and goes off when a kart comes within 2.6 m or its fuse runs out, spinning everyone within
-5.5 m. A prism makes a kart invincible and 15% faster for 7 s, keeps its speed off the road, and
-spins out whoever it touches. A shock spins, shrinks (top speed down 28% for 3.5 s) and disarms
-everyone else. A rocket drives the kart itself for 6 s: it rides the road's own points at 1.7
-times the class top speed, easing to the middle, so it can neither cut a corner nor fall off a
-deck, and barges through the pack. Odds are interpolated by position between four tables (the
-leader gets defensive items and no big ones; the back of the pack gets triple turbos, prisms,
-shocks and the odd rocket), and dead last gets the rocket nine times in ten. A spin-out takes
-control away for a second while the kart slides on, slowing. Items act on the press of the
-button, never on the hold: most fire at once, while oil, orbs and bombs come out behind the
-kart while the button is down (where they block one orb or boomerang from behind) and are
-dropped or fired on the release. Every kart shows what it carries, riding out behind it (low and
-close while it is held as a shield). Rivals save each item for its moment (turbos on straights,
-oil with a kart close behind, orbs, boomerangs and bombs with a kart in range ahead, the rest at
-once), hold an item out as a shield when someone is on their tail, and react sooner in the
+at the shooter's speed plus 12 m/s, eases toward its target's lane, homes in directly within 22
+m, and vanishes into the dream mist if it reaches road that does not exist yet. Boomerangs and
+bombs are aimed: an arrow on the road in front of the kart sweeps left and right (up to 43
+degrees either way, across and back in about two seconds), and the press of the button locks the
+direction for that throw; rivals aim straight at the nearest kart in that arc instead. A
+boomerang (three throws) flies out along the arrow for a second, then turns and homes on its
+thrower, spinning every kart it passes through once. A bomb goes after the racer one place ahead
+of its thrower: a short lob along the arrow, then it homes in, skimming over the road at its
+target's height, and goes off on the target alone (it fizzles after 7 s). Thrown by the leader,
+who has nobody to chase, it lands where it was aimed and waits on the track for up to 25 s; once
+armed (0.6 s after landing) it goes off when any kart comes within 2.6 m, its thrower included,
+spinning everyone within 5.5 m. A prism makes a kart invincible and 15% faster for 7 s, keeps its
+speed off the road, and spins out whoever it touches. A shock spins, shrinks (top speed down 28%
+for 3.5 s) and disarms everyone else. A rocket drives the kart itself for 6 s: it rides the
+road's own points at 1.7 times the class top speed, easing to the middle, so it can neither cut a
+corner nor fall off a deck, and barges through the pack. Odds are interpolated by position
+between four tables (the leader gets defensive items and no big ones; the back of the pack gets
+triple turbos, prisms, shocks and the odd rocket), and dead last gets the rocket nine times in
+ten. A spin-out takes control away for a second while the kart slides on, slowing. Items act on
+the press of the button, never on the hold: most fire at once, while oil, orbs and bombs come out
+behind the kart while the button is down (where they block one orb or boomerang from behind) and
+are dropped or fired on the release. Every kart shows what it carries: the item it will use next
+floats over the driver's head, spare shots (a triple turbo, boomerangs) circle the kart slowly,
+and an item held out as a shield drags on the road behind it. Rivals save each item for its
+moment (turbos on straights, oil with a kart close behind, orbs with a kart in range ahead,
+boomerangs with a kart inside the aiming arc, bombs whenever someone is ahead to chase, the rest
+at once), hold an item out as a shield when someone is on their tail, and react sooner in the
 faster classes.
 
 **Bumps, and a bug the item tests found.** Karts change speed only along their heading. The

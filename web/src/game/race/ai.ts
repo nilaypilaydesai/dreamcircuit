@@ -7,7 +7,7 @@
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
-import { TRAILS } from "./items";
+import { AIMED, AIM_MAX, TRAILS } from "./items";
 import type { ClassParams, Controls, Kart } from "./kart";
 
 export class RivalDriver {
@@ -96,6 +96,7 @@ export class RivalDriver {
     }
     const ready = k.itemAge >= 1.6 - cls.aiCorner; // reaction time: 0.9 s rookie, 0.65 s legend
     const fire = ready && (k.itemAge > 9 || this.wantsItem(track, cls, others));
+    if (fire && AIMED.has(k.item)) k.aim = this.aimAt(others) ?? 0; // rivals aim instead of waiting for the sweep
     if (TRAILS.has(k.item)) {
       if (this.holding) {
         if (fire) this.holding = false; // the release drops or fires it
@@ -110,6 +111,22 @@ export class RivalDriver {
     }
     this.tapped = fire;
     return fire;
+  }
+
+  /** The angle off the heading to the nearest kart ahead inside the aiming arc, if any. */
+  private aimAt(others: Kart[]): number | null {
+    const k = this.kart;
+    let best: number | null = null, bestD = 45;
+    for (const o of others) {
+      if (o === k || o.finished) continue;
+      const dx = o.x - k.x, dy = o.y - k.y, d = Math.hypot(dx, dy);
+      const off = Math.atan2(Math.sin(Math.atan2(dy, dx) - k.heading), Math.cos(Math.atan2(dy, dx) - k.heading));
+      if (d < bestD && d > 3 && Math.abs(off) < AIM_MAX) {
+        best = off;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   /** Race distance to the nearest kart ahead and behind. */
@@ -139,8 +156,8 @@ export class RivalDriver {
       }
       case "oil": return behind > 3 && behind < 28;
       case "orb": return ahead > 6 && ahead < 90;
-      case "boomerang": return ahead > 4 && ahead < 40;
-      case "bomb": return ahead > 8 && ahead < 35;
+      case "boomerang": return this.aimAt(others) !== null; // someone to aim at
+      case "bomb": return k.place > 1; // it finds the racer one place ahead by itself
       case "rocket": return k.surface === "road";
       default: return true; // prism, shock
     }

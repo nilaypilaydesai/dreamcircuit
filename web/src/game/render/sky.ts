@@ -29,7 +29,7 @@ export class Sky {
     if (t.clouds) {
       for (let k = 0; k < 14; k++) this.cloud(rng, rng.int(0, PAN), rng.int(6, Math.floor(h * 0.55)));
     }
-    this.hills(this.far, rng, h, t.farHills, 0.62, 26, 3);
+    this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3, t.snow ?? 0);
     this.hills(this.near, rng, h, t.nearHills, 0.82, 12, 5);
   }
 
@@ -66,7 +66,7 @@ export class Sky {
   }
 
   private hills(dst: Uint32Array, rng: Rand, h: number, color: number, base: number, amp: number,
-                octaves: number): void {
+                octaves: number, snow = 0): void {
     // a periodic 1-D fractal profile: sums of sines with integer frequencies wrap seamlessly
     const comps = Array.from({ length: octaves * 3 }, (_, k) => ({
       f: 1 + rng.int(1, 4 + k * 3), a: rng.range(0.4, 1) / (1 + k), p: rng.range(0, Math.PI * 2),
@@ -76,9 +76,15 @@ export class Sky {
       const th = (x / PAN) * Math.PI * 2;
       let v = 0;
       for (const c of comps) v += c.a * Math.sin(c.f * th + c.p);
-      const top = Math.floor(h * base - (v / norm) * amp - amp * 0.4);
+      let n = v / norm;
+      // snowy mountains are ridged, a sharp peak wherever the sum crosses zero, not rolling hills
+      if (snow) n = 0.3 - 1.2 * Math.abs(n);
+      const top = Math.floor(h * base - n * amp - amp * 0.4);
+      // snow caps the taller peaks: deeper on the highest ones
+      const cap = snow ? Math.max(0, Math.round((n - 0.04) * amp * 0.5)) : 0;
       for (let y = Math.max(0, top); y < h; y++) {
-        dst[y * PAN + x] = y === top ? shade(color, 1.25) : shade(color, 1 - 0.25 * ((y - top) / Math.max(1, h - top)));
+        dst[y * PAN + x] = y < top + cap ? (y === top ? 0xffffffff : snow)
+          : y === top ? shade(color, 1.25) : shade(color, 1 - 0.25 * ((y - top) / Math.max(1, h - top)));
       }
     }
   }

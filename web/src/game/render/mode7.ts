@@ -34,8 +34,11 @@ export function fitCamera(cam: Camera): void {
   cam.focal = 250 * viewScale();
 }
 
+/** ``mist``: the shimmer at the edge of road not dreamed yet; ``light``: light falling on the
+ * ground (the reef's caustics), each a 0..1 amount at world (x, y). */
 export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: number,
-                           mist: (x: number, y: number) => number = () => 0): void {
+                           mist: (x: number, y: number) => number = () => 0,
+                           light?: { color: number; at: (x: number, y: number) => number }): void {
   const buf = scr.buf;
   const fx = Math.cos(cam.heading), fy = Math.sin(cam.heading);
   const rx = Math.sin(cam.heading), ry = -Math.cos(cam.heading); // right of the view direction
@@ -67,6 +70,10 @@ export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: num
       if (fogT > 0) c = mix(c, fog, fogT);
       const m = mist(wx, wy);
       if (m > 0) c = mix(c, 0xffd9a8f5, m);
+      if (light) {
+        const l = light.at(wx, wy);
+        if (l > 0) c = mix(c, light.color, l * (1 - fogT));
+      }
       buf[row + x] = c;
       wx += sx;
       wy += sy;

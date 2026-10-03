@@ -4,7 +4,9 @@ import { hex } from "./core/gfx";
 
 export type SceneryKind =
   | "pine" | "oak" | "bush" | "rock" | "flowers" | "cactus" | "palm" | "crystal" | "neonpalm"
-  | "mesa" | "lamp" | "tire" | "cone" | "chevron";
+  | "mesa" | "lamp" | "tire" | "cone" | "chevron"
+  | "kelp" | "coral" | "anemone" | "shell" | "wreck" // the reef
+  | "snowpine" | "cliff" | "peak" | "snowbank"; // the mountains
 
 export interface Theme {
   id: string;
@@ -28,6 +30,10 @@ export interface Theme {
   grid: number; // 0 = none (neon grid lines on the ground)
   near: SceneryKind[]; // decorations beside the road
   far: SceneryKind[]; // landscape across the infield and beyond
+  underwater?: boolean; // bubble helmets, rising bubbles, light shafts, caustics, fish
+  mountain?: boolean; // climbs over hills, tunnels, a more winding road
+  snow?: number; // snow on the far mountain tops (0 = none)
+  farAmp?: number; // how tall the far hills on the horizon are (default 26 px)
 }
 
 export const THEMES: Theme[] = [
@@ -63,5 +69,29 @@ export const THEMES: Theme[] = [
     grid: 0,
     near: ["cactus", "rock", "palm", "tire", "cone", "rock"],
     far: ["mesa", "cactus", "rock", "cactus", "palm"],
+  },
+  {
+    id: "reef", name: "CORAL REEF",
+    skyTop: hex("#03203b"), skyHorizon: hex("#1f8fb0"), fog: hex("#1a6f8c"), sun: 0, stars: false,
+    farHills: hex("#0f4a66"), nearHills: hex("#155868"), clouds: 0,
+    ground: [hex("#d8c497"), hex("#cfba8c")], groundSpeck: hex("#f4e9cf"),
+    shoulder: hex("#b8a37a"), road: hex("#3f5566"), roadSpeck: hex("#4b6476"),
+    edge: hex("#7ff6ff"), kerb: [hex("#ff7f6e"), hex("#fff1e0")], barrier: hex("#1f4a5c"),
+    grid: 0,
+    near: ["kelp", "coral", "anemone", "rock", "shell", "kelp", "coral"],
+    far: ["kelp", "coral", "kelp", "rock", "wreck", "coral", "anemone"],
+    underwater: true,
+  },
+  {
+    id: "mountain", name: "MOUNTAIN PASS",
+    skyTop: hex("#2f6fd6"), skyHorizon: hex("#cfe6ff"), fog: hex("#dbe9f7"), sun: hex("#fff3c4"), stars: false,
+    farHills: hex("#6b7ba0"), nearHills: hex("#3d6a4d"), clouds: hex("#ffffff"),
+    ground: [hex("#6f8f5a"), hex("#678653")], groundSpeck: hex("#f4f7fb"),
+    shoulder: hex("#8f8a7c"), road: hex("#4f525c"), roadSpeck: hex("#5c606b"),
+    edge: hex("#f4f4f4"), kerb: [hex("#d62828"), hex("#f4f4f4")], barrier: hex("#3a3d46"),
+    grid: 0,
+    near: ["snowpine", "rock", "snowpine", "snowbank", "cliff", "snowpine", "cone"],
+    far: ["snowpine", "snowpine", "peak", "rock", "cliff", "snowpine", "snowbank"],
+    mountain: true, snow: hex("#f6f9ff"), farAmp: 46,
   },
 ];

@@ -4,8 +4,9 @@
 import { describe, expect, it } from "vitest";
 import { Rand } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
-import { Features, RAMP_LEN } from "../src/game/race/features";
-import { BOMB_BLAST, BOX_SPACING, ITEM_KINDS, Items, LAST_ROCKET, ROULETTE, itemOdds, rollItem } from "../src/game/race/items";
+import { Features, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
+import { AIM_MAX, BOMB_BLAST, BOX_SPACING, ITEM_KINDS, Items, LAST_ROCKET, ROULETTE, itemOdds, rollItem } from "../src/game/race/items";
+import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
 import { CLASSES, Kart, collideKarts } from "../src/game/race/kart";
 import {
   ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
@@ -620,44 +621,76 @@ function duel(gap: number, lateral = 0) {
 }
 
 describe("the new items", () => {
-  it("throw a boomerang up the road that spins the kart ahead and comes home", () => {
-    const { t, items, a, b } = duel(20);
+  it("throw a boomerang where the arrow points; it spins that kart and comes home", () => {
+    const { t, items, a, b } = duel(20, 0);
+    const c = new Kart(3, "C", 3, false);
+    // two karts 20 m up the road, one 5 m to the left and one 5 m to the right
+    const ahead = t.wrap(t.startIndex + 20 + Math.round(20 / SPACING));
+    b.placeOn(t, ahead, 5);
+    c.placeOn(t, ahead, -5);
     items.grant(a, "boomerang");
     expect(a.uses).toBe(3);
-    expect(items.press(a, [a, b])).toBe(true); // a boomerang flies at once
+    a.aim = Math.atan2(5, 20); // the arrow, locked on the left one
+    expect(items.press(a, [a, b, c])).toBe(true); // a boomerang flies at once
     expect(a.uses).toBe(2);
     expect(a.item).toBe("boomerang");
     let caught = false;
     for (let i = 0; i < 60 * 5 && !caught; i++) {
-      items.update(1 / 60, t, [a, b], () => 1);
+      items.update(1 / 60, t, [a, b, c], () => 1);
       caught = items.boomerangs.length === 0;
     }
     expect(b.spin).toBeGreaterThan(0);
+    expect(c.spin).toBe(0); // the arrow was not pointing at it
     expect(caught).toBe(true); // back in the thrower's hand
     expect(a.spin).toBe(0); // and it never hits its own thrower
   });
 
-  it("lob a bomb that blows up near a kart and spins everyone close to it", () => {
-    const { t, items, a, b } = duel(22);
-    const far = new Kart(3, "C", 3, false);
-    far.placeOn(t, t.wrap(t.startIndex + 20 + Math.round(70 / SPACING)), 0);
+  it("send a bomb after the racer one place ahead, and only them", () => {
+    const { t, items, a, b } = duel(30);
+    const leader = new Kart(3, "C", 3, false), beside = new Kart(4, "D", 4, false);
+    leader.placeOn(t, t.wrap(t.startIndex + 20 + Math.round(70 / SPACING)), 0);
+    beside.placeOn(t, t.wrap(t.startIndex + 20 + Math.round(30 / SPACING)), 3); // right next to the target
+    a.place = 3; b.place = 2; leader.place = 1; beside.place = 4;
     a.v = 20;
+    const all = [a, b, leader, beside];
     items.grant(a, "bomb");
-    expect(items.press(a, [a, b, far])).toBe(true); // held out behind first
+    a.aim = 0.6; // even thrown off to the side, it finds its target
+    expect(items.press(a, all)).toBe(true); // held out behind first
     expect(a.trailing).toBe(true);
-    expect(items.release(a, [a, b, far])).toBe(true); // let go: it is thrown
-    expect(items.bombs.length).toBe(1);
+    expect(items.release(a, all)).toBe(true); // let go: thrown
+    expect(items.bombs[0].target).toBe(b);
     let booms = 0;
     for (let i = 0; i < 60 * 4; i++) {
-      items.update(1 / 60, t, [a, b, far], () => 1);
+      items.update(1 / 60, t, all, () => 1);
       booms += items.events.filter((e) => e.kind === "boom").length;
       items.events = [];
     }
     expect(booms).toBe(1);
-    expect(items.blasts.length + items.bombs.length).toBe(0);
-    expect(b.spin).toBeGreaterThan(0); // caught in the blast
-    expect(far.spin).toBe(0); // well outside it
-    expect(Math.hypot(far.x - b.x, far.y - b.y)).toBeGreaterThan(BOMB_BLAST);
+    expect(b.spin).toBeGreaterThan(0);
+    expect(beside.spin).toBe(0); // close by, but not the target
+    expect(leader.spin).toBe(0);
+    expect(a.spin).toBe(0);
+  });
+
+  it("let the leader's bomb land where it was aimed and wait there, even for its thrower", () => {
+    const { t, items, a, b } = duel(80);
+    a.place = 1; b.place = 2;
+    a.v = 20;
+    items.grant(a, "bomb");
+    a.aim = 0;
+    items.press(a, [a, b]);
+    items.release(a, [a, b]);
+    expect(items.bombs[0].target).toBeNull();
+    for (let i = 0; i < 60 * 2; i++) items.update(1 / 60, t, [a, b], () => 1);
+    const mine = items.bombs[0];
+    expect(mine.landed).toBe(true); // sitting on the track ahead of where it was thrown
+    expect(Math.hypot(mine.x - a.x, mine.y - a.y)).toBeGreaterThan(10);
+    expect(b.spin).toBe(0); // nobody has come near it yet
+    [a.x, a.y] = [mine.x + 1, mine.y]; // the thrower drives into its own bomb
+    items.update(1 / 60, t, [a, b], () => 1);
+    expect(items.bombs.length).toBe(0);
+    expect(a.spin).toBeGreaterThan(0);
+    expect(Math.hypot(b.x - mine.x, b.y - mine.y)).toBeGreaterThan(BOMB_BLAST); // and b was far away
   });
 
   it("make a prism kart untouchable, and spin whoever it rams", () => {
@@ -827,6 +860,114 @@ describe("the touch joystick", () => {
     expect(stickControls(0.8, 0, false).drift).toBe(false); // not far enough to start one
     expect(stickControls(0.8, 0, true).drift).toBe(true); // but enough to keep one going
     expect(stickControls(0.1, 0.9, false).brake).toBe(1);
+  });
+});
+
+describe("aiming", () => {
+  it("sweeps the arrow while a boomerang is ready, and throws along it on the press", async () => {
+    const race = new Race({ rivals: 3, difficulty: "pro", theme: THEMES[0], seed: 6, replay: twisty() }, null, () => {});
+    await race.prepare();
+    const coast = { steer: 0, throttle: 1, brake: 0, drift: false };
+    for (let i = 0; i < 60 * 5; i++) race.update(1 / 60, coast);
+    race.items.grant(race.player, "boomerang");
+    const aims: number[] = [];
+    for (let i = 0; i < 120; i++) {
+      race.update(1 / 60, coast);
+      aims.push(race.player.aim);
+    }
+    expect(Math.max(...aims) - Math.min(...aims)).toBeGreaterThan(1); // it really sweeps
+    for (const a of aims) expect(Math.abs(a)).toBeLessThanOrEqual(AIM_MAX + 1e-9);
+    race.update(1 / 60, { ...coast, item: true });
+    const b = race.items.boomerangs[0];
+    const p = race.player;
+    const off = Math.atan2(b.vy, b.vx) - (p.heading + p.aim);
+    expect(Math.abs(Math.atan2(Math.sin(off), Math.cos(off)))).toBeLessThan(1e-6); // thrown along the arrow
+  });
+});
+
+describe("the grand prix", () => {
+  const e = (id: number, isPlayer = false): Entrant => ({ id, name: `K${id}`, livery: id, build: DEFAULT_BUILD, isPlayer });
+
+  it("pays points by place, ranks by points then total time, and ends after every world", () => {
+    expect(POINTS.slice(0, 4)).toEqual([15, 12, 10, 8]);
+    const cup = new Cup(THEMES.slice(0, 3), 1);
+    const [a, b, c] = [e(0, true), e(1), e(2)];
+    cup.award([{ entrant: a, time: 100 }, { entrant: b, time: 101 }, { entrant: c, time: 102 }]);
+    expect([cup.points.get(0), cup.points.get(1), cup.points.get(2)]).toEqual([15, 12, 10]);
+    // a and b tie on 27; b has the lower total time (200 s against 203 s)
+    const rows = cup.award([{ entrant: b, time: 99 }, { entrant: a, time: 103 }, { entrant: c, time: 104 }]);
+    expect(rows.map((r) => r.entrant.id)).toEqual([1, 0, 2]);
+    expect([rows[0].gained, rows[0].before, rows[0].points, rows[0].rankBefore]).toEqual([15, 12, 27, 2]);
+    expect(cup.done).toBe(false);
+    cup.award([{ entrant: c, time: 90 }, { entrant: a, time: 95 }, { entrant: b, time: 99 }]);
+    expect(cup.done).toBe(true);
+    expect(cup.podium().map((x) => x.id)).toEqual([0, 1, 2]); // 39, 37, 35
+  });
+
+  it("runs through every world, the reef and the mountains too", () => {
+    const ids = THEMES.map((t) => t.id);
+    expect(ids).toEqual(expect.arrayContaining(["valley", "neon", "mesa", "reef", "mountain"]));
+    expect(THEMES.find((t) => t.id === "reef")!.underwater).toBe(true);
+  });
+});
+
+describe("the mountains", () => {
+  const mountain = THEMES.find((t) => t.mountain)!;
+
+  it("climb over hills, gently, and the whole field races them to the finish", async () => {
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: mountain, seed: 3, replay: twisty() }, null, () => {});
+    await race.prepare();
+    const t = race.track;
+    expect(t.hills.length).toBeGreaterThan(0);
+    expect(Math.max(...t.elev)).toBeGreaterThan(3);
+    let steepest = 0;
+    for (let i = 1; i < t.count; i++) {
+      steepest = Math.max(steepest, Math.abs(t.elev[i] - t.elev[i - 1]) / Math.max(1e-6, t.s[i] - t.s[i - 1]));
+    }
+    expect(steepest).toBeLessThan(0.16); // never steeper than about 15%
+    const pilot = new RivalDriver(new Rand(2), race.player, 0);
+    let climbing = 0;
+    for (let i = 0; i < 60 * 240 && race.phase !== "done"; i++) {
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
+      race.events = [];
+      if (race.player.elev > 2) climbing++;
+      for (const k of race.karts) expect(Number.isFinite(k.x) && Number.isFinite(k.elev)).toBe(true);
+    }
+    expect(race.player.finished).toBe(true);
+    expect(climbing).toBeGreaterThan(60); // the player really drove over them
+  });
+
+  it("keep their climbs clear of a figure-eight's bridge and the road under it", async () => {
+    for (const seed of [4, 5, 6]) {
+      const race = new Race({ rivals: 3, difficulty: "pro", theme: mountain, seed, replay: figure8() }, null, () => {});
+      await race.prepare();
+      const t = race.track;
+      expect(t.bridges.length).toBe(1);
+      const b = t.bridges[0], under = t.s[b.lower];
+      for (const h of t.hills) {
+        for (const [c, clear] of [[b.centerS, 95], [under, 80]]) expect(h.s0 > c + clear || h.s0 + h.len < c - clear).toBe(true);
+      }
+      expect(t.elev[b.lower]).toBe(0); // the road under the bridge is on the ground
+    }
+  });
+
+  it("bore tunnels on straights, whose walls keep a kart on the road", () => {
+    const t = Track.fromPoints(calm());
+    const f = new Features(true);
+    f.onCommit(t, 0, t.count, () => false, () => 0.5);
+    expect(f.tunnels.length).toBeGreaterThan(0);
+    expect(new Features(false).tunnels.length).toBe(0);
+    const tn = f.tunnels[0];
+    const k = new Kart(1, "K", 1, false);
+    k.placeOn(t, t.wrap(tn.start + 10), HALF_WIDTH - 0.5);
+    k.heading += 0.6; // aimed at the wall
+    k.v = 22;
+    for (let i = 0; i < 40; i++) {
+      k.walled = f.inTunnel(t, k);
+      k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false }, t, CLASSES.pro);
+      if (f.tunnelAt(t.s[k.idx])) expect(Math.abs(k.offset)).toBeLessThanOrEqual(HALF_WIDTH + 0.05);
+    }
+    expect(TUNNEL_LEN).toBeGreaterThan(40);
   });
 });
 

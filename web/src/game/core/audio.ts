@@ -137,6 +137,51 @@ export class Sound {
   shock(): void { this.tone(1400, 0.45, "square", 0.08, 0, 90); this.noise(0.35, 0.12, 5000); }
   rocketGo(): void { this.tone(110, 1.1, "sawtooth", 0.09, 0, 440); this.noise(1.0, 0.1, 1800); }
   blocked(): void { this.tone(1568, 0.08, "square", 0.08); this.noise(0.1, 0.12, 2500); }
+
+  // the award ceremony
+  fanfare(): void {
+    const lead = [[392, 0.12], [523, 0.12], [659, 0.12], [784, 0.36], [659, 0.12], [784, 0.12], [1047, 0.8]];
+    let at = 0;
+    for (const [f, d] of lead) {
+      this.tone(f, d * 0.95, "square", 0.1, at);
+      this.tone(f / 2, d * 0.95, "triangle", 0.12, at);
+      at += d;
+    }
+  }
+  reveal(place: number): void {
+    const notes = place === 1 ? [659, 880, 1319] : place === 2 ? [587, 784] : [523, 659];
+    notes.forEach((f, i) => this.tone(f, 0.18, "square", 0.09, i * 0.09));
+    this.noise(0.5, 0.06, 6000);
+  }
+  whistle(): void { this.tone(520, 0.55, "sine", 0.025, 0, 1500); }
+  firework(near: boolean): void {
+    this.noise(0.6, near ? 0.2 : 0.11, 1100);
+    this.tone(60, 0.35, "triangle", near ? 0.16 : 0.08, 0, 40);
+    for (let k = 0; k < 6; k++) this.tone(2000 + k * 300, 0.03, "square", 0.02, 0.2 + k * 0.07);
+  }
+  /** A crowd: band-passed noise swelling up and dying away, with a few whoops on top. */
+  cheer(): void {
+    const ctx = this.ctx, out = this.master;
+    if (!ctx || !out) return;
+    const dur = 3.2, n = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const band = ctx.createBiquadFilter();
+    band.type = "bandpass";
+    band.frequency.value = 1300;
+    band.Q.value = 0.7;
+    const g = ctx.createGain();
+    const t0 = ctx.currentTime;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(band).connect(g).connect(out);
+    src.start();
+    for (let k = 0; k < 4; k++) this.tone(700 + k * 90, 0.45, "sine", 0.03, 0.3 + k * 0.35, 1100 + k * 120);
+  }
   burnout(): void { this.noise(0.6, 0.14, 700); this.tone(70, 0.5, "sawtooth", 0.08, 0, 50); }
   select(): void { this.tone(660, 0.07, "square", 0.08); }
   move(): void { this.tone(440, 0.04, "square", 0.05); }
