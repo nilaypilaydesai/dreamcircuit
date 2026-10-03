@@ -211,7 +211,7 @@ class Game {
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "LAYOUT", value: () => LAYOUTS[s.layout].label, left: () => { s.layout = (s.layout + LAYOUTS.length - 1) % LAYOUTS.length; }, right: () => { s.layout = (s.layout + 1) % LAYOUTS.length; }, hint: "LOOP, OR A FIGURE 8 THAT CROSSES ITSELF ON A BRIDGE" },
         { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("cupSetup"), hint: "OPEN THE GARAGE" },
-        { label: "START GRAND PRIX", action: () => void this.startCup(), hint: `${THEMES.length} WORLDS. POINTS BY PLACE: 15 12 10 8 6 4 2 1` },
+        { label: "START GRAND PRIX", action: () => void this.startCup(), hint: `${THEMES.length} WORLDS. POINTS: 15 12 10 8 6 4 2 1` },
         { label: "BACK", action: () => this.go("main") },
       ], 300),
       pause: new Menu("PAUSED", [
