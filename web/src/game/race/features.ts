@@ -71,6 +71,7 @@ export class Features {
   }
   private cornerSince = -1; // dense index where the last tight corner ended
   private lastRamp = -Infinity;
+  private scanned = 0; // arc length of the last road scanned
   private lastPad = -Infinity;
 
   /** Place features on newly committed road ``[from, to)``. ``blocked(s)`` says whether a
@@ -81,6 +82,7 @@ export class Features {
     for (let i = Math.max(from, 8); i < to; i++) {
       const k = Math.abs(track.curvature(i));
       const s = track.s[i];
+      this.scanned = s;
       // dreamed straights carry a slight wiggle: a bend gentler than 170 m still lands a jump
       // (a 20 m flight drifts about a meter sideways), so it counts as straight here
       this.straight = k < (rr?.bend ?? DEFAULT_RAMPS.bend) && track.elev[i] === 0 ? this.straight + SPACING : 0;
@@ -120,6 +122,15 @@ export class Features {
     }
   }
 
+  /** Whether the straight the scan ended on may yet earn a jump (it is still running, long enough
+   * to count, and the last jump is far enough back), reaching back before arc length ``s1``: a
+   * climb up to there would take its place. */
+  jumpPending(s1: number): boolean {
+    const rr = this.rampRule;
+    if (!rr || this.straight < 20) return false;
+    return this.scanned - this.straight < s1 && this.scanned + (rr.straight - this.straight) - this.lastRamp > rr.gap;
+  }
+
   /** A pad at dense index ``i`` if the road there is free. */
   private tryPad(track: Track, i: number, blocked: (s: number, len: number) => boolean, rng: () => number): boolean {
     const s = track.s[i];
@@ -129,7 +140,8 @@ export class Features {
     return true;
   }
 
-  private rampNear(s: number, len: number): boolean {
+  /** Whether a jump (or where its karts land) is on arc lengths [s, s + len). */
+  rampNear(s: number, len: number): boolean {
     return this.ramps.some((r) => r.s0 < s + len && r.s0 + FLIGHT > s);
   }
 

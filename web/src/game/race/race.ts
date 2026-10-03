@@ -73,6 +73,7 @@ export interface RaceSetup {
 
 /** Whether the player's controls reach the race: while racing, and during the countdown, where
  * the throttle decides a rocket start (pressed just before GO) or a burnout (held too long). */
+const HILL_LOOK = 100; // m of road past a climb's foot that is known before the climb is decided
 const BRIDGE_CLEAR = 95; // m of road kept free of jumps and pads around a bridge's crossing
 const UNDER_CLEAR = 80; // m around the road that passes under a bridge
 
@@ -103,6 +104,7 @@ export class Race {
   private nextHill: number; // m of road before the next climb may start
   private hillTurn: number; // which of the world's kinds of climb is next (they take turns)
   private hillTries = 0; // places the next one did not fit
+  private hillScan = 1; // the first dense index no climb has been decided for
   private cranes: number[] = []; // m along the lap of girders' middles not yet dreamed (a crane goes up there)
   private readonly hillRng: Rand;
   readonly type: TrackType;
@@ -183,23 +185,8 @@ export class Race {
   private onCommit(from: number, to: number): void {
     const t = this.track;
     const blocked = (s: number, len: number) => this.blocked(s, len);
-    // climbs (the mountains, a roller coaster): lift the road before it is painted (raised road
-    // leaves a shadow)
-    this.placeHills(from, to);
     this.tex.paintRoad(t, from, to);
     this.scenery.onCommit(t, from, to);
-    // a tower crane beside each girder's middle, once the road there has been dreamed
-    this.cranes = this.cranes.filter((sm) => {
-      if (sm > t.s[to - 1]) return true;
-      let lo = 0, hi = to - 1;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (t.s[mid] < sm) lo = mid + 1;
-        else hi = mid;
-      }
-      this.scenery.onGirder(t, lo);
-      return false;
-    });
     this.items.onCommit(t, from, to);
     const tunnels = this.features.tunnels.length;
     this.features.onCommit(t, from, to, blocked, () => this.rng.next());
@@ -220,15 +207,36 @@ export class Race {
       }
       this.events.push({ kind: "bridge" });
     }
+    // climbs, decided once the road a stretch past them is known and its jumps are placed (a
+    // straight that earns a jump keeps it), until the lap locks
+    this.placeHills(t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING));
+    this.raiseCranes(to);
   }
 
-  /** Set climbs along newly committed road, by the hill rule (the mountains': 110-170 m long and
-   * 3.5-6.2 m high), in the middle of the lap (clear of the grid and the line), away from
-   * bridges, item rows and tunnels. */
-  private placeHills(from: number, to: number): void {
+  /** A tower crane beside each girder's middle, once the road there has been dreamed. */
+  private raiseCranes(to: number): void {
+    const t = this.track;
+    this.cranes = this.cranes.filter((sm) => {
+      if (sm > t.s[to - 1]) return true;
+      let lo = 0, hi = to - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (t.s[mid] < sm) lo = mid + 1;
+        else hi = mid;
+      }
+      this.scenery.onGirder(t, lo);
+      return false;
+    });
+  }
+
+  /** Set climbs along newly committed road, by the hill rule (the world's, or the track type's),
+   * in the middle of the lap (clear of the grid and the line), away from bridges, item rows and
+   * tunnels, and off the straights that may yet earn a jump. */
+  private placeHills(upto: number): void {
     const t = this.track, rule = this.hillRule;
     if (!rule) return;
-    for (let i = Math.max(1, from); i < to; i++) {
+    for (let i = Math.max(1, this.hillScan); i < Math.min(upto, t.count); i++) {
+      this.hillScan = i + 1;
       const s = t.s[i];
       if (s < this.nextHill) continue;
       const seg = t.segOf[i];
@@ -244,7 +252,8 @@ export class Race {
       // the line (segments after FIRST_SEG lead back to the grid)
       const perSeg = s / Math.max(1, (seg - FIRST_SEG + N) % N);
       const intoLine = seg + (len + 80) / Math.max(perSeg, 1) > N;
-      if (tunnel || intoLine || this.blocked(s - 10, len + 20, false)) {
+      const jump = this.features.rampNear(s - 30, len + 60);
+      if (tunnel || jump || intoLine || this.blocked(s - 10, len + 20, false)) {
         this.nextHill = s + 15;
         if (++this.hillTries > 12) {
           this.hillTurn++;
@@ -252,9 +261,20 @@ export class Race {
         }
         continue;
       }
+      // a straight that may yet earn a jump is left for it: the climb waits until past it
+      if (this.features.jumpPending(s + len + 30)) {
+        this.nextHill = s + 15;
+        continue;
+      }
       this.hillTurn++;
       this.hillTries = 0;
-      t.addHill({ s0: s, len, h, shape: kind?.shape ?? "sine", style: kind?.style ?? this.setup.theme.hillStyle, side });
+      // the road it lifts was painted flat: paint it again, and what stands on it rides up
+      const r = t.addHill({ s0: s, len, h, shape: kind?.shape ?? "sine", style: kind?.style ?? this.setup.theme.hillStyle, side });
+      if (r) {
+        this.tex.repaint(t, r[0], r[1]);
+        this.items.relift(t);
+        this.scenery.clearAlong(t, r[0], r[1], HALF_WIDTH + 9);
+      }
       if (kind?.style === "girder") this.cranes.push(s + len / 2);
       this.nextHill = s + len + this.hillRng.range(rule.gap[0], rule.gap[1]);
     }
@@ -342,6 +362,8 @@ export class Race {
   }
 
   private onLock(): void {
+    this.placeHills(this.track.count);
+    this.raiseCranes(this.track.count);
     this.scenery.onLock(this.track);
     this.confirm();
     this.lockedAt = this.clock;

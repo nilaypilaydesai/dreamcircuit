@@ -12,6 +12,9 @@ const PAN = 1536; // panorama width in px for a full turn
 export class Sky {
   private readonly far: Uint32Array;
   private readonly near: Uint32Array;
+  /** The panorama column the Earth hangs over, on the moon (-1 elsewhere): the trailer points a
+   * camera at it. */
+  earthAt = -1;
   constructor(readonly theme: Theme, readonly horizon: number, seed: number) {
     const rng = new Rand(seed);
     const h = horizon + 1;
@@ -213,6 +216,7 @@ export class Sky {
    * and swirls of cloud, lit from one side with the night side faint, a thin blue rim of air. */
   private earth(rng: Rand, h: number): void {
     const cx = rng.int(120, PAN - 120), cy = Math.floor(h * 0.3), r = 12;
+    this.earthAt = cx;
     const lx = 0.78, ly = -0.42, lz = 0.46; // where the sunlight comes from (right, above, in front)
     const seed = rng.int(0, 9999);
     for (let y = cy - r - 2; y <= cy + r + 2; y++) {

@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 // Cross-origin isolation enables multi-threaded WASM (the fallback when WebGPU is missing).
 const isolation = {
@@ -22,4 +22,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: { exclude: ["onnxruntime-web"] },
+  // whole races run headlessly in the tests, several to a test: give a slow machine room
+  test: { testTimeout: 30_000 },
 });

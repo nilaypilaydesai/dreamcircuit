@@ -1528,6 +1528,24 @@ describe("the lie of the land", () => {
     }
   });
 
+  it("leaves the jumps their straights: climbs go elsewhere, never over a jump or where it lands", async () => {
+    for (const id of ["valley", "neon", "mesa", "reef", "volcano"]) {
+      const theme = THEMES.find((t) => t.id === id)!;
+      for (const pts of [calm, twisty]) {
+        const hilly = new Race({ rivals: 0, difficulty: "pro", theme, seed: 3, replay: pts() }, null, () => {});
+        const flat = new Race({ rivals: 0, difficulty: "pro", theme: { ...theme, hills: undefined }, seed: 3, replay: pts() },
+                              null, () => {});
+        await hilly.prepare();
+        await flat.prepare();
+        expect(hilly.track.hills.length, id).toBeGreaterThan(0);
+        expect(hilly.features.ramps.length, id).toBe(flat.features.ramps.length);
+        for (const r of hilly.features.ramps) {
+          for (const h of hilly.track.hills) expect(r.s0 + 45 < h.s0 || r.s0 > h.s0 + h.len, id).toBe(true);
+        }
+      }
+    }
+  });
+
   it("sets out landforms beyond the fence, with nothing growing inside them", { timeout: 60000 }, async () => {
     const { LANDFORM_CLEAR, onLandform, reach } = await import("../src/game/world/landforms");
     for (const theme of THEMES) {

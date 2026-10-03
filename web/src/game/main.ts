@@ -955,7 +955,8 @@ class Game {
       if (this.debugPilot?.kart !== r.player) this.debugPilot = new RivalDriver(new Rand(5), r.player, 0);
       this.input.drive = () => {
         const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items);
-        return { ...a, item: held.has("item") || !!a.item };
+        // ("noitems": the autopilot drives but leaves the items to the script)
+        return { ...a, item: held.has("item") || (!held.has("noitems") && !!a.item) };
       };
     } else {
       this.input.drive = () => c;
