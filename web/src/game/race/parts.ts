@@ -220,13 +220,14 @@ export function buildScore(b: Build): number {
 }
 
 /** A rival's kart: random parts and paint, and the harder the class, the better the build
- * (rookies get the weakest of a batch of random builds, legends the strongest). */
+ * (rookies get the weakest of a batch of random builds, legends the strongest, the two classes
+ * between them the lower and upper middle). */
 export function rivalBuild(rng: Rand, difficulty: Difficulty): Build {
   const cands = Array.from({ length: 24 }, (): Build => ({
     body: rng.pick(BODIES).id, wheels: rng.pick(WHEELS).id, spoiler: rng.pick(SPOILERS).id,
     exhaust: rng.pick(EXHAUSTS).id, paint: rng.pick(PAINTS).id, accent: rng.pick(ACCENTS).id,
   }));
   cands.sort((a, b) => buildScore(a) - buildScore(b));
-  const [lo, hi] = difficulty === "rookie" ? [0, 8] : difficulty === "pro" ? [8, 16] : [17, 24];
+  const [lo, hi] = { rookie: [0, 7], intermediate: [5, 12], pro: [9, 17], legend: [17, 24] }[difficulty];
   return cands[rng.int(lo, hi)];
 }

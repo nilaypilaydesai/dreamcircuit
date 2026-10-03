@@ -7,7 +7,7 @@ import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import type { ItemKind } from "./odds";
 import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "./parts";
 
-export type Difficulty = "rookie" | "pro" | "legend";
+export type Difficulty = "rookie" | "intermediate" | "pro" | "legend";
 
 export interface ClassParams {
   label: string;
@@ -21,6 +21,7 @@ export interface ClassParams {
 
 export const CLASSES: Record<Difficulty, ClassParams> = {
   rookie: { label: "ROOKIE", vmax: 24, accel: 9, grip: 19, aiSpeed: 0.84, aiCorner: 0.72, aiNoise: 0.18 },
+  intermediate: { label: "INTERMEDIATE", vmax: 26, accel: 9.75, grip: 20.5, aiSpeed: 0.885, aiCorner: 0.78, aiNoise: 0.135 },
   pro: { label: "PRO", vmax: 28, accel: 10.5, grip: 22, aiSpeed: 0.93, aiCorner: 0.84, aiNoise: 0.09 },
   legend: { label: "LEGEND", vmax: 32, accel: 12, grip: 25, aiSpeed: 0.99, aiCorner: 0.95, aiNoise: 0.03 },
 };
@@ -31,6 +32,7 @@ export interface Controls {
   brake: number;
   drift: boolean;
   item?: boolean; // held: an item fires on the press
+  back?: boolean; // held: the item goes out behind the kart on the press (R, the pad's X, BACK)
 }
 
 export type Surface = "road" | "kerb" | "shoulder" | "grass" | "air";
@@ -81,6 +83,7 @@ export class Kart {
   roulette = 0; // s left on the player's spinning item slot
   itemAge = 0; // s since the current item arrived
   itemHeld = false; // the item button was down last frame
+  backHeld = false; // and the back button
   trailing = false; // the item is held out behind the kart (it blocks one hit from behind)
   aim = 0; // rad off the heading where a thrown item will go (the sweeping arrow)
   aimLocked: number | null = null; // the arrow, locked by a first press (the second throws)

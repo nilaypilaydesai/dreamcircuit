@@ -143,7 +143,7 @@ export function renderTiles(d: Designer | null, s: Summary | null, p: Probes | n
       icon: () => spriteCanvas(kartSprites(DEFAULT_BUILD, LIVERIES[0])[3], 3),
       title: "The race",
       body: "Mode-7 kart racing in eight worlds, each with its own terrain to race over (meadows, a neon skyway, mesas, coral, cliff ledges, lava, a building site, the moon's low gravity), one race at a time or a Grand Prix for points: drift through a corner to charge a mini-turbo, hit the gas just before GO for a rocket start, and race up to seven rivals in karts built in the garage.",
-      fact: "0 to 7 rivals, in ROOKIE, PRO and LEGEND classes",
+      fact: "0 to 7 rivals, in ROOKIE, INTERMEDIATE, PRO and LEGEND classes",
       href: "index.html",
     },
     {

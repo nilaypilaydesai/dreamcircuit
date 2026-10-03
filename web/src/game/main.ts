@@ -6,11 +6,11 @@
 import "./game.css";
 import { Sound } from "./core/audio";
 import { PixelFont, drawTextToSprite } from "./core/font";
-import { H, Rand, Screen, W, hex, mix, type Sprite } from "./core/gfx";
+import { H, Rand, Screen, W, drawSized, hex, mix, type Sprite } from "./core/gfx";
 import { GameInput, type MenuEvent } from "./core/input";
 import { RivalDriver } from "./race/ai";
 import { Cup, type CupRow, type Entrant } from "./race/cup";
-import { AIMED, BLAST_TIME, type ItemKind, RING_TIME, STATIC_TIME } from "./race/items";
+import { AIMED, BLAST_TIME, type ItemKind, RING_TIME, STATIC_TIME, THROWN_BACK } from "./race/items";
 import { CLASSES, type Controls, type Difficulty, FALL_SWAP, type Kart } from "./race/kart";
 import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild, rivalBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
@@ -47,7 +47,8 @@ const HOT = hex("#ffd23f");
 const DREAM = hex("#c79bff");
 const DIM = hex("#8f87b8");
 const LOGO_ROWS = ["#ffe66d", "#ffd23f", "#ffb347", "#ff8c42", "#ff6b6b", "#f25f9c", "#c77dff", "#9d6bff"].map(hex);
-const DIFFS: Difficulty[] = ["rookie", "pro", "legend"];
+const BACK_AIM = hex("#ffb347"); // the arrow sweeping behind the kart, in the mirror
+const DIFFS: Difficulty[] = ["rookie", "intermediate", "pro", "legend"];
 /** The TRACK row: a random type, or one of the track types (race/tracktypes.ts). */
 const TRACKS: { id: TrackTypeId | "surprise"; name: string }[] = [
   { id: "surprise", name: "SURPRISE ME" }, ...TRACK_TYPES.map((t) => ({ id: t.id, name: t.name })),
@@ -122,7 +123,7 @@ class Game {
   private shake = 0;
   private flash = 0; // s of white flash left (a shock)
   private time = 0;
-  private settings = { rivals: 5, diff: 1, theme: 0, circuit: 0, track: 0, engine: 0 };
+  private settings = { rivals: 5, diff: 2, theme: 0, circuit: 0, track: 0, engine: 0 };
   private build: Build = DEFAULT_BUILD;
   private garage!: Garage;
   private garageReturn: Mode = "main";
@@ -224,7 +225,7 @@ class Game {
       ]),
       setup: new Menu("QUICK RACE", [
         { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(0, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "HOW MANY AI KARTS RACE YOU (0-7)" },
-        { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
+        { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + DIFFS.length - 1) % DIFFS.length; }, right: () => { s.diff = (s.diff + 1) % DIFFS.length; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); }, hint: () => (s.theme === THEMES.length ? "A WORLD PICKED AT RANDOM" : THEMES[s.theme].blurb) },
         { label: "TRACK", value: () => TRACKS[s.track].name, left: () => { s.track = (s.track + TRACKS.length - 1) % TRACKS.length; }, right: () => { s.track = (s.track + 1) % TRACKS.length; }, hint: () => trackHint(s.track) },
         { label: "CIRCUIT", value: () => (s.circuit === 0 || !this.lastCircuit ? "NEW DREAM" : "LAST ONE"), left: () => { s.circuit = s.circuit ? 0 : 1; }, right: () => { s.circuit = s.circuit ? 0 : 1; }, hint: () => (s.circuit === 1 && this.lastCircuit ? `RE-RACE YOUR LAST LOCKED CIRCUIT (${trackType(this.lastCircuitType).name})` : "A FRESH DREAM, OR RE-RACE YOUR LAST LOCKED CIRCUIT") },
@@ -234,7 +235,7 @@ class Game {
       ], 300),
       cupSetup: new Menu("GRAND PRIX", [
         { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(1, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "THE SAME RIVALS IN THE SAME KARTS ALL THE WAY (1-7)" },
-        { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
+        { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + DIFFS.length - 1) % DIFFS.length; }, right: () => { s.diff = (s.diff + 1) % DIFFS.length; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "TRACK", value: () => TRACKS[s.track].name, left: () => { s.track = (s.track + TRACKS.length - 1) % TRACKS.length; }, right: () => { s.track = (s.track + 1) % TRACKS.length; }, hint: () => trackHint(s.track) },
         { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("cupSetup"), hint: "OPEN THE GARAGE" },
         { label: "START GRAND PRIX", action: () => void this.startCup(), hint: `${THEMES.length} WORLDS. POINTS: 15 12 10 8 6 4 2 1` },
@@ -726,9 +727,12 @@ class Game {
   // ----------------------------------------------------------------------------------------
   // rendering
 
-  private drawWorld(race: Race, sky: Sky, cam: Camera): void {
+  /** Draw the world from ``cam`` into ``scr`` (the screen, or with ``mirror`` a rear-view mirror:
+   * the ratio of the screen's focal length to the mirror's and the screen's width, for the sky). */
+  private drawWorld(race: Race, sky: Sky, cam: Camera, scr: Screen = this.scr,
+                    mirror?: { ratio: number; fullW: number }): void {
     const t = race.track;
-    sky.draw(this.scr, cam.heading);
+    sky.draw(scr, cam.heading, mirror ? { horizon: cam.horizon, ratio: mirror.ratio, fullW: mirror.fullW } : undefined);
     let mist: ((x: number, y: number) => number) | undefined;
     if (!t.locked && t.count > 0) {
       // the frontier of the dream: road beyond this point has not been imagined yet
@@ -744,7 +748,7 @@ class Game {
     const now = this.time;
     const it = race.items;
     // oil on the ground is painted into it, flat; on raised road, a sprite stands in for it
-    drawGround(this.scr, cam, race.tex, theme.fog, {
+    drawGround(scr, cam, race.tex, theme.fog, {
       mist, light: theme.underwater ? { color: CAUSTIC, at: caustics(now) } : undefined, lava: lavaShift(now),
       paint: slickPaint(it.slicks.filter((sl) => sl.elev < 0.3), now, cam.heading),
     });
@@ -773,8 +777,8 @@ class Game {
     for (const p of it.pucks) {
       const ground = t.elev[p.idx] ?? 0;
       const art = p.kind === "puck" ? this.puckArt[Math.floor(now * 14 + p.t * 9) % this.puckArt.length]
-        : this.flareArt[Math.floor(now * 12) % this.flareArt.length];
-      extras.push({ x: p.x, y: p.y, art, base: ground, lift: p.kind === "puck" ? 0.02 : Math.max(0.05, p.z - ground) });
+        : p.kind === "orb" ? this.orbArt : this.flareArt[Math.floor(now * 12) % this.flareArt.length];
+      extras.push({ x: p.x, y: p.y, art, base: ground, lift: p.kind === "flare" ? Math.max(0.05, p.z - ground) : p.kind === "orb" ? 0.45 : 0.02 });
     }
     for (const c of it.comets) {
       const ground = t.elev[c.idx] ?? 0;
@@ -793,24 +797,32 @@ class Game {
     });
     for (const r of it.rings) {
       const u = r.age / RING_TIME, k = r.kart;
-      extras.push({ x: k.x, y: k.y, art: this.trailArt, base: k.ground, draw: (sx, gy, ppm) => hornRing(this.scr, sx, gy, ppm, u) });
+      extras.push({ x: k.x, y: k.y, art: this.trailArt, base: k.ground, draw: (sx, gy, ppm) => hornRing(scr, sx, gy, ppm, u) });
     }
     if (theme.underwater) extras.push(...fishSprites(this.schools(race), now, cam.heading));
     const faces: Face[] = [];
-    const painter = { cam, scr: this.scr, fog: race.setup.theme.fog, faces };
+    const painter = { cam, scr, fog: race.setup.theme.fog, faces };
     landformFaces(painter, race.scenery.landforms, theme);
     bridgeFaces(painter, t, race.setup.theme);
     hillFaces(painter, t, theme);
     tunnelFaces(painter, t, race.features, theme);
     rampFaces(painter, t, race.features, race.setup.theme);
     padFaces(painter, t, race.features, now);
-    // the player's aiming arrow while an aimed item is ready (locked by a press, it turns blue)
+    // the player's aiming arrows while an aimed item is ready: sweeping in front (on the screen)
+    // and, mirrored, behind (in the mirror); a press locks one and it turns blue. Something the
+    // back button throws straight back gets a straight arrow in the mirror.
     const me = race.player;
-    if (me.item && AIMED.has(me.item) && me.roulette <= 0 && me.rocket <= 0 && !me.falling && race === this.race) {
-      const locked = me.aimLocked !== null;
-      aimArrow(painter, me, locked ? me.aimLocked! : me.aim, locked ? hex("#63c8ff") : HOT);
+    if (me.item && me.roulette <= 0 && me.rocket <= 0 && !me.falling && race === this.race) {
+      if (AIMED.has(me.item)) {
+        const locked = me.aimLocked;
+        const reach = mirror ? 1.6 : 1;
+        if (locked === null) aimArrow(painter, me, mirror ? Math.PI - me.aim : me.aim, mirror ? BACK_AIM : HOT, reach);
+        else if (Math.cos(locked) < 0 === !!mirror) aimArrow(painter, me, locked, hex("#63c8ff"), reach);
+      } else if (mirror && THROWN_BACK.has(me.item)) {
+        aimArrow(painter, me, Math.PI, BACK_AIM, 1.6);
+      }
     }
-    drawWorldSprites(this.scr, cam, race.scenery.items, race.karts, {
+    drawWorldSprites(scr, cam, race.scenery.items, race.karts, {
       sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0),
       sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
       held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
@@ -818,7 +830,10 @@ class Game {
       grabber: this.grabArt,
       dome: !!(theme.underwater || theme.helmets),
       drone: theme.volcano ? this.droneArt : undefined,
+      underDeck: (x: number, y: number) => t.bridges.some((b) => (x - t.xs[b.lower]) ** 2 + (y - t.ys[b.lower]) ** 2 < 24 * 24),
+      hide: mirror ? race.player : undefined,
     }, theme.fog, extras, faces);
+    if (mirror) return; // (the screen's own overlays are not seen in the mirror)
     if (theme.underwater) waterOverlay(this.scr, now);
     if (theme.volcano) emberOverlay(this.scr, now);
     // static over the player's screen: it comes in fast and clears over the last second
@@ -837,6 +852,32 @@ class Game {
       if (race.features.tunnelAt(t.s[ci]) && Math.abs(t.offset(cam.x, cam.y, ci)) < 7) {
         this.scr.dimRect(0, 0, W, H, hex("#0b0b14"), theme.tunnels === "frame" ? 0.14 : 0.34); // a building's frame is open to the light
       }
+    }
+  }
+
+  private mirror: { w: number; h: number; buf: Uint32Array } | null = null;
+
+  /** A rear-view mirror at the top of the screen while the player holds something the back button
+   * throws behind: the road behind the kart (the chase camera cannot see it), whoever is on its
+   * tail, and the arrow sweeping across it. Flipped as a mirror is: the kart's left on the left. */
+  private drawMirror(race: Race, sky: Sky): void {
+    const p = race.player;
+    if (!p.item || !THROWN_BACK.has(p.item) || p.roulette > 0 || p.rocket > 0 || p.falling || p.finished) return;
+    const w = Math.round((W * 0.36) / 2) * 2, h = Math.round(w * 0.3);
+    if (!this.mirror || this.mirror.w !== w || this.mirror.h !== h) this.mirror = { w, h, buf: new Uint32Array(w * h) };
+    // from up and a little ahead of the kart (which it does not draw), so the road just behind it,
+    // where the arrow sweeps, is in the picture
+    const m = this.mirror, hd = p.heading, focal = h * 1.2;
+    const cam: Camera = { x: p.x + Math.cos(hd) * 2.5, y: p.y + Math.sin(hd) * 2.5, heading: hd + Math.PI,
+                          height: p.elev + 3.4, focal, horizon: Math.round(h * 0.3), far: 160, lift: 0, fx: 0 };
+    const view = { ratio: this.cam.focal / focal, fullW: W };
+    drawSized(w, h, m.buf, (scr) => this.drawWorld(race, sky, cam, scr, view));
+    const x0 = Math.round((W - w) / 2), y0 = 4, scr = this.scr;
+    scr.fillRect(x0 - 2, y0 - 2, w + 4, h + 4, hex("#0b0b14"));
+    scr.fillRect(x0 - 1, y0 - 1, w + 2, 1, hex("#8f87b8"));
+    for (let y = 0; y < h; y++) {
+      const row = (y0 + y) * W + x0, src = y * w;
+      for (let x = 0; x < w; x++) scr.buf[row + x] = m.buf[src + (w - 1 - x)];
     }
   }
 
@@ -920,6 +961,7 @@ class Game {
         if (!r || !this.sky) break;
         this.drawWorld(r, this.sky, this.cam);
         this.speedLines(this.cam);
+        if (this.mode === "race") this.drawMirror(r, this.sky);
         if (this.flash > 0) scr.dimRect(0, 0, W, H, 0xffffffff, Math.min(0.85, this.flash * 4));
         if (this.mode === "race") this.hud.draw(scr, r, now);
         if (this.mode === "pause") {
@@ -947,7 +989,7 @@ class Game {
     const c = {
       steer: (held.has("left") ? 1 : 0) - (held.has("right") ? 1 : 0),
       throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"),
-      item: held.has("item"),
+      item: held.has("item"), back: held.has("back"),
     };
     const original = this.input.drive.bind(this.input);
     const r = this.race;
@@ -956,7 +998,8 @@ class Game {
       this.input.drive = () => {
         const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items);
         // ("noitems": the autopilot drives but leaves the items to the script)
-        return { ...a, item: held.has("item") || (!held.has("noitems") && !!a.item) };
+        return { ...a, item: held.has("item") || (!held.has("noitems") && !!a.item),
+                 back: held.has("back") || (!held.has("noitems") && !!a.back) };
       };
     } else {
       this.input.drive = () => c;

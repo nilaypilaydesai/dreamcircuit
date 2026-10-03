@@ -182,10 +182,13 @@ export class Hud {
     const count = p.jackpot.length || p.uses;
     if (ready && count > 1) this.font.draw(scr, `x${count}`, x + size - 2, y + size - 9, { color: WHITE, outline: INK, align: "right" });
     if (ready && p.item) {
-      // aimed items take two presses (aim, then throw); oil and orbs can be held out behind
+      // aimed items take two presses (aim, then throw), in front (E) or behind (R); oil and orbs
+      // can be held out behind
       const key = this.touch ? "ITEM" : "E";
+      const aimed = p.aimLocked === null ? (this.touch ? "AIM" : "E/R AIM")
+        : this.touch ? "THROW" : Math.cos(p.aimLocked) < 0 ? "R THROW" : "E THROW";
       const label = p.itemAge < 1.6 ? ITEM_NAMES[p.item]
-        : AIMED.has(p.item) ? (p.aimLocked === null ? `${key} AIM` : `${key} THROW`)
+        : AIMED.has(p.item) ? aimed
           : p.trailing ? "LET GO" : TRAILS.has(p.item) ? `HOLD ${key}` : key;
       this.font.draw(scr, label, Math.min(x + size / 2 + this.font.width(label) / 2, W - 4), y + size + 3,
                      { color: p.itemAge < 1.6 ? GOLD : SILVER, outline: INK, align: "right" });

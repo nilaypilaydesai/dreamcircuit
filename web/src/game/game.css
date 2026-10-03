@@ -14,9 +14,10 @@ body.game { touch-action: none; user-select: none; -webkit-user-select: none; -w
 .touch .stick.on { opacity: 1; }
 .touch .knob { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%; background: radial-gradient(circle at 38% 35%, #f4ecff, #c79bff 60%, #7b3cff); box-shadow: 0 0 14px rgba(199, 155, 255, 0.55); }
 .touch .stick.drift .knob { background: radial-gradient(circle at 38% 35%, #fff2c4, #ffb347 60%, #ff7a1a); box-shadow: 0 0 16px rgba(255, 179, 71, 0.8); }
-.touch .buttons { position: fixed; right: calc(16px + env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: auto auto; align-items: end; gap: 14px; pointer-events: auto; }
+.touch .buttons { position: fixed; right: calc(16px + env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: auto auto auto; align-items: end; gap: 14px; pointer-events: auto; }
 .touch .buttons button { font: 10px "Press Start 2P", monospace; color: #fff; border-radius: 50%; border: 2px solid rgba(199, 155, 255, 0.6); background: rgba(12, 10, 29, 0.55); touch-action: none; }
 .touch .buttons .item { width: 64px; height: 64px; margin-bottom: 46px; }
+.touch .buttons .back { width: 52px; height: 52px; margin-bottom: 96px; font-size: 8px; }
 .touch .buttons .hop { width: 84px; height: 84px; }
 .touch .buttons button.on { background: rgba(199, 155, 255, 0.45); }
 .touch:not(.racing) .zone, .touch:not(.racing) .stick, .touch:not(.racing) .buttons { display: none; }
@@ -24,5 +25,6 @@ body.game { touch-action: none; user-select: none; -webkit-user-select: none; -w
 @media (max-height: 420px) {
   .touch .stick { width: 96px; height: 96px; margin: -48px 0 0 -48px; }
   .touch .buttons .item { width: 56px; height: 56px; margin-bottom: 36px; }
+  .touch .buttons .back { width: 46px; height: 46px; margin-bottom: 78px; }
   .touch .buttons .hop { width: 72px; height: 72px; }
 }

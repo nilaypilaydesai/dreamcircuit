@@ -345,8 +345,8 @@ export class Race {
    * fast, clean and drifting raises it; running wide or slow calms the dream down. */
   styleWanted(): number {
     const d = this.driving;
-    // Legend leans wild and Rookie calm; the mountains wind more
-    const bias = (this.setup.difficulty === "legend" ? 0.1 : this.setup.difficulty === "rookie" ? -0.1 : 0) +
+    // Legend leans wild and Rookie calm (Intermediate a little calm); the mountains wind more
+    const bias = { rookie: -0.1, intermediate: -0.05, pro: 0, legend: 0.1 }[this.setup.difficulty] +
       (this.setup.theme.mountain ? 0.12 : 0);
     const v = 0.5 + 1.25 * (d.speed - 0.72) + 0.6 * d.drift - 1.1 * d.offroad - 0.25 * (1 - d.clean) + bias;
     return Math.max(0.05, Math.min(0.95, v));
@@ -518,9 +518,9 @@ export class Race {
   /** The road surface under each kart: bridge decks and jump ramps, and how the road climbs and
    * crests there (measured over a few meters, so the steps between road points do not show). */
   private surfaceUnder(k: Kart): void {
-    const t = this.track, r = this.features.rampUnder(t, k);
+    const t = this.track, r = this.features.rampUnder(t, k, t.along(k.x, k.y, k.idx));
     k.rampU = r.u;
-    k.ground = (t.elev[k.idx] ?? 0) + r.height;
+    k.ground = t.heightAt(k.x, k.y, k.idx) + r.height;
     k.walled = this.features.inTunnel(t, k);
     const a = t.wrap(k.idx - 4), b = t.wrap(k.idx + 4), h = 4 * SPACING;
     const za = t.elev[a] ?? 0, zi = t.elev[k.idx] ?? 0, zb = t.elev[b] ?? 0;
@@ -531,10 +531,12 @@ export class Race {
   /** Items act on the press of the button, never while it is merely held: most fire at once;
    * oil, orbs and bombs come out behind the kart and are dropped or fired on the release. */
   private fire(k: Kart, c: Controls): void {
-    const down = !!c.item && !k.finished;
+    const down = !!c.item && !k.finished, back = !!c.back && !k.finished;
     if (down && !k.itemHeld) this.items.press(k, this.karts, this.field);
     else if (!down && k.itemHeld) this.items.release(k, this.karts, this.field);
+    if (back && !k.backHeld) this.items.pressBack(k, this.karts, this.field);
     k.itemHeld = down;
+    k.backHeld = back;
   }
 
   /** Safety net for slow devices: nobody can drive past road that has not been dreamed yet.

@@ -213,9 +213,9 @@ export class Features {
   }
 
   /** Height of a ramp's surface under the kart (0 off ramps) and how far up it is (0..1). */
-  rampUnder(track: Track, k: Kart): { height: number; u: number } {
+  rampUnder(track: Track, k: Kart, along = 0): { height: number; u: number } {
     if (Math.abs(k.offset) > HALF_WIDTH) return { height: 0, u: -1 };
-    const s = track.s[k.idx];
+    const s = track.s[k.idx] + along; // (where the kart is between road points: the wedge rises smoothly)
     for (const r of this.ramps) {
       const u = (s - r.s0) / RAMP_LEN;
       if (u >= 0 && u < 1) return { height: RAMP_HEIGHT * u, u };

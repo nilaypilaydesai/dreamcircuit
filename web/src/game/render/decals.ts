@@ -4,7 +4,7 @@
 
 import { hex, mix } from "../core/gfx";
 
-const R = 1.4; // m: a slick's size (it spins out karts within 1.3 m)
+const R = 2.3; // m: a slick's size, about a third of the road across (it spins out karts within 2.1 m)
 const PUDDLE = hex("#15131d"), RIM = hex("#2e2a3b"), SHINE = hex("#8d8fa8");
 const FILM = ["#ff5fa2", "#ffd23f", "#5dff7a", "#63c8ff", "#c79bff"].map(hex);
 

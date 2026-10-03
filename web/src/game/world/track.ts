@@ -294,6 +294,22 @@ export class Track {
     return best;
   }
 
+  /** How far (x, y) is along the road past point i, in m (negative: before it). */
+  along(x: number, y: number, i: number): number {
+    const [tx, ty] = this.tangent(i);
+    return (x - this.xs[i]) * tx + (y - this.ys[i]) * ty;
+  }
+
+  /** Height of the road at (x, y), near dense index i: between the road points either side of
+   * it. (Read at the nearest point alone, the road under a kart climbing a bridge's ramp rose in
+   * steps of a point, 0.6 m apart, one or two of them a frame: the kart shuddered up it.) */
+  heightAt(x: number, y: number, i: number): number {
+    const d = this.along(x, y, i);
+    const j = this.wrap(d >= 0 ? i + 1 : i - 1);
+    const a = this.elev[i] ?? 0, b = this.elev[j] ?? a;
+    return j === i ? a : a + (b - a) * Math.min(1, Math.abs(d) / SPACING);
+  }
+
   /** Signed lateral offset of (x, y) from point i (+ = left of the driving direction). */
   offset(x: number, y: number, i: number): number {
     const [tx, ty] = this.tangent(i);

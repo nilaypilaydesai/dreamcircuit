@@ -210,8 +210,11 @@ describe("lap counting", () => {
   });
 
   it("keeps a stationary kart on the road, and the classes ordered by pace", () => {
-    expect(CLASSES.rookie.vmax).toBeLessThan(CLASSES.pro.vmax);
-    expect(CLASSES.pro.vmax).toBeLessThan(CLASSES.legend.vmax);
+    const order = (["rookie", "intermediate", "pro", "legend"] as const).map((d) => CLASSES[d]);
+    for (let i = 1; i < order.length; i++) {
+      for (const key of ["vmax", "accel", "grip", "aiSpeed", "aiCorner"] as const) expect(order[i][key]).toBeGreaterThan(order[i - 1][key]);
+      expect(order[i].aiNoise).toBeLessThan(order[i - 1].aiNoise);
+    }
     const t = Track.fromPoints(calm());
     const k = new Kart(0, "TEST", 0, true);
     k.placeOn(t, t.startIndex, HALF_WIDTH / 2);
@@ -1071,6 +1074,66 @@ describe("the new items", () => {
     expect(p.dist - start).toBeGreaterThan(CLASSES.pro.vmax * flown * 1.1); // faster than driving while it lasts
   });
 
+  it("throw behind with the back button: the arrow locks behind (mirrored), the puck goes back onto the kart behind", () => {
+    const { t, items, a, b } = duel(18, 0);
+    b.v = 20;
+    items.grant(b, "puck");
+    b.aim = 0.4; // the sweep in front is on the left...
+    expect(items.pressBack(b, [a, b])).toBe(true); // ...so the arrow locks behind, on the left
+    expect(Math.cos(b.aimLocked!)).toBeLessThan(0);
+    expect(Math.sin(b.aimLocked!)).toBeCloseTo(Math.sin(0.4), 9);
+    expect(items.pucks.length).toBe(0);
+    b.aimLocked = Math.PI; // (straight back, at the kart on its tail)
+    expect(items.pressBack(b, [a, b])).toBe(true); // the second press throws it
+    const puck = items.pucks[0];
+    expect(puck.vx * Math.cos(b.heading) + puck.vy * Math.sin(b.heading)).toBeLessThan(-20); // back down the road
+    for (let i = 0; i < 60 * 2 && a.spin <= 0; i++) items.update(1 / 60, t, [a, b], fieldOf([b, a]));
+    expect(a.spin).toBeGreaterThan(0);
+    expect(b.spin).toBe(0);
+  });
+
+  it("throw an orb straight back with the back button, and a bomb back to lie in wait", () => {
+    const { t, items, a, b } = duel(16, 0);
+    items.grant(b, "orb");
+    expect(items.pressBack(b, [a, b])).toBe(true);
+    expect(items.orbs.length).toBe(0); // not the homing kind: straight back
+    expect(items.pucks.map((p) => p.kind)).toEqual(["orb"]);
+    for (let i = 0; i < 60 * 2 && a.spin <= 0; i++) items.update(1 / 60, t, [a, b], fieldOf([b, a]));
+    expect(a.spin).toBeGreaterThan(0);
+    const d = duel(40, 0);
+    d.a.place = 2;
+    d.b.place = 1;
+    d.items.grant(d.b, "bomb");
+    d.items.pressBack(d.b, [d.a, d.b]);
+    d.items.pressBack(d.b, [d.a, d.b]);
+    const bomb = d.items.bombs[0];
+    expect(bomb.target).toBeNull(); // nobody to chase back there: it lands and waits
+    for (let i = 0; i < 60 * 1.5; i++) d.items.update(1 / 60, d.t, [d.a, d.b], fieldOf([d.b, d.a]));
+    expect(bomb.landed).toBe(true);
+    expect((bomb.x - d.b.x) * Math.cos(d.b.heading) + (bomb.y - d.b.y) * Math.sin(d.b.heading)).toBeLessThan(-3);
+  });
+
+  it("are thrown back by rivals at a kart on their tail when there is nobody to hit ahead", async () => {
+    const race = new Race({ rivals: 1, difficulty: "legend", theme: { ...THEMES[0], hills: undefined }, seed: 3, replay: calm() },
+                          null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    const t = race.track, me = race.player, rival = race.karts.find((k) => !k.isPlayer)!;
+    const i0 = t.wrap(t.startIndex + 60);
+    me.placeOn(t, i0, 0);
+    rival.placeOn(t, t.wrap(i0 + Math.round(11 / SPACING)), 0);
+    for (const k of [me, rival]) { k.v = 20; k.updateProgress(t); }
+    race.items.grant(rival, "puck");
+    rival.itemAge = 5;
+    let back = false;
+    for (let i = 0; i < 60 && !back; i++) {
+      race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
+      race.events = [];
+      back = race.items.pucks.some((p) => p.owner === rival && p.vx * Math.cos(rival.heading) + p.vy * Math.sin(rival.heading) < 0);
+    }
+    expect(back).toBe(true);
+  });
+
   it("are all used by rivals in a race", async () => {
     // seven rivals at a time, each handed a different item, in a race of their own (the shock,
     // which knocks every item out of every hand, in a round of its own)
@@ -1126,14 +1189,15 @@ describe("the garage", () => {
   });
 
   it("gives harder classes better rival karts", () => {
-    const avg = (d: "rookie" | "pro" | "legend") => {
+    const avg = (d: "rookie" | "intermediate" | "pro" | "legend") => {
       const rng = new Rand(21);
       let sum = 0;
       for (let i = 0; i < 300; i++) sum += buildScore(rivalBuild(rng, d));
       return sum / 300;
     };
-    const rookie = avg("rookie"), pro = avg("pro"), legend = avg("legend");
-    expect(rookie).toBeLessThan(pro);
+    const rookie = avg("rookie"), intermediate = avg("intermediate"), pro = avg("pro"), legend = avg("legend");
+    expect(rookie).toBeLessThan(intermediate);
+    expect(intermediate).toBeLessThan(pro);
     expect(pro).toBeLessThan(legend);
   });
 

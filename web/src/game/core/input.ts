@@ -3,18 +3,19 @@
 // site (the DATA pages) keeps normal keyboard scrolling.
 //
 // Touch races with one thumb on a floating joystick (steer; push it all the way over to drift,
-// pull it back to brake) while the gas is automatic, and the other on DRIFT and ITEM.
+// pull it back to brake) while the gas is automatic, and the other on DRIFT, ITEM and BACK (the
+// item thrown behind; R on a keyboard, X on a pad).
 
 // "cancel" is the pad's B: back in menus, but not a pause in a race (there B brakes)
 export type MenuEvent = "up" | "down" | "left" | "right" | "confirm" | "back" | "cancel" | "pause";
 
-export interface DriveInput { steer: number; throttle: number; brake: number; drift: boolean; item: boolean }
+export interface DriveInput { steer: number; throttle: number; brake: number; drift: boolean; item: boolean; back: boolean }
 
 const DRIVE: Record<string, string> = {
   ArrowUp: "gas", KeyW: "gas", ArrowDown: "brake", KeyS: "brake",
   ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right",
   ShiftLeft: "drift", ShiftRight: "drift", Space: "drift", KeyX: "gas", KeyZ: "brake",
-  KeyE: "item", KeyC: "item",
+  KeyE: "item", KeyC: "item", KeyR: "back",
 };
 const MENU: Record<string, MenuEvent> = {
   ArrowUp: "up", KeyW: "up", ArrowDown: "down", KeyS: "down", ArrowLeft: "left", KeyA: "left",
@@ -188,10 +189,11 @@ export class GameInput {
     if (!on) {
       this.held.delete("drift");
       this.held.delete("item");
+      this.held.delete("back");
     }
   }
 
-  private pollPad(): { steer: number; gas: number; brake: number; drift: boolean; item: boolean } | null {
+  private pollPad(): { steer: number; gas: number; brake: number; drift: boolean; item: boolean; back: boolean } | null {
     const pads = navigator.getGamepads?.() ?? [];
     for (const p of pads) {
       if (!p) continue;
@@ -211,9 +213,10 @@ export class GameInput {
       return {
         steer: Math.max(-1, Math.min(1, steer)),
         gas: Math.max(p.buttons[7]?.value ?? 0, p.buttons[0]?.pressed ? 1 : 0),
-        brake: Math.max(p.buttons[6]?.value ?? 0, p.buttons[1]?.pressed || p.buttons[2]?.pressed ? 1 : 0),
+        brake: Math.max(p.buttons[6]?.value ?? 0, p.buttons[1]?.pressed ? 1 : 0),
         drift: !!(p.buttons[5]?.pressed || p.buttons[4]?.pressed),
-        item: !!p.buttons[3]?.pressed,
+        item: !!p.buttons[3]?.pressed, // Y
+        back: !!p.buttons[2]?.pressed, // X: the item thrown behind
       };
     }
     return null;
@@ -227,6 +230,7 @@ export class GameInput {
     const k: DriveInput = {
       steer: (h.has("left") ? 1 : 0) - (h.has("right") ? 1 : 0),
       throttle: h.has("gas") ? 1 : 0, brake: h.has("brake") ? 1 : 0, drift: h.has("drift"), item: h.has("item"),
+      back: h.has("back"),
     };
     if (this.touchMode) {
       const s = stickControls(this.stickVec[0], this.stickVec[1], this.stickDrift);
@@ -245,6 +249,7 @@ export class GameInput {
       brake: Math.max(k.brake, pad.brake),
       drift: k.drift || pad.drift,
       item: k.item || pad.item,
+      back: k.back || pad.back,
     };
   }
 

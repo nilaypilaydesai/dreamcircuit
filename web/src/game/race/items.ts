@@ -57,6 +57,8 @@ export const ITEM_NAMES: Record<ItemKind, string> = {
 export const TRAILS: ReadonlySet<ItemKind> = new Set<ItemKind>(["oil", "orb"]);
 /** Items thrown where the arrow points: the first press locks it, the second throws. */
 export const AIMED: ReadonlySet<ItemKind> = new Set<ItemKind>(["puck", "puck3", "bomb", "boomerang"]);
+/** Items the back button throws behind the kart (aimed ones along an arrow behind it). */
+export const THROWN_BACK: ReadonlySet<ItemKind> = new Set<ItemKind>(["puck", "puck3", "orb", "orb3", "boomerang", "bomb", "flares"]);
 /** Aimed items that ride out behind the kart, as a shield, once the arrow is locked. */
 const HELD_WHEN_LOCKED: ReadonlySet<ItemKind> = new Set<ItemKind>(["puck", "bomb"]);
 /** Items whose every shot circles the kart (each blocks one hit) until it is fired. */
@@ -72,7 +74,7 @@ const PICKUP_R = 1.6; // m
 export const COIN_SPACING = 210; // m between lines of coins (halfway between the rows of boxes)
 const COIN_RESPAWN = 10; // s
 export const ROULETTE = 1.2; // s the player's item slot spins before it settles
-const SLICK_R = 1.3;
+const SLICK_R = 2.1; // m: a kart this close to a slick's middle drives through it (it is 4.6 m across)
 const ORB_R = 1.4;
 const ORB_SPEED = 12; // m/s on top of the shooter's speed
 const ORB_RANGE = 150; // m of race distance in which an orb finds a target
@@ -137,7 +139,7 @@ export interface Orb {
 }
 /** A puck slides; a flare hops (z over the road, vz) and burns out sooner. */
 export interface Puck {
-  kind: "puck" | "flare"; idx: number; x: number; y: number; z: number; vz: number; vx: number; vy: number;
+  kind: "puck" | "flare" | "orb"; idx: number; x: number; y: number; z: number; vz: number; vx: number; vy: number;
   t: number; bounces: number; owner: Kart;
 }
 export interface Boomerang {
@@ -286,6 +288,26 @@ export class Items {
     return this.use(k, karts, field);
   }
 
+  /** The back button went down (R, the pad's X, BACK on a touch screen): the item goes out behind.
+   * An aimed item's arrow locks behind the kart on the first press (mirrored, on the same side of
+   * the kart as the sweep in front) and the second press throws it; an orb or a flare is thrown
+   * straight back; oil is dropped; anything else is used as by the item button. */
+  pressBack(k: Kart, karts: Kart[], field?: Field): boolean {
+    if (!this.ready(k)) return false;
+    const item = k.item!;
+    if (AIMED.has(item)) {
+      if (k.aimLocked === null) {
+        k.aimLocked = Math.PI - k.aim;
+        if (HELD_WHEN_LOCKED.has(item)) k.trailing = true;
+        this.events.push({ kind: "locked", kart: k });
+        return true;
+      }
+      return this.use(k, karts, field);
+    }
+    k.trailing = false;
+    return this.use(k, karts, field, true);
+  }
+
   /** The button came up: oil or an orb held out behind is dropped or fired. (An aimed item stays
    * locked until the second press.) */
   release(k: Kart, karts: Kart[], field?: Field): boolean {
@@ -298,8 +320,8 @@ export class Items {
     return !!k.item && k.roulette <= 0 && k.spin <= 0 && k.rocket <= 0 && !k.falling;
   }
 
-  /** Use ``k``'s item now. Returns false if it has none ready. */
-  use(k: Kart, karts: Kart[], field?: Field): boolean {
+  /** Use ``k``'s item now (``back``: thrown behind the kart). Returns false if it has none ready. */
+  use(k: Kart, karts: Kart[], field?: Field, back = false): boolean {
     if (!this.ready(k)) return false;
     const item = k.item!;
     // the jackpot: the first press sets the eight circling, every press after uses the next
@@ -308,7 +330,7 @@ export class Items {
         k.jackpot = [...JACKPOT];
       } else {
         const next = k.jackpot.shift()!;
-        this.effect(k, next, karts, field, 0);
+        this.effect(k, next, karts, field, back ? Math.PI : 0);
         if (!k.jackpot.length) this.clear(k);
       }
       k.itemAge = 0;
@@ -323,14 +345,14 @@ export class Items {
       } else {
         if (k.flares <= 0) k.flares = FLARES_TIME;
         if (k.flareCd > 0) return false;
-        this.throwPuck(k, "flare", 0);
+        this.throwPuck(k, "flare", back ? Math.PI : 0);
         k.flareCd = FLARE_EVERY;
       }
       k.itemAge = 0;
       this.events.push({ kind: "used", kart: k, item });
       return true;
     }
-    const aim = k.aimLocked ?? k.aim;
+    const aim = k.aimLocked ?? (back ? Math.PI : k.aim);
     this.effect(k, item, karts, field, aim);
     k.aimLocked = null;
     k.trailing = false;
@@ -355,7 +377,7 @@ export class Items {
         break;
       case "oil":
       case "oil3":
-        this.slicks.push({ x: k.x - c * 2.4, y: k.y - s * 2.4, elev: k.ground, ttl: 30, owner: k, armed: 1.0 });
+        this.slicks.push({ x: k.x - c * 3.4, y: k.y - s * 3.4, elev: k.ground, ttl: 30, owner: k, armed: 1.0 });
         break;
       case "puck":
       case "puck3":
@@ -363,6 +385,10 @@ export class Items {
         break;
       case "orb":
       case "orb3":
+        if (Math.cos(aim) < 0) { // thrown back: straight down the road, at whoever is behind
+          this.throwPuck(k, "orb", aim);
+          break;
+        }
         this.orbs.push({
           idx: k.idx, carry: 0, x: k.x + c * 2, y: k.y + s * 2, offset: k.offset, v: Math.max(k.v, 8) + ORB_SPEED,
           ttl: 6, owner: k, target: this.targetAhead(k, karts),
@@ -376,17 +402,18 @@ export class Items {
         break;
       }
       case "bomb": {
-        const a = k.heading + aim, v = Math.max(k.v, 0) + 9;
-        const target = k.place > 1 ? karts.find((o) => o.place === k.place - 1 && !o.finished) ?? null : null;
-        this.bombs.push({ idx: k.idx, x: k.x + c * 2, y: k.y + s * 2, z: k.elev + 1.2, vx: Math.cos(a) * v,
+        // lobbed ahead it chases the racer in front; lobbed back it lands behind and waits
+        const a = k.heading + aim, back = Math.cos(aim) < 0, v = back ? 12 : Math.max(k.v, 0) + 9;
+        const target = !back && k.place > 1 ? karts.find((o) => o.place === k.place - 1 && !o.finished) ?? null : null;
+        this.bombs.push({ idx: k.idx, x: k.x + Math.cos(a) * 2, y: k.y + Math.sin(a) * 2, z: k.elev + 1.2, vx: Math.cos(a) * v,
                           vy: Math.sin(a) * v, vz: 7.5 * Math.sqrt(this.gravity / GRAVITY), age: 0, landed: false, owner: k,
                           target });
         break;
       }
       case "boomerang": {
-        const a = k.heading + aim, v = Math.max(k.v, 8) + BOOM_SPEED;
+        const a = k.heading + aim, v = Math.cos(aim) < 0 ? BOOM_SPEED + 8 : Math.max(k.v, 8) + BOOM_SPEED;
         this.boomerangs.push({
-          idx: k.idx, x: k.x + c * 2, y: k.y + s * 2, z: k.elev + 0.9, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+          idx: k.idx, x: k.x + Math.cos(a) * 2, y: k.y + Math.sin(a) * 2, z: k.elev + 0.9, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
           t: 0, home: false, owner: k, hit: [],
         });
         break;
@@ -445,12 +472,14 @@ export class Items {
     }
   }
 
-  /** A puck or a flare, off the front of the kart along ``aim``. */
-  private throwPuck(k: Kart, kind: "puck" | "flare", aim: number): void {
-    const a = k.heading + aim, v = Math.max(k.v, 8) + (kind === "puck" ? PUCK_SPEED : FLARE_SPEED);
-    const c = Math.cos(k.heading), s = Math.sin(k.heading);
+  /** A puck, a flare or an orb thrown back, off the kart along ``aim``. Thrown ahead it carries
+   * the kart's speed; thrown back it goes back down the road at its own. */
+  private throwPuck(k: Kart, kind: Puck["kind"], aim: number): void {
+    const speed = kind === "flare" ? FLARE_SPEED : PUCK_SPEED;
+    const a = k.heading + aim, v = Math.cos(aim) < 0 ? speed + 4 : Math.max(k.v, 8) + speed;
+    const c = Math.cos(a), s = Math.sin(a);
     this.pucks.push({
-      kind, idx: k.idx, x: k.x + c * 2.2, y: k.y + s * 2.2, z: k.ground + (kind === "puck" ? 0.35 : 0.8),
+      kind, idx: k.idx, x: k.x + c * 2.2, y: k.y + s * 2.2, z: k.ground + (kind === "flare" ? 0.8 : kind === "orb" ? 0.45 : 0.35),
       vz: kind === "flare" ? 3 : 0, vx: Math.cos(a) * v, vy: Math.sin(a) * v, t: 0, bounces: 0, owner: k,
     });
   }
@@ -738,7 +767,7 @@ export class Items {
           p.vz = 4.2;
         }
       } else {
-        p.z = ground + 0.35;
+        p.z = ground + (p.kind === "orb" ? 0.45 : 0.35);
       }
       // the edges of the road (the walls on raised road): bounce back in
       const off = track.offset(p.x, p.y, p.idx), edge = ground > 0.8 ? HALF_WIDTH - 0.6 : HALF_WIDTH + 1.6;
@@ -759,7 +788,7 @@ export class Items {
         if (k.finished || k.spin > 0 || k.falling || k.phantom > 0 || Math.abs(k.elev - ground) > 1.6) continue;
         if (k === p.owner && p.t < 0.5) continue; // clear of its thrower first
         if ((k.x - p.x) ** 2 + (k.y - p.y) ** 2 > PUCK_R * PUCK_R) continue;
-        this.strike(k, p.x, p.y, flare ? "flare" : "puck", p.owner, flare ? 0.8 : SPIN_TIME);
+        this.strike(k, p.x, p.y, flare ? "flare" : p.kind === "orb" ? "orb" : "puck", p.owner, flare ? 0.8 : SPIN_TIME);
         return false;
       }
       return true;

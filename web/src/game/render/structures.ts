@@ -675,11 +675,12 @@ export function rampFaces(p: Painter, track: Track, f: Features, theme: Theme): 
 /** The aiming arrow on the road in front of a kart, pointing ``angle`` off its heading: a dark
  * outline under a bright shaft and head. */
 export function aimArrow(p: Painter, k: { x: number; y: number; heading: number; ground: number }, angle: number,
-                         color: number): void {
+                         color: number, reach = 1): void {
   const a = k.heading + angle;
   const fx = Math.cos(a), fy = Math.sin(a), lx = -fy, ly = fx;
   const z = k.ground + 0.06;
-  const P = (d: number, w: number): P3 => [k.x + fx * d + lx * w, k.y + fy * d + ly * w, z];
+  // (``reach`` scales it: the one behind the kart is seen from further off, in the mirror)
+  const P = (d: number, w: number): P3 => [k.x + fx * d * reach + lx * w * reach, k.y + fy * d * reach + ly * w * reach, z];
   const arrow = (grow: number, c: number) => {
     face(p, [P(2.2 - grow, -0.3 - grow), P(5.0, -0.3 - grow), P(5.0, 0.3 + grow), P(2.2 - grow, 0.3 + grow)], c, [0, 0, 1]);
     face(p, [P(4.6 - grow, -0.95 - grow), P(6.7 + grow * 1.5, 0), P(4.6 - grow, 0.95 + grow)], c, [0, 0, 1]);

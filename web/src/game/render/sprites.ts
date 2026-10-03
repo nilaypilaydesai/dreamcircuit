@@ -1454,7 +1454,7 @@ export function slickArt(): SceneryArt {
     }
   }
   for (let x = 9; x < 17; x++) px(s, x, 3, hex("#8a8aa0")); // the shine
-  return { sprite: s, height: 0.62, solid: false };
+  return { sprite: s, height: 1.38, solid: false }; // 4.6 m across, as on the ground
 }
 
 /** A dream orb: a glassy violet ball with a pale swirl turning inside it. */

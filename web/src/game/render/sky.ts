@@ -263,11 +263,27 @@ export class Sky {
     }
   }
 
-  draw(scr: Screen, heading: number): void {
+  /** Draw the sky for a camera facing ``heading``. ``view``: a smaller view than the one the sky
+   * was made for (a rear-view mirror), with its own horizon row, the ratio of the full view's focal
+   * length to its own, and the full view's width. */
+  draw(scr: Screen, heading: number, view?: { horizon: number; ratio: number; fullW: number }): void {
     const buf = scr.buf;
     const h = this.horizon + 1;
     const off = (layer: number) => Math.floor((-heading / (Math.PI * 2)) * PAN * layer);
     const of = off(1), on = off(1.6);
+    if (view) {
+      const centre = view.fullW / 2;
+      for (let y = 0; y <= Math.min(view.horizon, H - 1); y++) {
+        const sy = Math.max(0, Math.min(h - 1, Math.round(this.horizon - (view.horizon - y) * view.ratio)));
+        const row = y * W;
+        for (let x = 0; x < W; x++) {
+          const col = centre + (x - W / 2) * view.ratio;
+          const n = this.near[sy * PAN + ((((Math.round(col + on)) % PAN) + PAN) % PAN)];
+          buf[row + x] = n || this.far[sy * PAN + ((((Math.round(col + of)) % PAN) + PAN) % PAN)];
+        }
+      }
+      return;
+    }
     for (let y = 0; y < Math.min(h, H); y++) {
       const row = y * W;
       for (let x = 0; x < W; x++) {

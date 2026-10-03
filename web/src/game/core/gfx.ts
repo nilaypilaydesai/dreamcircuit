@@ -61,6 +61,22 @@ export function makeSprite(w: number, h: number): Sprite {
   return { w, h, data: new Uint32Array(w * h) };
 }
 
+/** Run ``draw`` against a framebuffer of ``w`` x ``h`` of its own (the renderers read W and H as
+ * they draw): a rear-view mirror. The screen it is given has the drawing methods, no canvas. */
+export function drawSized(w: number, h: number, buf: Uint32Array, draw: (scr: Screen) => void): void {
+  const w0 = W, h0 = H;
+  W = w;
+  H = h;
+  try {
+    const scr = Object.create(Screen.prototype) as Screen;
+    scr.buf = buf;
+    draw(scr);
+  } finally {
+    W = w0;
+    H = h0;
+  }
+}
+
 export class Screen {
   readonly ctx: CanvasRenderingContext2D;
   image!: ImageData;

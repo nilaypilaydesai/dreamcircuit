@@ -23,6 +23,7 @@ const KEYS: Row[] = [
   { caps: ["<", ">", "A", "D"], text: "STEER" },
   { caps: ["SHIFT", "SPACE"], text: "DRIFT, OR HOP AT A RAMP" },
   { caps: ["E"], text: "USE YOUR ITEM" },
+  { caps: ["R"], text: "THROW IT BEHIND YOU" },
   { caps: ["ESC"], text: "PAUSE" },
   { caps: ["M"], text: "SOUND ON OR OFF" },
 ];
@@ -32,6 +33,7 @@ const PAD: Row[] = [
   { caps: ["STICK"], text: "STEER" },
   { caps: ["RB"], text: "DRIFT, OR HOP AT A RAMP" },
   { caps: ["Y"], text: "USE YOUR ITEM" },
+  { caps: ["X"], text: "THROW IT BEHIND YOU" },
   { caps: ["START"], text: "PAUSE" },
 ];
 // (the stick caps draw a joystick: centred, pushed over, pulled back)
@@ -41,13 +43,14 @@ const TOUCH: Row[] = [
   { caps: ["@v"], text: "PULL IT BACK TO BRAKE (THE GAS IS ON BY ITSELF)" },
   { caps: ["DRIFT"], text: "HOP, OR DRIFT" },
   { caps: ["ITEM"], text: "USE YOUR ITEM" },
+  { caps: ["BACK"], text: "THROW IT BEHIND YOU" },
   { caps: ["II"], text: "PAUSE" },
 ];
 const TIPS: [string, string][] = [
   ["DRIFT", "HOLD IN A TURN, LET GO: MINI-TURBO"],
   ["START", "GAS JUST BEFORE GO: ROCKET START"],
   ["RAMPS", "HOP RIGHT AT THE LIP: TRICK BOOST"],
-  ["AIM", "PRESS ONCE TO AIM, AGAIN TO THROW"],
+  ["AIM", "PRESS ONCE TO AIM, AGAIN TO THROW. A MIRROR SHOWS THE AIM BEHIND"],
   ["SHIELD", "HOLD OIL OR AN ORB BEHIND YOU"],
   ["COINS", "UP TO 10: EACH ADDS TOP SPEED"],
   ["LAVA", "A DRONE FISHES YOU OUT OF IT"],

@@ -3,12 +3,13 @@
 // sloppiness, simple overtaking room and the classic kart racer rubber band: rivals far behind
 // the player find a few percent, rivals far ahead lift. Like a human, they drift the tight
 // corners and release on the exit for the mini-turbo, hold oil and orbs out behind them when
-// someone is on their tail, aim before they throw, save each item for the moment it works best
-// (a horn for when something is about to hit them), and drive half blind through static.
+// someone is on their tail, aim before they throw (behind them too, at a kart on their tail, when
+// there is nobody to hit ahead), save each item for the moment it works best (a horn for when
+// something is about to hit them), and drive half blind through static.
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
-import { AIMED, AIM_MAX, type Items, TRAILS } from "./items";
+import { AIMED, AIM_MAX, type Items, THROWN_BACK, TRAILS } from "./items";
 import type { ClassParams, Controls, Kart } from "./kart";
 
 export class RivalDriver {
@@ -22,6 +23,7 @@ export class RivalDriver {
   private trickTried = false; // one trick attempt per ramp
   private holding = false; // the item button is held: an item is out behind the kart
   private tapped = false; // the button went down last frame (a press lasts one frame)
+  private backTapped = false; // and the back button
 
   constructor(private readonly rng: Rand, readonly kart: Kart, rank: number) {
     this.lane = rng.range(-2.5, 2.5);
@@ -73,6 +75,7 @@ export class RivalDriver {
     return {
       steer, throttle, brake, drift: this.drift(dt, track, cls, steer) || this.trick(cls),
       item: this.itemButton(track, cls, others, items),
+      back: this.backButton(cls, others),
     };
   }
 
@@ -115,6 +118,42 @@ export class RivalDriver {
     }
     this.tapped = fire;
     return fire;
+  }
+
+  /** The back button: a puck, an orb, a boomerang or a bomb thrown back at a kart close behind
+   * when there is nobody to throw at ahead (an aimed one locks first, then throws, as the
+   * player's does). */
+  private backButton(cls: ClassParams, others: Kart[]): boolean {
+    const k = this.kart;
+    if (this.backTapped) {
+      this.backTapped = false;
+      return false;
+    }
+    if (!k.item || !THROWN_BACK.has(k.item) || k.item === "flares" || k.roulette > 0 || k.spin > 0 || k.finished || k.rocket > 0 ||
+        k.falling || this.holding || k.itemAge < 1.6 - cls.aiCorner) return false;
+    if (k.aimLocked !== null && Math.cos(k.aimLocked) >= 0) return false; // locked ahead: the item button throws it
+    const behind = this.aimBehind(others);
+    if (behind === null || this.aimAt(others, 40) !== null) return false;
+    if (AIMED.has(k.item) && k.aimLocked === null) k.aim = Math.PI - behind; // (the lock mirrors the sweep)
+    this.backTapped = true;
+    return true;
+  }
+
+  /** The angle off the heading to the nearest kart behind inside the arc an arrow sweeps behind
+   * the kart (within ``range`` m), if any. */
+  private aimBehind(others: Kart[], range = 22): number | null {
+    const k = this.kart;
+    let best: number | null = null, bestD = range;
+    for (const o of others) {
+      if (o === k || o.finished || o.phantom > 0) continue;
+      const dx = o.x - k.x, dy = o.y - k.y, d = Math.hypot(dx, dy);
+      const off = Math.atan2(Math.sin(Math.atan2(dy, dx) - k.heading), Math.cos(Math.atan2(dy, dx) - k.heading));
+      if (d < bestD && d > 3 && Math.abs(off) > Math.PI - AIM_MAX) {
+        best = off;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   /** The angle off the heading to the nearest kart ahead inside the aiming arc (within ``range``

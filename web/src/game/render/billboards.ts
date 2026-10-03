@@ -35,6 +35,8 @@ export interface KartLook {
   art?: (item: ItemKind) => SceneryArt; // any item's art (the jackpot's eight circling a kart)
   grabber?: SceneryArt[]; // the grabber: idle, wide open, snapped shut
   dome?: boolean; // every driver wears a clear helmet (under the sea, on the moon)
+  underDeck?: (x: number, y: number) => boolean; // whether a spot on the ground is under a bridge's deck
+  hide?: Kart; // a kart not to draw (the player's own, seen past in the rear-view mirror)
   drone?: SceneryArt[]; // the rescue drone's frames (the volcano)
 }
 
@@ -64,8 +66,9 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     if (sx < -200 || sx > W + 200) return null;
     return { z, sx, gy: cam.horizon + (cam.height - h) * ppm, ppm };
   };
-  // up on a bridge, things at ground level under the deck must be drawn before it
-  const lowBias = cam.height > 4.5 ? 2.5 : 0;
+  // things at ground level under a bridge's deck, seen from up on it, must be drawn before the deck
+  // (only there: a kart coming down a ramp, under a camera still up on the deck, is not under it)
+  const lowAt = (x: number, y: number, z: number) => (cam.height - z > 3 && look.underDeck?.(x, y) ? 2.5 : 0);
   const fogAt = (z: number) => (z > cam.far * 0.45 ? Math.min(1, (z - cam.far * 0.45) / (cam.far * 0.55)) ** 1.5 : 0);
   /** A floating sprite at (x, y), ``lift`` m over a surface at height ``base``. */
   const billboard = (art: SceneryArt, x: number, y: number, base: number, lift: number, bias: number, shadowed = true,
@@ -92,7 +95,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const h = it.art.height * p.ppm;
     if (h < 1.5) continue;
     const w = (h * it.art.sprite.w) / it.art.sprite.h;
-    items.push({ ...p, z: p.z + lowBias,
+    items.push({ ...p, z: p.z + lowAt(it.x, it.y, 0),
       draw: () => scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h, w, h, it.flip, fog, fogAt(p.z)) });
   }
   for (const it of extras) {
@@ -100,15 +103,17 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const draw = it.draw;
     if (draw) {
       const p = project(it.x, it.y, base + (it.lift ?? 0));
-      if (p) items.push({ ...p, z: p.z + (base > 1 ? -0.5 : lowBias), draw: () => draw(p.sx, p.gy, p.ppm) });
+      if (p) items.push({ ...p, z: p.z + (base > 1 ? -0.5 : lowAt(it.x, it.y, base)), draw: () => draw(p.sx, p.gy, p.ppm) });
       continue;
     }
-    billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowBias, true, 1, it.flip);
+    billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowAt(it.x, it.y, base), true, 1, it.flip);
   }
   for (const k of karts) {
+    if (k === look.hide) continue;
     if (k.fall >= 0) {
-      lavaSplash(k, project, (q, z, draw) => items.push({ ...q, z: z + lowBias, draw }), scr, now);
-      if (look.drone) rescueDrone(k, look.drone, project, (q, z, draw) => items.push({ ...q, z, draw }), scr, now, lowBias);
+      const low = lowAt(k.x, k.y, k.ground);
+      lavaSplash(k, project, (q, z, draw) => items.push({ ...q, z: z + low, draw }), scr, now);
+      if (look.drone) rescueDrone(k, look.drone, project, (q, z, draw) => items.push({ ...q, z, draw }), scr, now, low);
       if (k.fall >= FALL_SINK && k.fall < FALL_SWAP) continue; // under the lava
     }
     const p = project(k.x, k.y, k.elev);
@@ -133,7 +138,8 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const heat = sinking ? 0.25 + 0.5 * (k.fall / FALL_SINK) : carried ? 0.4 * (1 - (k.fall - FALL_SWAP) / (FALL_RELEASE - FALL_SWAP)) : 0;
     const tint = prism ? RAINBOW[Math.floor(now * 14 + k.id) % RAINBOW.length] : heat > 0 ? LAVA_GLOW : fog;
     const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : heat > 0 ? heat : fogAt(p.z);
-    const bias = k.elev > 1 ? -0.5 : lowBias;
+    // on raised road (a deck, a climb, a ramp) a kart is drawn over the road it stands on
+    const bias = k.ground > 0.05 || k.elev > 1 ? -0.5 : lowAt(k.x, k.y, k.elev);
     items.push({
       ...p,
       z: p.z + bias,
