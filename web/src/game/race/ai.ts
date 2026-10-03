@@ -2,12 +2,13 @@
 // from the curvature ahead (each kart's own top speed and cornering, from its build), a little
 // sloppiness, simple overtaking room and the classic kart racer rubber band: rivals far behind
 // the player find a few percent, rivals far ahead lift. Like a human, they drift the tight
-// corners and release on the exit for the mini-turbo, hold oil, orbs and bombs out behind them
-// when someone is on their tail, and save each item for the moment it works best.
+// corners and release on the exit for the mini-turbo, hold oil and orbs out behind them when
+// someone is on their tail, aim before they throw, save each item for the moment it works best
+// (a horn for when something is about to hit them), and drive half blind through static.
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
-import { AIMED, AIM_MAX, TRAILS } from "./items";
+import { AIMED, AIM_MAX, type Items, TRAILS } from "./items";
 import type { ClassParams, Controls, Kart } from "./kart";
 
 export class RivalDriver {
@@ -28,7 +29,7 @@ export class RivalDriver {
     this.skill = 1 - rank * 0.008 + rng.range(-0.01, 0.01); // slight spread across the field
   }
 
-  act(dt: number, track: Track, cls: ClassParams, player: Kart, others: Kart[]): Controls {
+  act(dt: number, track: Track, cls: ClassParams, player: Kart, others: Kart[], items?: Items): Controls {
     const k = this.kart;
     const v = Math.max(k.v, 0);
     if (this.rng.next() < dt * 0.3) this.laneTarget = this.rng.range(-3, 3);
@@ -50,7 +51,8 @@ export class RivalDriver {
     const gx = track.xs[look] - ty * line, gy = track.ys[look] + tx * line;
     const ang = Math.atan2(gy - k.y, gx - k.x) - k.heading;
     const err = Math.atan2(Math.sin(ang), Math.cos(ang));
-    this.wobble += (this.rng.range(-1, 1) * cls.aiNoise - this.wobble) * Math.min(1, dt * 2);
+    const blind = k.staticT > 0 ? 4 : 1; // static over the screen: a much sloppier line
+    this.wobble += (this.rng.range(-1, 1) * cls.aiNoise * blind - this.wobble) * Math.min(1, dt * 2);
     const steer = Math.max(-1, Math.min(1, err * 2.6 + this.wobble));
 
     // speed: friction-limited corners within braking distance, then the rubber band
@@ -65,11 +67,12 @@ export class RivalDriver {
     if (gap < -70) vt *= 1.06;
     else if (gap > 60) vt *= 0.93;
     if (Math.abs(k.offset) > HALF_WIDTH + 2) vt = Math.min(vt, 14);
+    if (k.staticT > 0) vt *= 0.93;
     const throttle = v < vt ? 1 : 0;
     const brake = v > vt + 2 ? Math.min(1, (v - vt) / 6) : 0;
     return {
       steer, throttle, brake, drift: this.drift(dt, track, cls, steer) || this.trick(cls),
-      item: this.itemButton(track, cls, others),
+      item: this.itemButton(track, cls, others, items),
     };
   }
 
@@ -88,15 +91,16 @@ export class RivalDriver {
   /** The item button. Instant items get a one-frame press when the moment is right; oil, orbs and
    * bombs are held out behind as a shield while someone is close behind, and let go (dropped or
    * fired) when the moment comes. Sharper classes react sooner. */
-  private itemButton(track: Track, cls: ClassParams, others: Kart[]): boolean {
+  private itemButton(track: Track, cls: ClassParams, others: Kart[], items?: Items): boolean {
     const k = this.kart;
     if (!k.item || k.roulette > 0 || k.spin > 0 || k.finished || k.rocket > 0 || k.falling) {
       this.holding = this.tapped = false;
       return false;
     }
     const ready = k.itemAge >= 1.6 - cls.aiCorner; // reaction time: 0.9 s rookie, 0.65 s legend
-    const fire = ready && (k.itemAge > 9 || this.wantsItem(track, cls, others));
-    if (fire && AIMED.has(k.item)) k.aim = this.aimAt(others) ?? 0; // rivals aim instead of waiting for the sweep
+    const fire = ready && (k.itemAge > 9 || this.wantsItem(track, cls, others, items));
+    // rivals aim at someone instead of waiting for the sweep (the lock, then the throw, two frames apart)
+    if (fire && AIMED.has(k.item) && k.aimLocked === null) k.aim = this.aimAt(others) ?? 0;
     if (TRAILS.has(k.item)) {
       if (this.holding) {
         if (fire) this.holding = false; // the release drops or fires it
@@ -113,12 +117,13 @@ export class RivalDriver {
     return fire;
   }
 
-  /** The angle off the heading to the nearest kart ahead inside the aiming arc, if any. */
-  private aimAt(others: Kart[]): number | null {
+  /** The angle off the heading to the nearest kart ahead inside the aiming arc (within ``range``
+   * m), if any. */
+  private aimAt(others: Kart[], range = 45): number | null {
     const k = this.kart;
-    let best: number | null = null, bestD = 45;
+    let best: number | null = null, bestD = range;
     for (const o of others) {
-      if (o === k || o.finished) continue;
+      if (o === k || o.finished || o.phantom > 0) continue;
       const dx = o.x - k.x, dy = o.y - k.y, d = Math.hypot(dx, dy);
       const off = Math.atan2(Math.sin(Math.atan2(dy, dx) - k.heading), Math.cos(Math.atan2(dy, dx) - k.heading));
       if (d < bestD && d > 3 && Math.abs(off) < AIM_MAX) {
@@ -142,24 +147,44 @@ export class RivalDriver {
     return { ahead, behind };
   }
 
-  /** The moment for each item: turbos on a straight, oil with a kart close behind, an orb or a
-   * boomerang with a kart in range ahead, a bomb lobbed onto the kart in front; the prism, the
-   * shock and the rocket as soon as possible. */
-  private wantsItem(track: Track, cls: ClassParams, others: Kart[]): boolean {
+  /** Something is about to hit this kart: a comet coming for it, an orb homing in, a puck close. */
+  private threatened(items?: Items): boolean {
+    if (!items) return false;
+    const k = this.kart;
+    const near = (x: number, y: number, r: number) => (x - k.x) ** 2 + (y - k.y) ** 2 < r * r;
+    return items.comets.some((c) => c.target === k && near(c.x, c.y, 45)) ||
+      items.orbs.some((o) => o.target === k && near(o.x, o.y, 14)) ||
+      items.pucks.some((p) => p.owner !== k && near(p.x, p.y, 7));
+  }
+
+  /** The moment for each item: boosts on a straight, oil with a kart close behind, an orb, a
+   * puck or a boomerang with a kart in range ahead, a bomb lobbed onto the kart in front, a horn
+   * when something is about to hit; the rest as soon as they can. */
+  private wantsItem(track: Track, cls: ClassParams, others: Kart[], items?: Items): boolean {
     const k = this.kart;
     const { ahead, behind } = this.gaps(others);
     switch (k.item) {
       case "turbo":
-      case "triple": {
+      case "triple":
+      case "gold": {
         const straight = [10, 25, 40].every((m) => Math.abs(track.curvature(track.ahead(k.idx, m))) < 1 / 90);
         return straight && k.v > 0.5 * cls.vmax && k.surface === "road";
       }
-      case "oil": return behind > 3 && behind < 28;
-      case "orb": return ahead > 6 && ahead < 90;
-      case "boomerang": return this.aimAt(others) !== null; // someone to aim at
-      case "bomb": return k.place > 1; // it finds the racer one place ahead by itself
+      case "oil":
+      case "oil3": return behind > 3 && behind < 28;
+      case "orb":
+      case "orb3": return ahead > 6 && ahead < 90;
+      case "puck":
+      case "puck3":
+      case "boomerang": return this.aimAt(others, 40) !== null; // someone to aim at
+      case "flares": return k.flares <= 0 || this.aimAt(others, 26) !== null;
+      case "bomb":
+      case "comet":
+      case "static": return k.place > 1; // they find their targets by themselves
+      case "horn": return this.threatened(items) || others.some((o) => o !== k && !o.finished &&
+        Math.hypot(o.x - k.x, o.y - k.y) < 5) || k.itemAge > 14;
       case "rocket": return k.surface === "road";
-      default: return true; // prism, shock
+      default: return true; // prism, shock, grabber, jackpot, coin, phantom
     }
   }
 

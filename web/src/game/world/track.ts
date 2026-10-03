@@ -38,12 +38,30 @@ export function bridgeLift(ds: number): number {
   return BRIDGE_HEIGHT * (1 - u * u * (3 - 2 * u));
 }
 
-/** A climb in the mountains: the road rises and falls back over ``len`` m from arc length ``s0``. */
-export interface Hill { s0: number; len: number; h: number }
+/** What a climb is built as: an earth embankment, a rocky mountainside, a ledge along a cliff
+ * (a rock face on one side, a drop on the other), a concrete foundation, a steel girder (a crane's
+ * arm), scaffolding, or a crater's rim. */
+export type HillStyle = "earth" | "rock" | "cliff" | "foundation" | "girder" | "scaffold" | "crater";
 
-/** Height of a hill's road ``ds`` m past its foot (a smooth sin^2 rise and fall). */
-export function hillLift(ds: number, len: number, h: number): number {
+/** A climb: the road rises and falls back over ``len`` m from arc length ``s0``, as a smooth hump
+ * ("sine") or up a ramp to a level top and down again ("plateau"). ``side``: which side a cliff's
+ * rock face is on (1 left, -1 right). */
+export interface Hill { s0: number; len: number; h: number; shape?: "sine" | "plateau"; style?: HillStyle; side?: number }
+
+/** The length of a plateau's ramps up and down: long enough that a kart at full speed stays on
+ * the road over the top of one (under normal gravity) and that no ramp is steeper than about
+ * 22%, and no more than 40% of the climb. */
+export const plateauRamp = (len: number, h: number): number =>
+  Math.min(len * 0.4, Math.max(14, Math.sqrt(240 * h), 6.8 * h));
+
+/** Height of a hill's road ``ds`` m past its foot: a smooth sin^2 rise and fall, or a plateau's
+ * smoothstep ramps either side of its level top. */
+export function hillLift(ds: number, len: number, h: number, shape: Hill["shape"] = "sine"): number {
   if (ds <= 0 || ds >= len) return 0;
+  if (shape === "plateau") {
+    const r = plateauRamp(len, h), u = Math.min(1, ds / r, (len - ds) / r);
+    return h * u * u * (3 - 2 * u);
+  }
   return h * Math.sin((Math.PI * ds) / len) ** 2;
 }
 
@@ -148,7 +166,7 @@ export class Track {
   liftAt(s: number): number {
     let h = 0;
     for (const b of this.bridges) h = Math.max(h, bridgeLift(s - b.centerS));
-    for (const hl of this.hills) h = Math.max(h, hillLift(s - hl.s0, hl.len, hl.h));
+    for (const hl of this.hills) h = Math.max(h, hillLift(s - hl.s0, hl.len, hl.h, hl.shape));
     return h;
   }
 

@@ -68,6 +68,7 @@ export class Scenery {
     this.items = this.items.filter((it) => this.roadDistance(track, it.x, it.y, clear + 1) > clear);
     const t = this.theme;
     for (let i = from; i < to; i += 11) {
+      if ((track.elev[i] ?? 0) > 0.3) continue; // a climb or a bridge: its own structure dresses it
       const [tx, ty] = track.tangent(i);
       const kappa = track.curvature(i);
       if (Math.abs(kappa) > 1 / 32 && (i % 22) < 11) {
@@ -118,13 +119,15 @@ export class Scenery {
     for (let k = 0; k < 900 && this.items.length < 700; k++) {
       const x = this.rng.range(-HALF + 12, HALF - 12), y = this.rng.range(-HALF + 12, HALF - 12);
       const kind = this.rng.pick(t.far);
-      const big = kind === "mesa" || kind === "peak" || kind === "wreck" || kind === "spire";
+      const big = kind === "mesa" || kind === "peak" || kind === "wreck" || kind === "spire" || kind === "crane" ||
+        kind === "skeleton";
       // big landmarks stand well back from the road (a mountain peak furthest of all)
       const need = kind === "peak" ? 120 : big ? 60 : HALF_WIDTH + 7;
       const d = this.roadDistance(track, x, y, need + 10);
       if (d < need) continue;
       // forests cluster: drop a few neighbours around trees
-      const n = ["pine", "oak", "cactus", "crystal", "kelp", "coral", "snowpine", "basalt"].includes(kind) ? this.rng.int(1, 4) : 1;
+      const n = ["pine", "oak", "cactus", "crystal", "kelp", "coral", "snowpine", "basalt", "boulder", "drum"].includes(kind)
+        ? this.rng.int(1, 4) : 1;
       for (let m = 0; m < n; m++) {
         const xx = x + this.rng.range(-6, 6) * (m > 0 ? 1 : 0), yy = y + this.rng.range(-6, 6) * (m > 0 ? 1 : 0);
         this.add(track, xx, yy, this.art(kind), this.rng.next() > 0.5, HALF_WIDTH + 6);
@@ -143,6 +146,13 @@ export class Scenery {
     if (Math.abs(x) > HALF - 4 || Math.abs(y) > HALF - 4) return;
     if (this.roadDistance(track, x, y, clearance + 1) <= clearance) return;
     this.items.push({ x, y, art, flip });
+  }
+
+  /** A girder climb was built: a tower crane stands beside its middle, the road running past its
+   * mast (the construction zone). */
+  onGirder(track: Track, i: number): void {
+    const [tx, ty] = track.tangent(i), side = this.rng.next() < 0.5 ? 1 : -1, off = side * (HALF_WIDTH + 5);
+    this.items.push({ x: track.xs[i] - ty * off, y: track.ys[i] + tx * off, art: this.art("crane"), flip: side < 0 });
   }
 
   /** Clear everything within ``r`` m of the road between dense indices [from, to) (a tunnel's rock). */

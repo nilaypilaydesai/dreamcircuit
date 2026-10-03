@@ -10,7 +10,7 @@
 // Pure data (no rendering), unit-tested headlessly.
 
 import type { Rand } from "../core/gfx";
-import type { Layout } from "../world/track";
+import type { HillStyle, Layout } from "../world/track";
 
 export type TrackTypeId = "classic" | "figure8" | "speedway" | "technical" | "grandtour" | "stunt" | "coaster";
 
@@ -26,8 +26,13 @@ export interface RampRule { straight: number; bend: number; gap: number }
 export interface PadRule { gap: number; straights: boolean }
 
 /** Climbs: their lengths, heights and the road between them (m), set on segments ``segs`` of
- * the lap (clear of the grid and the run to the line). */
-export interface HillRule { len: [number, number]; h: [number, number]; gap: [number, number]; segs: [number, number] }
+ * the lap (clear of the grid and the run to the line). ``kinds``, if given, are what each climb may
+ * be built as, with lengths and heights of their own (a world's climbs: girders, cliff ledges). */
+export interface HillRule {
+  len: [number, number]; h: [number, number]; gap: [number, number]; segs: [number, number];
+  kinds?: ClimbKind[];
+}
+export interface ClimbKind { style: HillStyle; shape: "sine" | "plateau"; len: [number, number]; h: [number, number] }
 
 export interface TrackType {
   id: TrackTypeId;
@@ -49,8 +54,30 @@ export interface TrackType {
 
 export const DEFAULT_RAMPS: RampRule = { straight: 85, bend: 1 / 170, gap: 260 };
 export const DEFAULT_PADS: PadRule = { gap: 170, straights: false };
-/** The mountains' climbs (any track type there). */
-export const MOUNTAIN_HILLS: HillRule = { len: [110, 170], h: [3.5, 6.2], gap: [90, 180], segs: [24, 180] };
+/** The mountains' climbs (any track type there): over rocky shoulders of the mountain, and along
+ * ledges cut into its cliffs. */
+export const MOUNTAIN_HILLS: HillRule = {
+  len: [110, 170], h: [3.5, 6.2], gap: [80, 160], segs: [24, 180],
+  kinds: [
+    { style: "rock", shape: "sine", len: [120, 180], h: [4.5, 7.5] },
+    { style: "cliff", shape: "plateau", len: [130, 190], h: [5, 7] },
+  ],
+};
+/** The construction zone's: up onto concrete foundations, along scaffolding, and high along a
+ * steel girder past a tower crane. */
+export const SITE_HILLS: HillRule = {
+  len: [90, 150], h: [2, 4], gap: [70, 140], segs: [24, 186],
+  kinds: [
+    { style: "foundation", shape: "plateau", len: [80, 120], h: [1.8, 2.6] },
+    { style: "scaffold", shape: "plateau", len: [90, 130], h: [3.2, 4.4] },
+    { style: "girder", shape: "plateau", len: [140, 190], h: [6.5, 8] },
+  ],
+};
+/** The moon's: short, steep crater rims, which a fast kart floats over in the low gravity. */
+export const MOON_HILLS: HillRule = {
+  len: [44, 62], h: [2.2, 3.4], gap: [55, 120], segs: [24, 192],
+  kinds: [{ style: "crater", shape: "sine", len: [44, 62], h: [2.2, 3.4] }],
+};
 
 const CALM = 0.04, WILD = 0.96;
 // asked for calm or wild, the designer's arcs measure about 0.32 and 0.87 on average

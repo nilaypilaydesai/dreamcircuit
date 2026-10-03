@@ -7,14 +7,17 @@ import { Rand, type Sprite } from "../core/gfx";
 import type { Theme } from "../themes";
 import { Scenery } from "../world/scenery";
 import { WorldTexture } from "../world/texture";
-import { FIRST_SEG, HALF_WIDTH, type Layout, N, Track } from "../world/track";
+import { FIRST_SEG, HALF_WIDTH, type Layout, N, SPACING, Track } from "../world/track";
 import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "./features";
-import { AIMED, AIM_MAX, AIM_RATE, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
-import { CLASSES, type Controls, type Difficulty, FALL_SWAP, Kart, collideKarts } from "./kart";
+import { AIMED, AIM_MAX, AIM_RATE, type Field, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
+import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, collideKarts } from "./kart";
+import type { Standing } from "./odds";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
-import { DEFAULT_PADS, DEFAULT_RAMPS, type HillRule, MOUNTAIN_HILLS, type TrackType, type TrackTypeId, trackType } from "./tracktypes";
+import {
+  type ClimbKind, DEFAULT_PADS, DEFAULT_RAMPS, type HillRule, type TrackType, type TrackTypeId, trackType,
+} from "./tracktypes";
 import { LIVERIES } from "../render/sprites";
 
 export const LAPS = 3;
@@ -31,10 +34,20 @@ export type RaceEvent =
   | { kind: "roll" } // the player drove through an item box
   | { kind: "item"; item: ItemKind } // the player's item slot settled
   | { kind: "use"; item: ItemKind } // the player fired an item
+  | { kind: "aimLocked" } // the player locked the arrow of an aimed item
+  | { kind: "coin" } // the player picked up a coin
+  | { kind: "static" } // the player's screen is full of static
+  | { kind: "comet"; you: boolean } // a comet is on its way to the leader (you: the player leads)
+  | { kind: "stolen"; item: ItemKind } // a phantom took the player's item
+  | { kind: "steal"; item: ItemKind } // the player's phantom took someone's item
+  | { kind: "clash"; near: boolean } // two items took each other out
+  | { kind: "horn"; near: boolean } // someone blew a horn
+  | { kind: "bite" } // the player's grabber snapped
+  | { kind: "bounce"; near: boolean } // a puck or a flare bounced off the edge of the road
   | { kind: "spun" } // the player was spun out
   | { kind: "hit" } // the player's item (or prism, or rocket) spun out a rival
   | { kind: "blocked" } // the item held behind the player soaked up a hit
-  | { kind: "boom"; near: boolean } // a bomb went off (near the player: shake the camera)
+  | { kind: "boom"; near: boolean; big: boolean } // a bomb or a comet went off (near the player: shake the camera)
   | { kind: "shock" } // someone used a shock: the screen flashes
   | { kind: "rocketOver" } // the player's rocket has burned out
   | { kind: "jump" } // the player left a ramp
@@ -88,9 +101,12 @@ export class Race {
   private doneTimer = 0;
   private throttleHeld = 0; // s the player has held the throttle during the countdown
   private nextHill: number; // m of road before the next climb may start
+  private hillTurn: number; // which of the world's kinds of climb is next (they take turns)
+  private hillTries = 0; // places the next one did not fit
+  private cranes: number[] = []; // m along the lap of girders' middles not yet dreamed (a crane goes up there)
   private readonly hillRng: Rand;
   readonly type: TrackType;
-  private readonly hillRule: HillRule | null; // climbs: the track type's, or the mountains'
+  private readonly hillRule: HillRule | null; // climbs: the track type's, or the world's
   private aimPhase = 0; // where the player's aiming arrow is in its sweep
   private bridgesSeen = 0;
   /** How the player is driving lap 1 (smoothed), which sets the style of the road ahead. */
@@ -99,16 +115,18 @@ export class Race {
   constructor(readonly setup: RaceSetup, designer: Designer | null, banner: (s: Sprite) => void) {
     this.rng = new Rand(setup.seed);
     this.hillRng = new Rand(setup.seed + 21);
+    this.hillTurn = this.hillRng.int(0, 6);
     this.type = trackType(setup.trackType);
-    this.hillRule = this.type.hills ?? (setup.theme.mountain ? MOUNTAIN_HILLS : null);
+    this.hillRule = this.type.hills ?? setup.theme.hills ?? null;
     this.nextHill = this.hillRule ? Math.max(60, this.hillRule.gap[1]) : Infinity;
     this.features = new Features({
-      tunnels: !!setup.theme.mountain, ramps: this.type.ramps ?? DEFAULT_RAMPS, pads: this.type.pads ?? DEFAULT_PADS,
+      tunnels: !!setup.theme.tunnels, ramps: this.type.ramps ?? DEFAULT_RAMPS, pads: this.type.pads ?? DEFAULT_PADS,
     });
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
     this.items = new Items(new Rand(setup.seed + 3));
+    this.items.gravity = GRAVITY * (setup.theme.gravity ?? 1);
     if (setup.replay) {
       this.live = null;
       this.track = new Track();
@@ -139,6 +157,7 @@ export class Race {
       this.karts.push(k);
       if (!k.isPlayer) this.drivers.push(new RivalDriver(this.rng, k, slot));
     }
+    for (const k of this.karts) k.gravity = this.items.gravity;
     this.standings = [...this.karts];
   }
 
@@ -169,6 +188,18 @@ export class Race {
     this.placeHills(from, to);
     this.tex.paintRoad(t, from, to);
     this.scenery.onCommit(t, from, to);
+    // a tower crane beside each girder's middle, once the road there has been dreamed
+    this.cranes = this.cranes.filter((sm) => {
+      if (sm > t.s[to - 1]) return true;
+      let lo = 0, hi = to - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (t.s[mid] < sm) lo = mid + 1;
+        else hi = mid;
+      }
+      this.scenery.onGirder(t, lo);
+      return false;
+    });
     this.items.onCommit(t, from, to);
     const tunnels = this.features.tunnels.length;
     this.features.onCommit(t, from, to, blocked, () => this.rng.next());
@@ -202,7 +233,12 @@ export class Race {
       if (s < this.nextHill) continue;
       const seg = t.segOf[i];
       if (seg < rule.segs[0] || seg > rule.segs[1]) continue;
-      const len = this.hillRng.range(rule.len[0], rule.len[1]), h = this.hillRng.range(rule.h[0], rule.h[1]);
+      // what it is built as: the world's kinds of climb take turns (every lap has one of each),
+      // each waiting a while for room before the next has its go; and how long and high
+      const kind: ClimbKind | null = rule.kinds ? rule.kinds[this.hillTurn % rule.kinds.length] : null;
+      const lr = kind?.len ?? rule.len, hr = kind?.h ?? rule.h;
+      const len = this.hillRng.range(lr[0], lr[1]), h = this.hillRng.range(hr[0], hr[1]);
+      const side = this.hillRng.next() < 0.5 ? 1 : -1;
       const tunnel = this.features.tunnels.some((tn) => tn.s0 < s + len + 20 && tn.s0 + TUNNEL_LEN > s - 20);
       // the lap is not closed yet: from the road per segment so far, keep the climb well short of
       // the line (segments after FIRST_SEG lead back to the grid)
@@ -210,9 +246,16 @@ export class Race {
       const intoLine = seg + (len + 80) / Math.max(perSeg, 1) > N;
       if (tunnel || intoLine || this.blocked(s - 10, len + 20, false)) {
         this.nextHill = s + 15;
+        if (++this.hillTries > 12) {
+          this.hillTurn++;
+          this.hillTries = 0;
+        }
         continue;
       }
-      t.addHill({ s0: s, len, h });
+      this.hillTurn++;
+      this.hillTries = 0;
+      t.addHill({ s0: s, len, h, shape: kind?.shape ?? "sine", style: kind?.style ?? this.setup.theme.hillStyle, side });
+      if (kind?.style === "girder") this.cranes.push(s + len / 2);
       this.nextHill = s + len + this.hillRng.range(rule.gap[0], rule.gap[1]);
     }
   }
@@ -260,7 +303,8 @@ export class Race {
           this.features.tunnels.some((tn) => tn.s0 < s + len + 20 && tn.s0 + TUNNEL_LEN > s - 20) ||
           this.features.ramps.some((r) => r.s0 < s + len + 30 && r.s0 + RAMP_LEN + 45 > s - 30) ||
           !free(s - 10, len + 20)) continue;
-      const r = t.addHill({ s0: s, len, h });
+      const style = this.setup.theme.hillStyle, shape = this.hillRule?.kinds?.find((k) => k.style === style)?.shape;
+      const r = t.addHill({ s0: s, len, h, style, shape, side: this.hillRng.next() < 0.5 ? 1 : -1 });
       if (r) this.tex.repaint(t, r[0], r[1]);
       added += 1;
     }
@@ -343,7 +387,7 @@ export class Race {
     for (const k of this.karts) this.surfaceUnder(k);
     this.drivers.forEach((d) => {
       if (d.kart.finished && this.phase === "done") return;
-      const c = d.act(dt, this.track, this.cls, this.player, this.karts);
+      const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items);
       d.kart.update(dt, c, this.track, this.cls);
       this.fire(d.kart, c);
       if (!d.kart.falling && this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
@@ -362,24 +406,35 @@ export class Race {
       if (this.player.boostTime < 0.85) this.events.push({ kind: "pad" });
       this.player.boostTime = Math.max(this.player.boostTime, 1.0);
     }
-    // the aiming arrow sweeps left and right while a boomerang or a bomb is ready to throw
+    // the aiming arrow sweeps left and right while an aimed item is ready, until a press locks it
     const p = this.player;
-    if (p.item && AIMED.has(p.item) && p.roulette <= 0 && !p.trailing) {
+    if (p.item && AIMED.has(p.item) && p.roulette <= 0 && p.aimLocked === null) {
       this.aimPhase += dt * AIM_RATE;
       p.aim = AIM_MAX * Math.sin(this.aimPhase);
     }
     this.fire(this.player, controls);
-    this.items.update(dt, this.track, this.karts, (k) => k.place || 1);
+    this.items.update(dt, this.track, this.karts, this.field);
     const me = this.player;
+    const near = (x: number, y: number, r = 40) => Math.hypot(x - me.x, y - me.y) < r;
     for (const e of this.items.events) {
       if (e.kind === "roll") this.events.push({ kind: "roll" });
       else if (e.kind === "got" && e.kart === me) this.events.push({ kind: "item", item: e.item });
       else if (e.kind === "used" && e.kart === me) this.events.push({ kind: "use", item: e.item });
+      else if (e.kind === "locked" && e.kart === me) this.events.push({ kind: "aimLocked" });
       else if (e.kind === "spun" && e.kart === me) this.events.push({ kind: "spun" });
       else if (e.kind === "spun" && e.owner === me) this.events.push({ kind: "hit" });
       else if (e.kind === "blocked" && e.kart === me) this.events.push({ kind: "blocked" });
-      else if (e.kind === "boom") this.events.push({ kind: "boom", near: Math.hypot(e.x - me.x, e.y - me.y) < 40 });
+      else if (e.kind === "boom") this.events.push({ kind: "boom", near: near(e.x, e.y), big: e.big });
       else if (e.kind === "shock") this.events.push({ kind: "shock" });
+      else if (e.kind === "coin" && e.kart === me) this.events.push({ kind: "coin" });
+      else if (e.kind === "static" && e.kart === me) this.events.push({ kind: "static" });
+      else if (e.kind === "comet") this.events.push({ kind: "comet", you: e.target === me });
+      else if (e.kind === "stolen" && e.kart === me) this.events.push({ kind: "stolen", item: e.item });
+      else if (e.kind === "stolen" && e.by === me) this.events.push({ kind: "steal", item: e.item });
+      else if (e.kind === "clash") this.events.push({ kind: "clash", near: near(e.x, e.y, 30) });
+      else if (e.kind === "horn") this.events.push({ kind: "horn", near: near(e.kart.x, e.kart.y) });
+      else if (e.kind === "bite" && e.kart === me) this.events.push({ kind: "bite" });
+      else if (e.kind === "bounce") this.events.push({ kind: "bounce", near: near(e.x, e.y, 25) });
     }
     this.items.events = [];
     if (!this.track.locked) this.holdAtFrontier();
@@ -438,20 +493,25 @@ export class Race {
     }
   }
 
-  /** The road surface under each kart: bridge decks and jump ramps. */
+  /** The road surface under each kart: bridge decks and jump ramps, and how the road climbs and
+   * crests there (measured over a few meters, so the steps between road points do not show). */
   private surfaceUnder(k: Kart): void {
-    const r = this.features.rampUnder(this.track, k);
+    const t = this.track, r = this.features.rampUnder(t, k);
     k.rampU = r.u;
-    k.ground = (this.track.elev[k.idx] ?? 0) + r.height;
-    k.walled = this.features.inTunnel(this.track, k);
+    k.ground = (t.elev[k.idx] ?? 0) + r.height;
+    k.walled = this.features.inTunnel(t, k);
+    const a = t.wrap(k.idx - 4), b = t.wrap(k.idx + 4), h = 4 * SPACING;
+    const za = t.elev[a] ?? 0, zi = t.elev[k.idx] ?? 0, zb = t.elev[b] ?? 0;
+    k.slope = (zb - za) / (2 * h);
+    k.bend = (zb - 2 * zi + za) / (h * h);
   }
 
   /** Items act on the press of the button, never while it is merely held: most fire at once;
    * oil, orbs and bombs come out behind the kart and are dropped or fired on the release. */
   private fire(k: Kart, c: Controls): void {
     const down = !!c.item && !k.finished;
-    if (down && !k.itemHeld) this.items.press(k, this.karts);
-    else if (!down && k.itemHeld) this.items.release(k, this.karts);
+    if (down && !k.itemHeld) this.items.press(k, this.karts, this.field);
+    else if (!down && k.itemHeld) this.items.release(k, this.karts, this.field);
     k.itemHeld = down;
   }
 
@@ -481,6 +541,21 @@ export class Race {
       this.events.push({ kind: "lap", lap: completed + 1, final: completed + 1 === LAPS });
     }
   }
+
+  /** What the items need to know: the leader still racing, and how each kart stands (for the
+   * odds of what a box gives). */
+  readonly field: Field = {
+    leader: () => this.standings.find((k) => !k.finished) ?? null,
+    standing: (k: Kart): Standing => {
+      const racing = this.standings.filter((o) => !o.finished);
+      const lead = racing[0] ?? k, i = racing.indexOf(k);
+      const ahead = i > 0 ? racing[i - 1] : null;
+      return {
+        behind: Math.max(0, lead.dist - k.dist), last: i === racing.length - 1 && racing.length > 1,
+        gapAhead: ahead ? ahead.dist - k.dist : 0, field: this.karts.length, player: k.isPlayer,
+      };
+    },
+  };
 
   /** Estimated finishing times for anyone still racing when results are shown. */
   results(): { kart: Kart; time: number; best: number; estimated: boolean }[] {

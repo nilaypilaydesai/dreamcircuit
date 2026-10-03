@@ -10,7 +10,7 @@ import { H, Rand, Screen, W, hex, mix, type Sprite } from "./core/gfx";
 import { GameInput, type MenuEvent } from "./core/input";
 import { RivalDriver } from "./race/ai";
 import { Cup, type CupRow, type Entrant } from "./race/cup";
-import { AIMED, type ItemKind, BLAST_TIME } from "./race/items";
+import { AIMED, BLAST_TIME, type ItemKind, RING_TIME, STATIC_TIME } from "./race/items";
 import { CLASSES, type Controls, type Difficulty, FALL_SWAP, type Kart } from "./race/kart";
 import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild, rivalBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
@@ -21,9 +21,10 @@ import type { Face } from "./render/poly";
 import { aimArrow, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
 import { Sky } from "./render/sky";
 import {
-  LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, droneFrames, heldArt, itemBoxFrames, kartSprites,
-  orbArt, slickArt,
+  LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, coinFrames, cometArt, droneFrames, flareFrames,
+  grabberFrames, heldArt, itemBoxFrames, kartSprites, orbArt, puckFrames, slickArt, trailArt,
 } from "./render/sprites";
+import { hornRing, staticOverlay } from "./render/screenfx";
 import { THEMES } from "./themes";
 import { CAUSTIC, caustics, fishSprites, makeSchools, waterOverlay } from "./render/underwater";
 import { slickPaint } from "./render/decals";
@@ -31,6 +32,7 @@ import { emberOverlay } from "./render/volcano";
 import { lavaShift } from "./world/lava";
 import { Ceremony, STANDINGS_SETTLE, drawStandings } from "./ui/ceremony";
 import { Garage } from "./ui/garage";
+import { HOWTO_PAGES, drawHowTo } from "./ui/howto";
 import { Hud, formatTime, kartColor } from "./ui/hud";
 import { Menu } from "./ui/menus";
 import { type Layout, N, checkLap } from "./world/track";
@@ -94,7 +96,14 @@ class Game {
   private readonly boomArt: SceneryArt[] = boomerangFrames();
   private readonly bombArt: SceneryArt[] = bombFrames();
   private readonly blastArt: SceneryArt[] = blastFrames();
+  private readonly bigBlastArt: SceneryArt[] = blastFrames(4.6);
   private readonly droneArt: SceneryArt[] = droneFrames();
+  private readonly puckArt: SceneryArt[] = puckFrames();
+  private readonly flareArt: SceneryArt[] = flareFrames();
+  private readonly cometArt: SceneryArt = cometArt();
+  private readonly trailArt: SceneryArt = trailArt();
+  private readonly coinArt: SceneryArt[] = coinFrames();
+  private readonly grabArt: SceneryArt[] = grabberFrames();
   private readonly held: Record<ItemKind, SceneryArt> = heldArt();
   private mode: Mode = "boot";
   private race: Race | null = null;
@@ -116,6 +125,7 @@ class Game {
   private build: Build = DEFAULT_BUILD;
   private garage!: Garage;
   private garageReturn: Mode = "main";
+  private howtoPage = 0;
   private menus!: Record<"main" | "setup" | "cupSetup" | "pause" | "pauseCup" | "results" | "standings", Menu>;
   private cup: Cup | null = null; // a Grand Prix in progress
   private cupRows: CupRow[] = []; // the standings after its last race
@@ -206,7 +216,7 @@ class Game {
         { label: "GARAGE", action: () => this.openGarage("main"), hint: "BUILD YOUR KART: BODY, WHEELS, SPOILER, EXHAUST, PAINT" },
         { label: "DREAM LAB", action: () => { location.href = "data.html#lab"; }, hint: "DRIVE INSIDE THE NEURAL WORLD MODEL" },
         { label: "DATA", action: () => { location.href = "data.html"; }, hint: "THE MODELS, THE PHYSICS AUDIT, THE CHARTS" },
-        { label: "HOW TO PLAY", action: () => this.go("howto") },
+        { label: "HOW TO PLAY", action: () => { this.howtoPage = 0; this.go("howto"); } },
         { label: "SOUND", value: () => (this.sound.muted ? "OFF" : "ON"), action: () => this.sound.toggleMute(), hint: "M TOGGLES SOUND ANYTIME" },
         { label: "ENGINE", value: () => ENGINE_LEVELS[s.engine].label, hint: "THE ENGINE HUM UNDER THE MUSIC",
           left: () => this.setEngine(), right: () => this.setEngine() },
@@ -528,7 +538,10 @@ class Game {
       else if (e.kind === "spun") { this.sound.spin(); this.shake = 0.35; }
       else if (e.kind === "hit") this.sound.hit();
       else if (e.kind === "blocked") { this.sound.blocked(); this.hud.popup("BLOCKED!", now, hex("#63c8ff")); }
-      else if (e.kind === "boom") { this.sound.explode(e.near); if (e.near) this.shake = Math.max(this.shake, 0.4); }
+      else if (e.kind === "boom") {
+        this.sound.explode(e.near, e.big);
+        if (e.near) this.shake = Math.max(this.shake, e.big ? 0.6 : 0.4);
+      }
       else if (e.kind === "shock") { this.sound.shock(); this.flash = 0.22; }
       else if (e.kind === "rocketOver") this.hud.popup("ROCKET SPENT", now, DIM);
       else if (e.kind === "jump") this.sound.jump();
@@ -542,20 +555,39 @@ class Game {
       else if (e.kind === "burnout") { this.sound.burnout(); this.hud.popup("TOO EARLY!", now, hex("#ff6b6b")); }
       else if (e.kind === "bridge") this.hud.popup("BRIDGE AHEAD!", now, DREAM);
       else if (e.kind === "lava") { this.sound.lava(); this.shake = Math.max(this.shake, 0.3); }
+      else if (e.kind === "aimLocked") this.sound.lock();
+      else if (e.kind === "coin") this.sound.coin();
+      else if (e.kind === "static") { this.sound.staticHit(); this.hud.popup("STATIC!", now, hex("#c9c3ec")); }
+      else if (e.kind === "comet") {
+        this.sound.comet(e.you);
+        if (e.you) this.hud.banner("COMET!", now, hex("#7cc4ff"), 1.8, "IT IS COMING FOR THE LEADER", true);
+      }
+      else if (e.kind === "stolen") { this.sound.steal(); this.hud.popup("ITEM STOLEN!", now, hex("#c79bff")); }
+      else if (e.kind === "steal") { this.sound.steal(); this.hud.popup("STOLEN!", now, hex("#c79bff")); }
+      else if (e.kind === "clash" && e.near) this.sound.clash();
+      else if (e.kind === "horn") this.sound.horn(e.near);
+      else if (e.kind === "bite") this.sound.bite();
+      else if (e.kind === "bounce" && e.near) this.sound.bounce();
       else if (e.kind === "rescued") { this.snapCamera(this.cam, race); this.sound.rescue(); }
     }
   }
 
   private useSound(item: ItemKind, now: number): void {
     switch (item) {
-      case "turbo": case "triple": this.sound.boost(); break;
-      case "oil": this.sound.oil(); break;
-      case "orb": this.sound.orb(); break;
+      case "turbo": case "triple": case "gold": this.sound.boost(); break;
+      case "oil": case "oil3": this.sound.oil(); break;
+      case "orb": case "orb3": this.sound.orb(); break;
+      case "puck": case "puck3": this.sound.puck(); break;
       case "boomerang": this.sound.boomerang(); break;
       case "bomb": this.sound.bombThrow(); break;
       case "prism": this.sound.prism(); this.hud.popup("PRISM!", now, DREAM); break;
-      case "shock": break; // the shock event plays it, for everyone's shocks
+      case "shock": case "horn": case "static": case "comet": break; // their own events play them, for everyone's
       case "rocket": this.sound.rocketGo(); this.hud.popup("ROCKET!", now, hex("#ff8a1f")); break;
+      case "flares": this.sound.flare(); break;
+      case "grabber": this.sound.bite(); this.hud.popup("GRABBER!", now, hex("#ffcf3a")); break;
+      case "jackpot": this.sound.itemGet(); break;
+      case "coin": break; // (the coin event)
+      case "phantom": this.sound.phantom(); this.hud.popup("PHANTOM!", now, hex("#c9b8ff")); break;
     }
   }
 
@@ -601,7 +633,9 @@ class Game {
     for (const e of evs) this.onEvent(e, menuFor[this.mode]);
     if (click) {
       if (this.mode === "title") this.go("main");
-      else if (this.mode === "howto") this.go("main");
+      else if (this.mode === "howto") { // a tap turns the page; past the last, back to the menu
+        if (++this.howtoPage >= HOWTO_PAGES.length) this.go("main");
+      }
       else if (this.mode === "podium") this.endCeremony();
       else if (this.standingsSettling()) this.standingsAt = this.time - STANDINGS_SETTLE;
       else menuFor[this.mode]?.click(click.x, click.y, this.sound);
@@ -614,7 +648,11 @@ class Game {
       return;
     }
     if (this.mode === "howto") {
-      this.go("main");
+      if (e === "left" || e === "right") {
+        const n = HOWTO_PAGES.length;
+        this.howtoPage = (this.howtoPage + (e === "left" ? n - 1 : 1)) % n;
+        this.sound.move();
+      } else this.go("main");
       return;
     }
     if (this.mode === "podium") {
@@ -656,7 +694,7 @@ class Game {
     if (this.flash > 0) this.flash -= dt;
     const a = this.attract;
     if (a && (this.mode === "title" || this.mode === "main" || this.mode === "setup" || this.mode === "howto")) {
-      const c = a.driver.act(dt, a.race.track, a.race.cls, a.race.player, a.race.karts);
+      const c = a.driver.act(dt, a.race.track, a.race.cls, a.race.player, a.race.karts, a.race.items);
       a.race.update(dt, c);
       a.race.events = [];
       this.follow(a.cam, a.race, dt);
@@ -727,31 +765,64 @@ class Game {
       extras.push({ x: b.x, y: b.y, art: this.bombArt[Math.floor(now * 8) % 2], lift: Math.max(0, b.z - ground), base: ground });
     }
     for (const b of it.blasts) {
-      const f = Math.min(this.blastArt.length - 1, Math.floor((b.age / BLAST_TIME) * this.blastArt.length));
-      extras.push({ x: b.x, y: b.y, art: this.blastArt[f], base: b.z });
+      const set = b.size > 1.05 ? this.bigBlastArt : this.blastArt;
+      const f = Math.min(set.length - 1, Math.floor((b.age / BLAST_TIME) * set.length));
+      extras.push({ x: b.x, y: b.y, art: set[f], base: b.z });
+    }
+    for (const p of it.pucks) {
+      const ground = t.elev[p.idx] ?? 0;
+      const art = p.kind === "puck" ? this.puckArt[Math.floor(now * 14 + p.t * 9) % this.puckArt.length]
+        : this.flareArt[Math.floor(now * 12) % this.flareArt.length];
+      extras.push({ x: p.x, y: p.y, art, base: ground, lift: p.kind === "puck" ? 0.02 : Math.max(0.05, p.z - ground) });
+    }
+    for (const c of it.comets) {
+      const ground = t.elev[c.idx] ?? 0;
+      extras.push({ x: c.x, y: c.y, art: this.cometArt, base: ground, lift: c.z - ground });
+      if (c.phase === "fly") { // its tail, streaming back down the road
+        for (let j = 1; j <= 6; j++) {
+          const i = t.wrap(c.idx - j * 5);
+          extras.push({ x: t.xs[i], y: t.ys[i], art: this.trailArt, base: t.elev[i] ?? 0, lift: c.z - ground + 0.3 * Math.sin(now * 20 + j) });
+        }
+      }
+    }
+    it.coins.forEach((c, i) => {
+      if (c.respawn > 0) return;
+      const art = this.coinArt[(Math.floor(now * 10) + i) % this.coinArt.length];
+      extras.push({ x: c.x, y: c.y, art, lift: 0.3 + 0.08 * Math.sin(now * 4 + i), base: c.elev });
+    });
+    for (const r of it.rings) {
+      const u = r.age / RING_TIME, k = r.kart;
+      extras.push({ x: k.x, y: k.y, art: this.trailArt, base: k.ground, draw: (sx, gy, ppm) => hornRing(this.scr, sx, gy, ppm, u) });
     }
     if (theme.underwater) extras.push(...fishSprites(this.schools(race), now, cam.heading));
     const faces: Face[] = [];
     const painter = { cam, scr: this.scr, fog: race.setup.theme.fog, faces };
     bridgeFaces(painter, t, race.setup.theme);
     hillFaces(painter, t, theme);
-    tunnelFaces(painter, t, race.features);
+    tunnelFaces(painter, t, race.features, theme);
     rampFaces(painter, t, race.features, race.setup.theme);
     padFaces(painter, t, race.features, now);
-    // the player's aiming arrow while a boomerang or a bomb is ready (locked, it turns blue)
+    // the player's aiming arrow while an aimed item is ready (locked by a press, it turns blue)
     const me = race.player;
     if (me.item && AIMED.has(me.item) && me.roulette <= 0 && me.rocket <= 0 && !me.falling && race === this.race) {
-      aimArrow(painter, me, me.trailing ? me.aimLocked ?? me.aim : me.aim, me.trailing ? hex("#63c8ff") : HOT);
+      const locked = me.aimLocked !== null;
+      aimArrow(painter, me, locked ? me.aimLocked! : me.aim, locked ? hex("#63c8ff") : HOT);
     }
     drawWorldSprites(this.scr, cam, race.scenery.items, race.karts, {
       sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0),
       sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
       held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
-      dome: !!theme.underwater,
+      art: (item: ItemKind) => this.held[item],
+      grabber: this.grabArt,
+      dome: !!(theme.underwater || theme.helmets),
       drone: theme.volcano ? this.droneArt : undefined,
     }, theme.fog, extras, faces);
     if (theme.underwater) waterOverlay(this.scr, now);
     if (theme.volcano) emberOverlay(this.scr, now);
+    // static over the player's screen: it comes in fast and clears over the last second
+    if (me.staticT > 0 && race === this.race) {
+      staticOverlay(this.scr, now, Math.min(1, (STATIC_TIME - me.staticT) / 0.3, me.staticT / 1));
+    }
     // into the lava: the view goes dark red while the drone lifts the kart out
     const f = me.fall;
     if (f >= 0 && f < FALL_SWAP + 0.3 && race === this.race) {
@@ -762,7 +833,7 @@ class Game {
     if (race.features.tunnels.length) {
       const ci = t.nearest(cam.x, cam.y, race.player.idx);
       if (race.features.tunnelAt(t.s[ci]) && Math.abs(t.offset(cam.x, cam.y, ci)) < 7) {
-        this.scr.dimRect(0, 0, W, H, hex("#0b0b14"), 0.34);
+        this.scr.dimRect(0, 0, W, H, hex("#0b0b14"), theme.tunnels === "frame" ? 0.14 : 0.34); // a building's frame is open to the light
       }
     }
   }
@@ -831,7 +902,7 @@ class Game {
         break;
       case "howto":
         background();
-        this.howTo();
+        drawHowTo(scr, f, this.howtoPage, this.input.touchMode, now);
         break;
       case "dreaming":
         this.dreamingScreen();
@@ -881,7 +952,7 @@ class Game {
     if (held.has("auto") && r) {
       if (this.debugPilot?.kart !== r.player) this.debugPilot = new RivalDriver(new Rand(5), r.player, 0);
       this.input.drive = () => {
-        const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts);
+        const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items);
         return { ...a, item: held.has("item") || !!a.item };
       };
     } else {
@@ -992,42 +1063,6 @@ class Game {
     };
   }
 
-  private howTo(): void {
-    const f = this.font, scr = this.scr;
-    const x0 = Math.max(8, Math.round(W / 2 - 176)), right = Math.min(W - 8, Math.round(W / 2 + 176));
-    scr.dimRect(x0, 8, right - x0, H - 16, hex("#0c0a1d"), 0.88);
-    f.draw(scr, "HOW TO PLAY", W / 2, 14, { color: HOT, outline: INK, align: "center" });
-    const rows: [string, string][] = [
-      ["DRIVE", "ARROWS OR W A S D. HOLD DOWN TO BRAKE, KEEP HOLDING TO BACK UP"],
-      ["DRIFT", "HOLD SHIFT OR SPACE IN A TURN, LET GO FOR A MINI-TURBO"],
-      ["ITEM", "E: TAP TO USE. HOLD TO KEEP OIL, ORBS OR A BOMB BEHIND YOU AS A SHIELD"],
-      ["AIM", "BOOMERANGS AND BOMBS GO WHERE THE SWEEPING ARROW POINTS WHEN YOU PRESS E"],
-      ["RAMP", "SPACE AT THE LIP FOR A TRICK BOOST"],
-      ["START", "GAS JUST BEFORE GO: ROCKET START"],
-      ["TOUCH", "THE STICK STEERS. PUSH IT ALL THE WAY OVER TO DRIFT, PULL BACK TO BRAKE"],
-      ["PAD", "A GAS  B BRAKE  RB DRIFT  Y ITEM"],
-      ["PAUSE", "ESC    SOUND M"],
-    ];
-    const kx = x0 + 10, vx = kx + 52;
-    let y = 30;
-    for (const [k, v] of rows) {
-      f.draw(scr, k, kx, y, { color: DREAM });
-      for (const line of f.wrap(v, right - vx - 8)) {
-        f.draw(scr, line, vx, y, { color: 0xffffffff });
-        y += 9;
-      }
-      y += 1;
-    }
-    y += 4;
-    const story = "NOBODY DESIGNED YOUR CIRCUIT: A DIFFUSION MODEL DREAMS THE ROAD AHEAD OF THE PACK ON LAP 1, THEN IT LOCKS. THE TRACK TYPE STEERS THE DREAM AND CONFIRMS WHAT IT WILL HAVE.";
-    for (const line of f.wrap(story, right - x0 - 20)) {
-      if (y > H - 30) break;
-      f.draw(scr, line, W / 2, y, { color: DIM, align: "center" });
-      y += 9;
-    }
-    f.draw(scr, this.input.touchMode ? "TAP TO GO BACK" : "PRESS ANY KEY", W / 2, H - 20, { color: 0xffffffff, align: "center" });
-  }
-
   private dreamingScreen(): void {
     const scr = this.scr, f = this.font, now = this.time;
     for (let y = 0; y < H; y++) scr.fillRect(0, y, W, 1, mix(hex("#0b0420"), hex("#2a0f4a"), y / H));
@@ -1037,7 +1072,9 @@ class Game {
     let top = 46;
     if (r) {
       const where = this.cup ? `GRAND PRIX RACE ${this.cup.index + 1} OF ${this.cup.worlds.length}: ` : "";
-      f.draw(scr, where + r.setup.theme.name, W / 2, 34, { color: HOT, outline: INK, align: "center" });
+      let title = where + r.setup.theme.name;
+      if (this.cup && f.width(title) > W - 16) title = `RACE ${this.cup.index + 1}/${this.cup.worlds.length}: ${r.setup.theme.name}`;
+      f.draw(scr, title, W / 2, 34, { color: HOT, outline: INK, align: "center" });
       // the track type, and what it is sure to have
       const t = r.type;
       f.draw(scr, `${this.surprised ? "SURPRISE! " : ""}${t.name}`, W / 2, 46, { color: 0xffffffff, outline: INK, align: "center" });

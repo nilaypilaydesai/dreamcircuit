@@ -6,9 +6,12 @@ import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
 import type { Kart } from "../race/kart";
 import { LAPS, type Race } from "../race/race";
-import { ITEM_KINDS, ITEM_NAMES, type ItemKind, PRISM_TIME, ROCKET_TIME, TRAILS } from "../race/items";
+import {
+  AIMED, FLARES_TIME, GOLD_TIME, GRAB_TIME, ITEM_KINDS, ITEM_NAMES, type ItemKind, PHANTOM_TIME, PRISM_TIME, ROCKET_TIME,
+  TRAILS,
+} from "../race/items";
 import { paintOf } from "../race/parts";
-import { itemIcons } from "../render/sprites";
+import { coinFrames, itemIcons } from "../render/sprites";
 import { N } from "../world/track";
 
 const WHITE = 0xffffffff;
@@ -58,6 +61,7 @@ export class Hud {
   private mapBox: [number, number, number, number] | null = null;
   private mapFor: unknown = null; // the track the box was fitted to
   private readonly icons: Record<ItemKind, Sprite> = itemIcons();
+  private readonly coin: Sprite = coinFrames(0.85)[0].sprite;
 
   constructor(private readonly font: PixelFont) {}
 
@@ -104,6 +108,9 @@ export class Hud {
     const kmh = Math.round(Math.abs(p.v) * 3.6);
     f.draw(scr, String(kmh).padStart(3, " "), 10, H - 30, { scale: 2, color: WHITE, outline: INK });
     f.draw(scr, "KM/H", 62, H - 22, { color: SILVER, outline: INK });
+    // coins: each one a little top speed (ten at most)
+    scr.blit(this.coin, 10, H - 46);
+    f.draw(scr, `x${p.coins}`, 24, H - 44, { color: p.coins >= 10 ? GOLD : SILVER, outline: INK });
     const frac = Math.min(1, Math.abs(p.v) / (race.cls.vmax * 1.28));
     scr.fillRect(10, H - 12, 92, 5, INK);
     scr.fillRect(11, H - 11, Math.round(90 * frac), 3, p.boostTime > 0 ? hex("#63c8ff") : mix(GREEN, RED, frac));
@@ -124,6 +131,15 @@ export class Hud {
     this.itemSlot(scr, p, now);
     if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / ROCKET_TIME, hex("#ff8a1f"));
     else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));
+    else if (p.phantom > 0) this.meter(scr, "PHANTOM", p.phantom / PHANTOM_TIME, hex("#c9b8ff"));
+    else if (p.gold > 0) this.meter(scr, "GOLD", p.gold / GOLD_TIME, GOLD);
+    else if (p.flares > 0) this.meter(scr, "FLARES", p.flares / FLARES_TIME, hex("#ff8a1f"));
+    else if (p.grab > 0) this.meter(scr, "GRABBER", p.grab / GRAB_TIME, hex("#ffcf3a"));
+    // a comet on its way to the player (the leader): its icon flashes at the top of the screen
+    if (race.items.comets.some((c) => c.target === p) && Math.floor(now * 6) % 2 === 0) {
+      const icon = this.icons.comet;
+      scr.blit(icon, Math.round(W / 2 - icon.w / 2), 30);
+    }
 
     // banners: only the newest (two at once would print over each other), as big as fits
     this.banners = this.banners.filter((b) => b.until > race.clock || race.phase === "countdown");
@@ -163,11 +179,14 @@ export class Hud {
       const icon = this.icons[kind];
       scr.blit(icon, x + Math.floor((size - icon.w) / 2), y + Math.floor((size - icon.h) / 2));
     }
-    if (ready && p.uses > 1) this.font.draw(scr, `x${p.uses}`, x + size - 2, y + size - 9, { color: WHITE, outline: INK, align: "right" });
+    const count = p.jackpot.length || p.uses;
+    if (ready && count > 1) this.font.draw(scr, `x${count}`, x + size - 2, y + size - 9, { color: WHITE, outline: INK, align: "right" });
     if (ready && p.item) {
-      // oil, orbs and bombs can be held out behind the kart: the prompt says so
+      // aimed items take two presses (aim, then throw); oil and orbs can be held out behind
       const key = this.touch ? "ITEM" : "E";
-      const label = p.itemAge < 1.6 ? ITEM_NAMES[p.item] : p.trailing ? "LET GO" : TRAILS.has(p.item) ? `HOLD ${key}` : key;
+      const label = p.itemAge < 1.6 ? ITEM_NAMES[p.item]
+        : AIMED.has(p.item) ? (p.aimLocked === null ? `${key} AIM` : `${key} THROW`)
+          : p.trailing ? "LET GO" : TRAILS.has(p.item) ? `HOLD ${key}` : key;
       this.font.draw(scr, label, Math.min(x + size / 2 + this.font.width(label) / 2, W - 4), y + size + 3,
                      { color: p.itemAge < 1.6 ? GOLD : SILVER, outline: INK, align: "right" });
     }

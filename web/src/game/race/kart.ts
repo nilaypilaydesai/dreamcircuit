@@ -4,7 +4,7 @@
 // which a drone lifts the kart back onto the road. Tuned for fun, not for the research simulator.
 
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
-import type { ItemKind } from "./items";
+import type { ItemKind } from "./odds";
 import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "./parts";
 
 export type Difficulty = "rookie" | "pro" | "legend";
@@ -43,6 +43,8 @@ export const SPIN_TIME = 1.0; // s
 export const PRISM_SPEED = 1.15; // top speed while invincible
 export const ROCKET_SPEED = 1.5; // the rocket's speed, relative to the class top speed
 export const REVERSE_SPEED = 7; // m/s backing up (on the road; less on the grass)
+export const COIN_SPEED = 0.006; // top speed each coin adds (ten coins: 6%)
+export const MAX_COINS = 10;
 const REVERSE_ACCEL = 9; // m/s^2
 const SHRUNK_SPEED = 0.72; // top speed while shrunk by a shock
 // into the lava (the volcano; race.ts decides when): the kart sinks, the screen goes dark while
@@ -80,8 +82,20 @@ export class Kart {
   itemAge = 0; // s since the current item arrived
   itemHeld = false; // the item button was down last frame
   trailing = false; // the item is held out behind the kart (it blocks one hit from behind)
-  aim = 0; // rad off the heading where a boomerang or a bomb will go (the sweeping arrow)
-  aimLocked: number | null = null; // the aim when a held bomb's button went down
+  aim = 0; // rad off the heading where a thrown item will go (the sweeping arrow)
+  aimLocked: number | null = null; // the arrow, locked by a first press (the second throws)
+  coins = 0; // 0..MAX_COINS, each a little top speed
+  gold = 0; // s left of a gold turbo (a boost on every press)
+  flares = 0; // s left of flares (a fireball on every press)
+  flareCd = 0; // s until the next fireball can be thrown
+  grab = 0; // s left with a grabber riding in front
+  grabCd = 0; // s until it can bite again
+  bite = 0; // s left of a bite (it lunges out)
+  phantom = 0; // s left see-through and untouchable
+  staticT = 0; // s left with static over the screen (rivals drive half blind)
+  jackpot: ItemKind[] = []; // the items of a jackpot still circling the kart, next first
+  loot: { item: ItemKind; t: number } | null = null; // an item a phantom stole, on its way (t: s left)
+  gravity = GRAVITY; // m/s^2 (low on the moon)
   spin = 0; // s left in a spin-out
   spinAngle = 0; // the sprite's extra rotation while spinning
   prism = 0; // s left invincible (a prism)
@@ -107,6 +121,8 @@ export class Kart {
   air = false;
   airTime = 0;
   rampU = -1; // 0..1 while on a jump ramp (set by the race), -1 elsewhere
+  slope = 0; // dz/ds of the road under the kart (set by the race)
+  bend = 0; // d2z/ds2 of the road under it: how sharply it crests (< 0) or dips (set by the race)
   walled = false; // in a tunnel, between its walls (set by the race)
   trick: TrickGrade = 0; // pending: paid out as a boost on landing
   burnout = 0; // s of wheelspin after a too-early start
@@ -146,6 +162,11 @@ export class Kart {
     return this.fall >= 0 && this.fall < FALL_RELEASE;
   }
 
+  /** Nothing can touch it right now: a prism, a rocket, a phantom, or the lava. */
+  get untouchable(): boolean {
+    return this.invincible || this.phantom > 0 || this.falling;
+  }
+
   /** Into the lava: everything the kart was doing stops. */
   fallIn(): void {
     this.fall = 0;
@@ -160,10 +181,11 @@ export class Kart {
     this.trailing = false;
   }
 
-  /** Knocked into a spin: it slides on, slowing, with no control for a moment. Returns false
-   * for an invincible kart (and one in the lava). */
+  /** Knocked into a spin: it slides on, slowing, with no control for a moment, and three of its
+   * coins are gone. Returns false for a kart nothing can touch. */
   spinOut(time = SPIN_TIME): boolean {
-    if (this.invincible || this.falling) return false;
+    if (this.untouchable) return false;
+    this.coins = Math.max(0, this.coins - 3);
     this.spin = Math.max(this.spin, time);
     this.v *= 0.45;
     this.drifting = false;
@@ -174,7 +196,8 @@ export class Kart {
 
   /** This kart's top speed in a class, from its build and what it is under right now. */
   topSpeed(cls: ClassParams): number {
-    return cls.vmax * this.perf.vmax * (this.prism > 0 ? PRISM_SPEED : 1) * (this.shrink > 0 ? SHRUNK_SPEED : 1);
+    return cls.vmax * this.perf.vmax * (1 + COIN_SPEED * this.coins) * (this.prism > 0 ? PRISM_SPEED : 1) *
+      (this.shrink > 0 ? SHRUNK_SPEED : 1);
   }
 
   placeOn(track: Track, idx: number, lateral: number): void {
@@ -230,7 +253,7 @@ export class Kart {
     // height: follow the road, fly off ramp lips, land with the trick's boost
     if (this.air) {
       this.surface = "air";
-      this.vz -= GRAVITY * dt;
+      this.vz -= this.gravity * dt;
       this.elev += this.vz * dt;
       this.airTime += dt;
       if (this.trick === 0 && this.hopAge === 0 && this.airTime < TRICK_LATE) {
@@ -252,6 +275,13 @@ export class Kart {
       this.airTime = 0;
       this.vz = Math.max(this.vz, 0) + 4.2 + this.v * 0.11;
       if (this.hopAge < TRICK_EARLY) this.trick = this.hopAge < PERFECT ? 2 : 1;
+      this.surface = "air";
+    } else if (this.v > 8 && this.rampU < 0 && this.v * this.v * this.bend < -this.gravity) {
+      // over a crest faster than gravity can pull the kart down onto the road (only in low
+      // gravity, on the moon): it floats off it, carrying the road's climb
+      this.air = true;
+      this.airTime = 0;
+      this.vz = this.v * this.slope;
       this.surface = "air";
     } else {
       this.vz = (this.ground - this.elev) / Math.max(dt, 1e-3); // climbing a ramp: the launch speed
@@ -463,12 +493,18 @@ export function collideKarts(karts: Kart[], vmax = 45): { hits: Kart[]; spun: [K
   for (let i = 0; i < karts.length; i++) {
     for (let j = i + 1; j < karts.length; j++) {
       const a = karts[i], b = karts[j];
-      if (a.falling || b.falling) continue; // in the lava, or in the drone's hands
+      if (a.falling || b.falling || a.phantom > 0 || b.phantom > 0) continue; // in the lava, or see-through
       if (Math.abs(a.elev - b.elev) > 1.8) continue; // one on a bridge, one underneath
       const dx = b.x - a.x, dy = b.y - a.y;
       const d = Math.hypot(dx, dy);
       if (d >= 2 * R || d < 1e-6) continue;
       const nx = dx / d, ny = dy / d, push = (2 * R - d) / 2;
+      if ((a.shrink > 0) !== (b.shrink > 0) && !a.invincible && !b.invincible) {
+        // a full-size kart runs over one a shock has shrunk: flattened
+        const [small, big] = a.shrink > 0 ? [a, b] : [b, a];
+        if (small.spinOut(1.0)) spun.push([small, big]);
+        continue;
+      }
       if (a.invincible !== b.invincible) {
         // a prism or a rocket barges through: the other kart is shoved aside and spun
         const [hard, soft, sgn] = a.invincible ? [a, b, 1] : [b, a, -1];

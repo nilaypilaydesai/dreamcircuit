@@ -1,8 +1,10 @@
 // A 360-degree parallax backdrop per theme: gradient sky, stars or clouds, a sun, and two hill
 // silhouettes that scroll at different rates as the camera turns. Inside the volcano the hills
-// are the crater's walls: dark basalt lit red from below, with lava falling down them.
+// are the crater's walls: dark basalt lit red from below, with lava falling down them. Behind
+// the building site they are a city's towers, with half-built frames and tower cranes in front;
+// on the moon, grey ridges under a black sky with the Earth hanging in it.
 
-import { H, Rand, W, hex, mix, shade, type Screen } from "../core/gfx";
+import { H, Rand, W, hex, mix, shade, type Screen, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
 
 const PAN = 1536; // panorama width in px for a full turn
@@ -33,6 +35,18 @@ export class Sky {
     if (t.volcano) {
       this.crater(this.far, rng, h, t.farHills, 0.6, t.farAmp ?? 26, 4, 9);
       this.crater(this.near, rng, h, t.nearHills, 0.84, 13, 5, 0);
+      return;
+    }
+    if (t.skyline === "city") {
+      this.city(this.far, rng, h, mix(t.farHills, t.skyHorizon, 0.5), 0.6, (t.farAmp ?? 26) * 1.15);
+      this.city(this.far, rng, h, t.farHills, 0.68, t.farAmp ?? 26);
+      this.site(this.near, rng, h, t);
+      return;
+    }
+    if (t.skyline === "moon") {
+      this.earth(rng, h);
+      this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3, 0, true);
+      this.hills(this.near, rng, h, t.nearHills, 0.86, 7, 4);
       return;
     }
     this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3, t.snow ?? 0);
@@ -121,8 +135,108 @@ export class Sky {
     }
   }
 
+  /** A city skyline: a row of towers, glass ones banded with their floors and concrete ones dotted
+   * with windows, each lit down one edge, a few with an antenna. */
+  private city(dst: Uint32Array, rng: Rand, h: number, color: number, base: number, amp: number): void {
+    const set = (x: number, y: number, c: number) => {
+      if (y >= 0 && y < h) dst[y * PAN + (((x % PAN) + PAN) % PAN)] = c;
+    };
+    for (let x = rng.int(0, 12); x < PAN;) {
+      const w = rng.int(9, 30), top = Math.floor(h * base - rng.range(0.2, 1) * amp), glass = rng.next() < 0.45;
+      for (let dx = 0; dx < w; dx++) {
+        for (let y = top; y < h; y++) {
+          const r = y - top;
+          let c = r === 0 ? shade(color, 1.25) : dx < 2 ? shade(color, 1.16) : dx === w - 1 ? shade(color, 0.85) : color;
+          if (r > 1 && dx >= 2 && dx < w - 1 && (glass ? r % 3 === 0 : r % 4 === 2 && dx % 3 === 1)) {
+            c = shade(color, glass ? 1.1 : 0.78);
+          }
+          set(x + dx, y, c);
+        }
+      }
+      if (rng.next() < 0.3) for (let y = top - rng.int(3, 9); y < top; y++) set(x + (w >> 1), y, shade(color, 0.9));
+      x += w + rng.int(-3, 9);
+    }
+  }
+
+  /** In front of the city: heaps of spoil, the frames of buildings going up (columns and floors with
+   * the sky between them, a few floors closed in), and tower cranes reaching out over it all. */
+  private site(dst: Uint32Array, rng: Rand, h: number, t: Theme): void {
+    this.hills(dst, rng, h, shade(t.ground[0], 0.62), 0.92, 5, 3);
+    const set = (x: number, y: number, c: number) => {
+      if (y >= 0 && y < h) dst[y * PAN + (((x % PAN) + PAN) % PAN)] = c;
+    };
+    const line = (x0: number, y0: number, x1: number, y1: number, c: number) => {
+      const n = Math.max(1, Math.abs(x1 - x0), Math.abs(y1 - y0));
+      for (let k = 0; k <= n; k++) set(Math.round(x0 + ((x1 - x0) * k) / n), Math.round(y0 + ((y1 - y0) * k) / n), c);
+    };
+    const ground = h - 2;
+    for (let k = 0; k < 8; k++) {
+      const x0 = rng.int(0, PAN), w = rng.int(18, 44), floors = rng.int(2, 6), storey = 5, top = ground - floors * storey;
+      const closed = rng.int(0, floors - 1); // floors from the bottom with their walls on
+      for (let y = top; y < ground; y++) {
+        const f = Math.floor((ground - y) / storey);
+        for (let dx = 0; dx < w; dx++) {
+          const slab = (ground - y) % storey === 0, column = dx % 8 === 0 || dx === w - 1;
+          if (slab) set(x0 + dx, y, shade(t.nearHills, 1.2));
+          else if (column) set(x0 + dx, y, t.nearHills);
+          else if (f < closed) set(x0 + dx, y, (y + dx) % 4 === 0 ? shade(t.nearHills, 1.3) : shade(t.nearHills, 0.8));
+        }
+      }
+    }
+    const yellow = hex("#e2a72a"), dark = hex("#9a6f18"), weight = hex("#4a4d55");
+    for (let k = 0; k < 6; k++) {
+      const x0 = rng.int(0, PAN), top = ground - rng.int(Math.floor(h * 0.45), Math.floor(h * 0.78));
+      for (let y = top; y <= ground; y++) { // the mast: a lattice two pixels wide
+        set(x0, y, yellow);
+        set(x0 + 2, y, yellow);
+        if ((y + x0) % 3 === 0) set(x0 + 1, y, dark);
+      }
+      const dir = rng.next() < 0.5 ? 1 : -1, jib = rng.int(28, 56), counter = rng.int(9, 15), mid = x0 + 1;
+      for (let d = 0; d <= jib; d++) { // the jib: a lattice of two chords and a zigzag
+        set(mid + dir * d, top, yellow);
+        set(mid + dir * d, top + 2, yellow);
+        if (d % 2 === 0) set(mid + dir * d, top + 1, dark);
+      }
+      for (let d = 1; d <= counter; d++) set(mid - dir * d, top, yellow);
+      for (let y = top + 1; y <= top + 3; y++) for (let d = counter - 3; d <= counter; d++) set(mid - dir * d, y, weight);
+      line(mid, top - 6, mid + dir * Math.round(jib * 0.7), top, dark); // the ties from the apex
+      line(mid, top - 6, mid - dir * counter, top, dark);
+      for (let y = top + 3; y <= top + 5; y++) for (let d = 1; d <= 3; d++) set(mid + dir * d, y, shade(yellow, 0.8)); // the cab
+      const hook = mid + dir * rng.int(10, jib - 2), drop = rng.int(6, Math.max(8, ground - top - 8));
+      line(hook, top + 3, hook, top + 3 + drop, weight);
+      set(hook - 1, top + 4 + drop, weight);
+      set(hook + 1, top + 4 + drop, weight);
+    }
+  }
+
+  /** The Earth hanging in the moon's black sky: blue seas, green and brown land, ice at the poles
+   * and swirls of cloud, lit from one side with the night side faint, a thin blue rim of air. */
+  private earth(rng: Rand, h: number): void {
+    const cx = rng.int(120, PAN - 120), cy = Math.floor(h * 0.3), r = 12;
+    const lx = 0.78, ly = -0.42, lz = 0.46; // where the sunlight comes from (right, above, in front)
+    const seed = rng.int(0, 9999);
+    for (let y = cy - r - 2; y <= cy + r + 2; y++) {
+      if (y < 0 || y >= h) continue;
+      for (let x = cx - r - 2; x <= cx + r + 2; x++) {
+        const dx = (x - cx) / r, dy = (y - cy) / r, d2 = dx * dx + dy * dy;
+        const i = y * PAN + ((x + PAN) % PAN);
+        if (d2 > 1) {
+          if (d2 < 1.3 && dx * lx + dy * ly > 0.1) this.far[i] = mix(this.far[i], hex("#6fb6ff"), 0.55 * (1.3 - d2) / 0.3);
+          continue;
+        }
+        const dz = Math.sqrt(1 - d2), lon = Math.atan2(dx, dz), lat = Math.asin(Math.max(-1, Math.min(1, dy)));
+        const land = valueNoise(lon * 40, lat * 40, 9, seed) * 0.7 + valueNoise(lon * 40, lat * 40, 4, seed + 1) * 0.3;
+        const cloud = valueNoise(lon * 40 + 7, lat * 60, 6, seed + 2);
+        let c = Math.abs(lat) > 1.15 ? hex("#eef4ff") : land > 0.56 ? (land > 0.66 ? hex("#a3875a") : hex("#4f8f3c")) : hex("#2a64c8");
+        if (cloud > 0.64) c = mix(c, hex("#ffffff"), Math.min(1, (cloud - 0.64) * 5));
+        const light = dx * lx + dy * ly + dz * lz;
+        this.far[i] = light > 0.05 ? shade(c, 0.5 + 0.7 * Math.min(1, light)) : mix(hex("#04060d"), c, 0.14);
+      }
+    }
+  }
+
   private hills(dst: Uint32Array, rng: Rand, h: number, color: number, base: number, amp: number,
-                octaves: number, snow = 0): void {
+                octaves: number, snow = 0, ridged = snow > 0): void {
     // a periodic 1-D fractal profile: sums of sines with integer frequencies wrap seamlessly
     const comps = Array.from({ length: octaves * 3 }, (_, k) => ({
       f: 1 + rng.int(1, 4 + k * 3), a: rng.range(0.4, 1) / (1 + k), p: rng.range(0, Math.PI * 2),
@@ -133,8 +247,8 @@ export class Sky {
       let v = 0;
       for (const c of comps) v += c.a * Math.sin(c.f * th + c.p);
       let n = v / norm;
-      // snowy mountains are ridged, a sharp peak wherever the sum crosses zero, not rolling hills
-      if (snow) n = 0.3 - 1.2 * Math.abs(n);
+      // mountains are ridged, a sharp peak wherever the sum crosses zero, not rolling hills
+      if (ridged) n = 0.3 - 1.2 * Math.abs(n);
       const top = Math.floor(h * base - n * amp - amp * 0.4);
       // snow caps the taller peaks: deeper on the highest ones
       const cap = snow ? Math.max(0, Math.round((n - 0.04) * amp * 0.5)) : 0;

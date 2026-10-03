@@ -60,9 +60,64 @@ export class WorldTexture {
     }
   }
 
+  /** A building site's churned dirt: two tones, darker mud, gravel, and the tread of the machines'
+   * tracks in patches. */
+  private paintDirt(x0: number, y0: number, x1: number, y1: number): void {
+    const t = this.theme, tex = this.levels[0], seed = this.seed;
+    for (let ty = Math.max(0, y0); ty < Math.min(TEX, y1); ty++) {
+      const wy = HALF - (ty + 0.5) * RES;
+      for (let tx = Math.max(0, x0); tx < Math.min(TEX, x1); tx++) {
+        const wx = (tx + 0.5) * RES - HALF;
+        const n = valueNoise(wx, wy, 7, seed), m = valueNoise(wx, wy, 31, seed + 1);
+        let c = shade(mix(t.ground[0], t.ground[1], n), 0.88 + 0.22 * m);
+        if (m > 0.72) c = shade(c, 0.78); // mud
+        const tread = ((wx * 0.6 + wy * 0.8) % 2.6 + 2.6) % 2.6;
+        if (n > 0.55 && m < 0.6 && (tread < 0.22 || (tread > 1.1 && tread < 1.32))) c = shade(c, 0.8);
+        if (hash2(tx, ty, seed) > 0.982) c = t.groundSpeck;
+        tex[ty * TEX + tx] = c;
+      }
+    }
+  }
+
+  /** The moon's regolith, grey and fine, pocked all over with craters: a bowl in shadow on the
+   * side the light comes from and lit on the other, inside a bright rim of thrown-out dust. */
+  private paintCraters(x0: number, y0: number, x1: number, y1: number): void {
+    const t = this.theme, tex = this.levels[0], seed = this.seed;
+    for (let ty = Math.max(0, y0); ty < Math.min(TEX, y1); ty++) {
+      const wy = HALF - (ty + 0.5) * RES;
+      for (let tx = Math.max(0, x0); tx < Math.min(TEX, x1); tx++) {
+        const wx = (tx + 0.5) * RES - HALF;
+        const n = valueNoise(wx, wy, 5, seed) * 0.6 + valueNoise(wx, wy, 41, seed + 1) * 0.4;
+        tex[ty * TEX + tx] = hash2(tx, ty, seed) > 0.985 ? t.groundSpeck : shade(t.ground[0], 0.82 + 0.3 * n);
+      }
+    }
+    let r = (seed * 2654435761) >>> 0;
+    const next = () => ((r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 4294967296);
+    for (let k = 0; k < 1100; k++) {
+      const cx = (next() - 0.5) * 2 * HALF, cy = (next() - 0.5) * 2 * HALF, rad = 1.6 + 12 * next() ** 3;
+      const [ctx, cty] = WorldTexture.texel(cx, cy), span = Math.ceil((rad * 1.25) / RES);
+      for (let ty = Math.max(y0, 0, Math.floor(cty - span)); ty < Math.min(y1, TEX, cty + span); ty++) {
+        for (let tx = Math.max(x0, 0, Math.floor(ctx - span)); tx < Math.min(x1, TEX, ctx + span); tx++) {
+          const dx = (tx - ctx) * RES / rad, dy = -(ty - cty) * RES / rad, d = Math.hypot(dx, dy);
+          if (d > 1.25) continue;
+          const i = ty * TEX + tx, light = -0.6 * dx + 0.8 * dy; // the sun from the north-west
+          tex[i] = d < 1 ? shade(tex[i], 0.8 - 0.25 * light * Math.sqrt(1 - d * d)) : shade(tex[i], 1.12 + 0.1 * (1.25 - d));
+        }
+      }
+    }
+  }
+
   private paintTerrain(x0: number, y0: number, x1: number, y1: number): void {
     if (this.lava) {
       this.paintLava(x0, y0, x1, y1);
+      return;
+    }
+    if (this.theme.terrain === "dirt") {
+      this.paintDirt(x0, y0, x1, y1);
+      return;
+    }
+    if (this.theme.terrain === "craters") {
+      this.paintCraters(x0, y0, x1, y1);
       return;
     }
     const t = this.theme;

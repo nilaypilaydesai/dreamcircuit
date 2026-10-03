@@ -9,6 +9,7 @@
 
 import { H, W, hex, mix, type Screen } from "../core/gfx";
 import { FALL_END, FALL_RELEASE, FALL_SINK, FALL_SWAP, type Kart } from "../race/kart";
+import { ORBITS, type ItemKind } from "../race/items";
 import type { Placed } from "../world/scenery";
 import type { Camera } from "./mode7";
 import type { Face } from "./poly";
@@ -23,6 +24,7 @@ export interface WorldSprite {
   lift?: number; // m above the surface under it (it casts a shadow when floating)
   base?: number; // m, height of that surface (a bridge deck)
   flip?: boolean; // mirrored (a fish swimming the other way)
+  draw?: (sx: number, gy: number, ppm: number) => void; // drawn by hand instead (a horn's ring)
 }
 
 /** How to draw each kart: its 16 views, its drift sparks, and what it carries. */
@@ -30,7 +32,9 @@ export interface KartLook {
   sprites: (k: Kart) => KartViews;
   sparks: (k: Kart) => number;
   held: (k: Kart) => SceneryArt | null;
-  dome?: boolean; // every driver wears a clear bubble helmet (under the sea)
+  art?: (item: ItemKind) => SceneryArt; // any item's art (the jackpot's eight circling a kart)
+  grabber?: SceneryArt[]; // the grabber: idle, wide open, snapped shut
+  dome?: boolean; // every driver wears a clear helmet (under the sea, on the moon)
   drone?: SceneryArt[]; // the rescue drone's frames (the volcano)
 }
 
@@ -93,6 +97,12 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   }
   for (const it of extras) {
     const base = it.base ?? 0;
+    const draw = it.draw;
+    if (draw) {
+      const p = project(it.x, it.y, base + (it.lift ?? 0));
+      if (p) items.push({ ...p, z: p.z + (base > 1 ? -0.5 : lowBias), draw: () => draw(p.sx, p.gy, p.ppm) });
+      continue;
+    }
     billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowBias, true, 1, it.flip);
   }
   for (const k of karts) {
@@ -130,7 +140,8 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       draw: () => {
         if (!sinking) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
         const top = p.gy - h * KART_ANCHOR + bounce;
-        scr.blitScaled(s, p.sx - w / 2, top, w, h, false, tint, tintAmount, sinking ? Math.round(ps.gy + 0.2 * ps.ppm) : H);
+        scr.blitScaled(s, p.sx - w / 2, top, w, h, false, k.phantom > 0 ? hex("#c9b8ff") : tint,
+                       k.phantom > 0 ? 0.35 : tintAmount, sinking ? Math.round(ps.gy + 0.2 * ps.ppm) : H, k.phantom > 0);
         const head = look.dome && k.rocket <= 0 ? sprites.heads?.[vi] : undefined;
         if (head) drawDome(scr, p.sx - w / 2 + (head[0] * w) / s.w, top + (head[1] * h) / s.h, (5.6 * 1.55 * h) / s.h);
         const sp = look.sparks(k);
@@ -149,20 +160,45 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     // triple turbo, boomerangs) circle the kart slowly, and oil, an orb or a bomb held out behind
     // (button down) drags on the road behind it
     const art = look.held(k);
-    if (art && k.rocket <= 0 && !k.falling) {
-      const small = k.shrink > 0 ? 0.62 : 1;
-      if (k.trailing) {
+    const small = k.shrink > 0 ? 0.62 : 1;
+    const circle = (a: SceneryArt, count: number, at: number, size: number) => {
+      for (let n = 0; n < count; n++) {
+        const ang = now * 1.6 + k.id + (n / count) * Math.PI * 2;
+        billboard(a, k.x + Math.cos(ang) * 1.8 * small, k.y + Math.sin(ang) * 1.8 * small, k.elev, at * small, bias - 0.01,
+                  false, size * small);
+      }
+    };
+    if (k.jackpot.length && look.art && k.rocket <= 0 && !k.falling) {
+      // the jackpot: what is left of its eight, circling the kart
+      const count = k.jackpot.length;
+      k.jackpot.forEach((item, n) => {
+        const ang = now * 1.6 + k.id + (n / count) * Math.PI * 2;
+        billboard(look.art!(item), k.x + Math.cos(ang) * 2 * small, k.y + Math.sin(ang) * 2 * small, k.elev, 0.55 * small,
+                  bias - 0.01, false, 0.55 * small);
+      });
+    } else if (art && k.rocket <= 0 && !k.falling && k.item) {
+      if (ORBITS.has(k.item)) {
+        circle(art, k.uses, 0.45, 0.8); // every shot of a triple puck or orb circles the kart
+      } else if (k.item === "oil3") {
+        for (let n = 0; n < k.uses; n++) { // three barrels trailing in a line
+          const back = 1.7 + n * 1.1;
+          billboard(art, k.x - c * back, k.y - sn * back, k.elev, 0.03, bias - 0.02 + n * 0.01, false, 0.7 * small);
+        }
+      } else if (k.trailing) {
         billboard(art, k.x - c * 1.7, k.y - sn * 1.7, k.elev, 0.03, bias - 0.02, false, 0.8 * small);
       } else {
         // (a kart is about 0.8 m tall to the top of the helmet)
         billboard(art, k.x, k.y, k.elev, (1.0 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.8 * small);
+        if (k.item === "triple") circle(art, Math.max(0, k.uses - 1), 0.6, 0.64);
+        if (k.item === "boomerang") circle(art, Math.max(0, k.uses - 1), 0.6, 0.64);
       }
-      const spare = Math.max(0, k.uses - 1);
-      for (let n = 0; n < spare; n++) {
-        const ang = now * 1.3 + k.id + (n / spare) * Math.PI * 2;
-        const ox = Math.cos(ang) * 1.8 * small, oy = Math.sin(ang) * 1.8 * small;
-        billboard(art, k.x + ox, k.y + oy, k.elev, 0.6 * small, bias - 0.01, false, 0.64 * small);
-      }
+    }
+    // the grabber rides in front of the kart, and lunges when it bites
+    if (k.grab > 0 && look.grabber && !k.falling) {
+      const lunge = k.bite > 0 ? Math.sin((k.bite / 0.3) * Math.PI) * 1.6 : 0;
+      const frame = k.bite > 0.15 ? 1 : k.bite > 0 ? 2 : 0;
+      const ahead = (1.9 + lunge) * small;
+      billboard(look.grabber[frame], k.x + c * ahead, k.y + sn * ahead, k.elev, 0.25 * small, bias - 0.04, false, small);
     }
   }
   const all: { z: number; draw: () => void }[] = [...items, ...faces];

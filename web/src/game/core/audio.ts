@@ -129,10 +129,33 @@ export class Sound {
   rocket(): void { [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.1, "sawtooth", 0.07, i * 0.04)); }
   boomerang(): void { this.tone(500, 0.35, "triangle", 0.08, 0, 1100); this.tone(1100, 0.3, "triangle", 0.05, 0.3, 500); }
   bombThrow(): void { this.tone(260, 0.3, "square", 0.06, 0, 520); }
-  explode(near: boolean): void {
-    this.noise(near ? 0.7 : 0.4, near ? 0.32 : 0.14, 700);
-    this.tone(70, 0.5, "triangle", near ? 0.22 : 0.08, 0, 35);
+  explode(near: boolean, big = false): void {
+    this.noise(near ? (big ? 1.1 : 0.7) : 0.4, near ? (big ? 0.4 : 0.32) : 0.14, big ? 500 : 700);
+    this.tone(big ? 55 : 70, big ? 0.8 : 0.5, "triangle", near ? 0.22 : 0.08, 0, 35);
   }
+  /** An aimed item's arrow locks: a click. */
+  lock(): void { this.tone(1320, 0.05, "square", 0.07); this.tone(990, 0.06, "square", 0.05, 0.05); }
+  puck(): void { this.tone(220, 0.18, "square", 0.08, 0, 520); this.noise(0.12, 0.08, 1600); }
+  bounce(): void { this.tone(880, 0.05, "triangle", 0.06); }
+  clash(): void { this.noise(0.15, 0.14, 2400); this.tone(600, 0.08, "square", 0.05, 0, 300); }
+  coin(): void { [1568, 2093].forEach((f, i) => this.tone(f, 0.08, "square", 0.06, i * 0.06)); }
+  /** The horn: two blaring notes and a rush of air. */
+  horn(near: boolean): void {
+    const v = near ? 0.11 : 0.05;
+    this.tone(233, 0.5, "sawtooth", v);
+    this.tone(294, 0.5, "sawtooth", v * 0.8);
+    this.noise(0.45, near ? 0.12 : 0.05, 900);
+  }
+  staticHit(): void { this.noise(0.9, 0.16, 7000); this.tone(60, 0.4, "square", 0.04); }
+  /** A comet on its way: a rising whoosh, and for the leader it is after, warning beeps. */
+  comet(you: boolean): void {
+    this.tone(180, 0.9, "sawtooth", 0.05, 0, 900);
+    if (you) for (let k = 0; k < 4; k++) this.tone(1760, 0.08, "square", 0.08, 0.25 + k * 0.22);
+  }
+  bite(): void { this.tone(300, 0.07, "square", 0.08, 0, 120); this.noise(0.07, 0.1, 3000); }
+  flare(): void { this.noise(0.25, 0.1, 1400); this.tone(160, 0.2, "sawtooth", 0.05, 0, 420); }
+  phantom(): void { this.tone(523, 0.7, "sine", 0.05, 0, 262); this.tone(784, 0.7, "sine", 0.03, 0.1, 392); }
+  steal(): void { [988, 1319, 1760].forEach((f, i) => this.tone(f, 0.08, "triangle", 0.06, i * 0.05)); }
   prism(): void { [1047, 1319, 1568, 2093, 1568, 2093, 2637].forEach((f, i) => this.tone(f, 0.09, "square", 0.06, i * 0.05)); }
   shock(): void { this.tone(1400, 0.45, "square", 0.08, 0, 90); this.noise(0.35, 0.12, 5000); }
   rocketGo(): void { this.tone(110, 1.1, "sawtooth", 0.09, 0, 440); this.noise(1.0, 0.1, 1800); }

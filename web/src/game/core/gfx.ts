@@ -149,9 +149,10 @@ export class Screen {
     }
   }
 
-  /** Nearest-neighbor scaled blit; (x, y) is the destination top-left, (w, h) the size. */
+  /** Nearest-neighbor scaled blit; (x, y) is the destination top-left, (w, h) the size. ``ghost``
+   * leaves every other pixel out, in a checkerboard: see-through, the 16-bit way. */
   blitScaled(s: Sprite, x: number, y: number, w: number, h: number, flip = false,
-             tint = 0, tintAmount = 0, clipBottom = H): void {
+             tint = 0, tintAmount = 0, clipBottom = H, ghost = false): void {
     if (w < 1 || h < 1) return;
     const x0 = Math.max(0, Math.floor(x)), x1 = Math.min(W, Math.ceil(x + w));
     const y0 = Math.max(0, Math.floor(y)), y1 = Math.min(clipBottom, Math.ceil(y + h));
@@ -161,6 +162,7 @@ export class Screen {
       if (sy < 0) continue;
       const row = sy * s.w;
       for (let dx = x0; dx < x1; dx++) {
+        if (ghost && ((dx + dy) & 1) === 0) continue;
         let sx = ((dx - x + 0.5) * kx) | 0;
         if (sx < 0 || sx >= s.w) continue;
         if (flip) sx = s.w - 1 - sx;

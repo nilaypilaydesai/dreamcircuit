@@ -6,11 +6,13 @@ import { Rand } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
 import {
-  AIM_MAX, BOMB_BLAST, BOX_SPACING, ITEM_KINDS, Items, ROCKET_CHANCE, ROCKET_GAP, ROCKET_TIME, ROULETTE, itemOdds, rocketPasses,
-  rollItem,
+  AIM_MAX, BOMB_BLAST, BOX_SPACING, COMET_BLAST, type Field, GOLD_TIME, HORN_R, ITEM_KINDS, ITEM_NAMES, Items, JACKPOT,
+  ROCKET_TIME, ROULETTE, STATIC_TIME, rocketPasses,
 } from "../src/game/race/items";
+import { ROCKET_GAP, type Standing, itemOdds, pickItem, tierOf } from "../src/game/race/odds";
+import { heldArt, itemIcons } from "../src/game/render/sprites";
 import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
-import { CLASSES, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, collideKarts } from "../src/game/race/kart";
+import { CLASSES, COIN_SPEED, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, collideKarts } from "../src/game/race/kart";
 import { CALM_BAND, TRACK_TYPES, type TrackTypeId, WILD_BAND, surpriseType, trackType } from "../src/game/race/tracktypes";
 import {
   ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, NOTE_MAX, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
@@ -311,37 +313,80 @@ describe("rival drivers", () => {
   });
 });
 
+/** A field for item tests: the leader is the first kart given, the rest stand behind it. */
+function fieldOf(karts: Kart[]): Field {
+  return {
+    leader: () => karts.filter((k) => !k.finished).sort((a, b) => b.dist - a.dist)[0] ?? null,
+    standing: (k: Kart): Standing => ({ behind: 0, last: false, gapAhead: 0, field: karts.length, player: k.isPlayer }),
+  };
+}
+
+const at = (behind: number, more: Partial<Standing> = {}): Standing =>
+  ({ behind, last: false, gapAhead: 10, field: 8, player: true, ...more });
+
 describe("items", () => {
-  it("favor defense at the front of the field and the big items at the back", () => {
-    const lead = itemOdds(1, 8), last = itemOdds(8, 8), mid = itemOdds(4, 8);
-    for (const p of [lead, last, mid, itemOdds(7, 8), itemOdds(1, 1)]) {
-      expect(ITEM_KINDS.reduce((s, k) => s + p[k], 0)).toBeCloseTo(1, 9);
-      for (const v of Object.values(p)) expect(v).toBeGreaterThanOrEqual(0);
+  it("are twenty-two, each with a name, an icon and the art a kart carries it with", () => {
+    expect(new Set(ITEM_KINDS).size).toBe(22);
+    const icons = itemIcons(), held = heldArt();
+    for (const k of ITEM_KINDS) {
+      expect(ITEM_NAMES[k].length).toBeLessThanOrEqual(13);
+      expect(icons[k].w).toBeLessThanOrEqual(32); // fits the HUD's slot, pixel for pixel
+      expect(icons[k].h).toBeLessThanOrEqual(32);
+      expect(held[k].sprite.data.some((c) => c !== 0)).toBe(true);
     }
-    expect(lead.oil).toBeGreaterThan(lead.turbo);
-    expect(lead.rocket + lead.prism + lead.shock).toBe(0); // no big items for the leader
-    expect(last.triple + last.prism + last.shock).toBeGreaterThan(0.5); // the big ones at the back
-    expect(itemOdds(1, 1).rocket).toBe(0); // racing alone is not being last
+  });
+
+  it("come out of a box with the classic's odds, by how far a kart is behind the leader", () => {
+    for (const player of [true, false]) {
+      for (const behind of [0, 5, 15, 30, 60, 100, 150, 250, 500, 2000]) {
+        const p = itemOdds(at(behind, { player, last: true, gapAhead: 80 }));
+        expect(ITEM_KINDS.reduce((s, k) => s + p[k], 0)).toBeCloseTo(1, 9);
+        for (const v of Object.values(p)) expect(v).toBeGreaterThanOrEqual(0);
+      }
+    }
+    // the leader: coins, oil and pucks, as in the classic's first tier
+    const lead = itemOdds(at(0));
+    expect(lead.coin).toBeCloseTo(0.35, 9);
+    expect(lead.oil).toBeCloseTo(0.325, 9);
+    expect(lead.puck).toBeCloseTo(0.25, 9);
+    expect(lead.comet + lead.prism + lead.rocket + lead.shock + lead.gold + lead.triple).toBe(0);
+    // just behind: orbs; further back: turbos and prisms; far back: the big ones
+    expect(itemOdds(at(20)).orb).toBeGreaterThan(0.2);
+    const back = itemOdds(at(400));
+    expect(back.triple + back.prism + back.gold + back.shock).toBeGreaterThan(0.5);
+    expect(back.oil + back.puck + back.coin).toBe(0);
+    // the comet only for karts well back, never for the leader
+    expect(itemOdds(at(0)).comet).toBe(0);
+    expect(itemOdds(at(120)).comet).toBeGreaterThan(0);
+    // the tiers: the player's and the computer drivers' start in different places
+    expect([tierOf(0, true), tierOf(9, true), tierOf(11, true), tierOf(1000, true)]).toEqual([0, 0, 1, 8]);
+    expect(tierOf(9, false)).toBe(1);
+    // computer drivers get their own table: more oil, fewer orbs
+    expect(itemOdds(at(20, { player: false })).orb).toBeLessThan(itemOdds(at(20)).orb + 0.05);
   });
 
   it("only hand the rocket to the last kart, and only when it has fallen well behind", () => {
-    expect(itemOdds(8, 8, ROCKET_GAP - 1).rocket).toBe(0); // last, but close behind the kart ahead
-    expect(itemOdds(8, 8, ROCKET_GAP + 30).rocket).toBeCloseTo(ROCKET_CHANCE, 9);
-    expect(itemOdds(7, 8, 500).rocket).toBe(0); // far behind, but not last
-    expect(itemOdds(4, 8, 500).rocket).toBe(0);
-    expect(itemOdds(2, 2, 500).rocket).toBe(0); // second of two: a rocket could only win it
-    expect(itemOdds(3, 3, ROCKET_GAP).rocket).toBeCloseTo(ROCKET_CHANCE, 9);
-    const p = itemOdds(8, 8, 200);
-    expect(ITEM_KINDS.reduce((sum, k) => sum + p[k], 0)).toBeCloseTo(1, 9);
+    const far = (more: Partial<Standing>) => itemOdds(at(250, { last: true, gapAhead: ROCKET_GAP + 20, ...more })).rocket;
+    expect(far({})).toBeGreaterThan(0.1);
+    expect(far({ gapAhead: ROCKET_GAP - 1 })).toBe(0); // last, but close behind the kart ahead
+    expect(far({ last: false })).toBe(0); // far behind, but not last
+    expect(far({ field: 2 })).toBe(0); // second of two: a rocket could only win it
+    expect(itemOdds(at(0, { last: true, gapAhead: 500 })).rocket).toBe(0); // the leader's tier never has one
+  });
+
+  it("leave out what cannot be had right now, and share its odds out", () => {
+    const p = itemOdds(at(120), new Set(["comet", "shock"]));
+    expect(p.comet + p.shock).toBe(0);
+    expect(ITEM_KINDS.reduce((s, k) => s + p[k], 0)).toBeCloseTo(1, 9);
     const rng = new Rand(11);
-    let far = 0, near = 0;
+    const counts = new Map<string, number>();
     for (let i = 0; i < 4000; i++) {
-      if (rollItem(6, 6, rng, 150) === "rocket") far++;
-      if (rollItem(6, 6, rng, 20) === "rocket") near++;
+      const k = pickItem(itemOdds(at(0)), rng.next());
+      counts.set(k, (counts.get(k) ?? 0) + 1);
     }
-    expect(far / 4000).toBeGreaterThan(ROCKET_CHANCE - 0.03);
-    expect(far / 4000).toBeLessThan(ROCKET_CHANCE + 0.03);
-    expect(near).toBe(0);
+    expect((counts.get("coin") ?? 0) / 4000).toBeGreaterThan(0.32);
+    expect((counts.get("coin") ?? 0) / 4000).toBeLessThan(0.38);
+    expect(counts.get("rocket") ?? 0).toBe(0);
   });
 
   it("let a rocket pass two karts at most, and never into the lead", () => {
@@ -351,13 +396,14 @@ describe("items", () => {
     expect(rocketPasses(2)).toBe(0);
   });
 
-  it("come in rows of boxes along the road, clear of the run to the line", () => {
+  it("come in rows of boxes along the road, with lines of coins between, clear of the run to the line", () => {
     const t = Track.fromPoints(calm());
     const items = new Items(new Rand(1));
     items.onCommit(t, 0, t.count);
     expect(items.boxes.length % 4).toBe(0);
     expect(items.boxes.length / 4).toBeGreaterThanOrEqual(Math.floor(t.length / BOX_SPACING) - 1);
-    for (const b of items.boxes) {
+    expect(items.coins.length).toBeGreaterThanOrEqual(4 * (Math.floor(t.length / BOX_SPACING) - 2));
+    for (const b of [...items.boxes, ...items.coins]) {
       const s = t.fromStart(t.nearest(b.x, b.y, 0));
       expect(s).toBeGreaterThan(BOX_SPACING * 0.5);
       expect(s).toBeLessThan(t.length - 60);
@@ -370,21 +416,19 @@ describe("items", () => {
     items.onCommit(t, 0, t.count);
     const rival = new Kart(1, "RIVAL", 1, false);
     [rival.x, rival.y] = [items.boxes[0].x, items.boxes[0].y];
-    items.update(1 / 60, t, [rival], () => 1);
+    items.update(1 / 60, t, [rival], fieldOf([rival]));
     expect(rival.item).not.toBeNull();
     expect(items.boxes[0].respawn).toBeGreaterThan(0);
     const me = new Kart(0, "YOU", 0, true);
     [me.x, me.y] = [items.boxes[1].x, items.boxes[1].y];
-    items.update(1 / 60, t, [me], () => 1);
+    items.update(1 / 60, t, [me], fieldOf([me]));
     expect(me.roulette).toBeGreaterThan(0);
     expect(items.use(me, [me])).toBe(false); // not while the slot is still spinning
-    for (let i = 0; i < Math.ceil(ROULETTE * 60) + 2; i++) items.update(1 / 60, t, [me], () => 1);
+    for (let i = 0; i < Math.ceil(ROULETTE * 60) + 2; i++) items.update(1 / 60, t, [me], fieldOf([me]));
     expect(items.events.some((e) => e.kind === "got" && e.kart === me)).toBe(true);
-    const uses = me.uses;
-    expect(uses).toBeGreaterThanOrEqual(1);
-    expect(items.use(me, [me])).toBe(true);
-    if (uses === 1) expect(me.item).toBeNull();
-    else expect(me.uses).toBe(uses - 1); // a triple turbo or a boomerang has shots left
+    expect(me.uses).toBe(1); // the leader's items are all single shots
+    expect(items.use(me, [me], fieldOf([me]))).toBe(true);
+    expect(me.item).toBeNull();
   });
 
   it("oil spins out whoever drives through it, but spares its owner at first", () => {
@@ -394,14 +438,15 @@ describe("items", () => {
     owner.placeOn(t, t.startIndex + 50, 0);
     owner.v = 20;
     owner.item = "oil";
+    owner.uses = 1;
     items.use(owner, [owner, other]);
     const sl = items.slicks[0];
     [owner.x, owner.y] = [sl.x, sl.y];
-    items.update(1 / 60, t, [owner], () => 1);
+    items.update(1 / 60, t, [owner], fieldOf([owner]));
     expect(owner.spin).toBe(0);
     [other.x, other.y] = [sl.x, sl.y];
     other.v = 25;
-    items.update(1 / 60, t, [owner, other], () => 1);
+    items.update(1 / 60, t, [owner, other], fieldOf([owner, other]));
     expect(other.spin).toBeGreaterThan(0);
     expect(other.v).toBeLessThan(15);
     expect(items.slicks.length).toBe(0);
@@ -414,10 +459,11 @@ describe("items", () => {
     shooter.placeOn(t, t.startIndex + 10, -2);
     target.placeOn(t, t.startIndex + 10 + Math.round(45 / SPACING), 2.5);
     for (const k of [shooter, target]) k.updateProgress(t);
-    shooter.item = "orb";
+    items.grant(shooter, "orb");
     items.use(shooter, [shooter, target]);
     expect(items.orbs[0].target).toBe(target);
-    for (let i = 0; i < 60 * 4 && target.spin <= 0; i++) items.update(1 / 60, t, [shooter, target], () => 1);
+    const f = fieldOf([target, shooter]);
+    for (let i = 0; i < 60 * 4 && target.spin <= 0; i++) items.update(1 / 60, t, [shooter, target], f);
     expect(target.spin).toBeGreaterThan(0);
     expect(items.orbs.length).toBe(0);
   });
@@ -428,8 +474,8 @@ describe("items", () => {
     const pilot = new RivalDriver(new Rand(9), race.player, 0);
     let rivalUses = 0;
     const use = race.items.use.bind(race.items);
-    race.items.use = (k, karts) => {
-      const ok = use(k, karts);
+    race.items.use = (k, karts, field) => {
+      const ok = use(k, karts, field);
       if (ok && !k.isPlayer) rivalUses++;
       return ok;
     };
@@ -644,7 +690,7 @@ function duel(gap: number, lateral = 0) {
 }
 
 describe("the new items", () => {
-  it("throw a boomerang where the arrow points; it spins that kart and comes home", () => {
+  it("throw a boomerang where the arrow was locked: one press locks it, the next throws", () => {
     const { t, items, a, b } = duel(20, 0);
     const c = new Kart(3, "C", 3, false);
     // two karts 20 m up the road, one 5 m to the left and one 5 m to the right
@@ -653,13 +699,19 @@ describe("the new items", () => {
     c.placeOn(t, ahead, -5);
     items.grant(a, "boomerang");
     expect(a.uses).toBe(3);
-    a.aim = Math.atan2(5, 20); // the arrow, locked on the left one
-    expect(items.press(a, [a, b, c])).toBe(true); // a boomerang flies at once
+    a.aim = Math.atan2(5, 20); // the arrow, on the left one
+    expect(items.press(a, [a, b, c])).toBe(true); // the first press locks it
+    expect(a.aimLocked).toBeCloseTo(Math.atan2(5, 20), 9);
+    expect(items.boomerangs.length).toBe(0);
+    a.aim = -0.5; // (the sweep would have moved on; the lock holds)
+    expect(items.release(a, [a, b, c])).toBe(false); // letting go does nothing
+    expect(items.press(a, [a, b, c])).toBe(true); // the second throws
     expect(a.uses).toBe(2);
-    expect(a.item).toBe("boomerang");
+    expect(a.aimLocked).toBeNull(); // the arrow sweeps again for the next one
     let caught = false;
+    const f = fieldOf([b, c, a]);
     for (let i = 0; i < 60 * 5 && !caught; i++) {
-      items.update(1 / 60, t, [a, b, c], () => 1);
+      items.update(1 / 60, t, [a, b, c], f);
       caught = items.boomerangs.length === 0;
     }
     expect(b.spin).toBeGreaterThan(0);
@@ -668,7 +720,7 @@ describe("the new items", () => {
     expect(a.spin).toBe(0); // and it never hits its own thrower
   });
 
-  it("send a bomb after the racer one place ahead, and only them", () => {
+  it("send a bomb after the racer one place ahead; its blast catches everyone near them", () => {
     const { t, items, a, b } = duel(30);
     const leader = new Kart(3, "C", 3, false), beside = new Kart(4, "D", 4, false);
     leader.placeOn(t, t.wrap(t.startIndex + 20 + Math.round(70 / SPACING)), 0);
@@ -678,20 +730,22 @@ describe("the new items", () => {
     const all = [a, b, leader, beside];
     items.grant(a, "bomb");
     a.aim = 0.6; // even thrown off to the side, it finds its target
-    expect(items.press(a, all)).toBe(true); // held out behind first
+    expect(items.press(a, all)).toBe(true); // the first press locks the arrow; the bomb rides behind
     expect(a.trailing).toBe(true);
-    expect(items.release(a, all)).toBe(true); // let go: thrown
+    expect(items.bombs.length).toBe(0);
+    expect(items.press(a, all)).toBe(true); // the second throws it
     expect(items.bombs[0].target).toBe(b);
     let booms = 0;
+    const f = fieldOf([leader, b, beside, a]);
     for (let i = 0; i < 60 * 4; i++) {
-      items.update(1 / 60, t, all, () => 1);
+      items.update(1 / 60, t, all, f);
       booms += items.events.filter((e) => e.kind === "boom").length;
       items.events = [];
     }
     expect(booms).toBe(1);
     expect(b.spin).toBeGreaterThan(0);
-    expect(beside.spin).toBe(0); // close by, but not the target
-    expect(leader.spin).toBe(0);
+    expect(beside.spin).toBeGreaterThan(0); // 3 m away: inside the blast
+    expect(leader.spin).toBe(0); // 40 m away: not
     expect(a.spin).toBe(0);
   });
 
@@ -702,15 +756,16 @@ describe("the new items", () => {
     items.grant(a, "bomb");
     a.aim = 0;
     items.press(a, [a, b]);
-    items.release(a, [a, b]);
+    items.press(a, [a, b]);
     expect(items.bombs[0].target).toBeNull();
-    for (let i = 0; i < 60 * 2; i++) items.update(1 / 60, t, [a, b], () => 1);
+    const f = fieldOf([b, a]);
+    for (let i = 0; i < 60 * 2; i++) items.update(1 / 60, t, [a, b], f);
     const mine = items.bombs[0];
     expect(mine.landed).toBe(true); // sitting on the track ahead of where it was thrown
     expect(Math.hypot(mine.x - a.x, mine.y - a.y)).toBeGreaterThan(10);
     expect(b.spin).toBe(0); // nobody has come near it yet
     [a.x, a.y] = [mine.x + 1, mine.y]; // the thrower drives into its own bomb
-    items.update(1 / 60, t, [a, b], () => 1);
+    items.update(1 / 60, t, [a, b], f);
     expect(items.bombs.length).toBe(0);
     expect(a.spin).toBeGreaterThan(0);
     expect(Math.hypot(b.x - mine.x, b.y - mine.y)).toBeGreaterThan(BOMB_BLAST); // and b was far away
@@ -726,7 +781,8 @@ describe("the new items", () => {
     items.grant(a, "orb");
     items.use(a, [a, b]);
     expect(items.orbs[0].target).toBe(b);
-    for (let i = 0; i < 60 * 4 && items.orbs.length; i++) items.update(1 / 60, t, [a, b], () => 1);
+    const f = fieldOf([b, a]);
+    for (let i = 0; i < 60 * 4 && items.orbs.length; i++) items.update(1 / 60, t, [a, b], f);
     expect(items.orbs.length).toBe(0);
     expect(b.spin).toBe(0);
     // ramming: the prism kart barges into the other one, spins it, and is not slowed itself
@@ -740,7 +796,7 @@ describe("the new items", () => {
     expect(b.v).toBe(25);
   });
 
-  it("shock everyone else: they spin, shrink and lose their items, the user does not", () => {
+  it("shock everyone else: they spin, shrink and lose their items; a full-size kart flattens them", () => {
     const { items, a, b } = duel(30);
     const c = new Kart(3, "C", 3, false);
     items.grant(b, "orb");
@@ -753,6 +809,11 @@ describe("the new items", () => {
     expect(c.shrink).toBe(0);
     expect(a.spin + a.shrink).toBe(0);
     expect(items.events.some((e) => e.kind === "shock")).toBe(true);
+    b.spin = 0;
+    [a.x, a.y] = [b.x - 1.4, b.y];
+    const { spun } = collideKarts([a, b]);
+    expect(spun).toEqual([[b, a]]); // the shrunk one is run over
+    expect(a.spin).toBe(0);
   });
 
   it("block an orb from behind with an item held out as a shield", () => {
@@ -763,10 +824,214 @@ describe("the new items", () => {
     items.grant(a, "orb");
     items.use(a, [a, b]);
     expect(items.orbs[0].target).toBe(b);
-    for (let i = 0; i < 60 * 4 && items.orbs.length; i++) items.update(1 / 60, t, [a, b], () => 1);
+    const f = fieldOf([b, a]);
+    for (let i = 0; i < 60 * 4 && items.orbs.length; i++) items.update(1 / 60, t, [a, b], f);
     expect(b.spin).toBe(0); // the oil took the hit
     expect(b.item).toBeNull();
     expect(items.events.some((e) => e.kind === "blocked" && e.kart === b)).toBe(true);
+  });
+
+  it("slide a puck along the locked arrow, bouncing off the edge of the road, into the first kart", () => {
+    const { t, items, a, b } = duel(30, 0);
+    a.v = 20;
+    items.grant(a, "puck");
+    a.aim = 0.45; // off to the left: it hits the edge of the road and comes back across it
+    items.press(a, [a, b]);
+    expect(a.trailing).toBe(true); // locked, it rides behind as a shield
+    items.press(a, [a, b]);
+    expect(items.pucks.length).toBe(1);
+    let bounces = 0;
+    const f = fieldOf([b, a]);
+    for (let i = 0; i < 60 * 3 && b.spin <= 0; i++) {
+      items.update(1 / 60, t, [a, b], f);
+      bounces += items.events.filter((e) => e.kind === "bounce").length;
+      items.events = [];
+      const p = items.pucks[0];
+      if (p) expect(Math.abs(t.offset(p.x, p.y, p.idx))).toBeLessThan(HALF_WIDTH + 2.5);
+    }
+    expect(bounces).toBeGreaterThan(0);
+    expect(a.spin).toBe(0);
+  });
+
+  it("take items out against each other: a puck and an orb, a puck and an oil slick", () => {
+    const { t, items, a, b } = duel(40, 0);
+    const f = fieldOf([b, a]);
+    // b drops oil behind it; a's puck, thrown straight, runs into it
+    items.grant(b, "oil");
+    items.use(b, [a, b]);
+    items.grant(a, "puck");
+    a.aim = 0;
+    items.press(a, [a, b]);
+    items.press(a, [a, b]);
+    for (let i = 0; i < 60 * 3 && items.pucks.length; i++) items.update(1 / 60, t, [a, b], f);
+    expect(items.pucks.length).toBe(0);
+    expect(items.slicks.length).toBe(0);
+    expect(b.spin).toBe(0);
+    // an orb of b's, sitting on the road 6 m ahead, meets a's puck head on
+    items.events = [];
+    items.grant(a, "puck");
+    items.press(a, [a, b]);
+    items.press(a, [a, b]);
+    const ahead = t.wrap(a.idx + Math.round(6 / SPACING));
+    items.orbs.push({ idx: ahead, carry: 0, x: t.xs[ahead], y: t.ys[ahead], offset: 0, v: 0, ttl: 5, owner: b, target: null });
+    for (let i = 0; i < 30 && items.pucks.length + items.orbs.length; i++) items.update(1 / 60, t, [a, b], f);
+    expect(items.pucks.length + items.orbs.length).toBe(0);
+    expect(items.events.some((e) => e.kind === "clash")).toBe(true);
+  });
+
+  it("let a triple puck or orb circling a kart block a hit, one each", () => {
+    const { t, items, a, b } = duel(30);
+    items.grant(b, "puck3");
+    items.grant(a, "orb");
+    items.use(a, [a, b]);
+    const f = fieldOf([b, a]);
+    for (let i = 0; i < 60 * 4 && items.orbs.length; i++) items.update(1 / 60, t, [a, b], f);
+    expect(b.spin).toBe(0);
+    expect(b.uses).toBe(2); // one of the three took it
+  });
+
+  it("send a comet to the leader: it comes down on them, and its blast takes whoever is near", () => {
+    const t = Track.fromPoints(calm());
+    const items = new Items(new Rand(5));
+    const back = new Kart(1, "A", 1, false), lead = new Kart(2, "B", 2, false), near = new Kart(3, "C", 3, false);
+    const far = new Kart(4, "D", 4, false);
+    back.placeOn(t, t.startIndex + 10, 0);
+    lead.placeOn(t, t.wrap(t.startIndex + 10 + Math.round(200 / SPACING)), 0);
+    near.placeOn(t, t.wrap(t.startIndex + 10 + Math.round(197 / SPACING)), 2);
+    far.placeOn(t, t.wrap(t.startIndex + 10 + Math.round(100 / SPACING)), 0);
+    const all = [back, lead, near, far];
+    for (const k of all) k.updateProgress(t);
+    const f = fieldOf([lead, near, far, back]);
+    items.grant(back, "comet");
+    items.use(back, all, f);
+    expect(items.comets.length).toBe(1);
+    expect(items.unavailable().has("comet")).toBe(true); // one at a time
+    for (let i = 0; i < 60 * 6 && items.comets.length; i++) items.update(1 / 60, t, all, f);
+    expect(items.comets.length).toBe(0);
+    expect(lead.spin).toBeGreaterThan(1.5); // the leader takes the worst of it
+    expect(near.spin).toBeGreaterThan(0); // 3 m away: inside the blast
+    expect(far.spin).toBe(0); // passed on the way: untouched
+    expect(Math.hypot(near.x - lead.x, near.y - lead.y)).toBeLessThan(COMET_BLAST);
+  });
+
+  it("knock a comet out of the air with a horn, and spin the karts close by", () => {
+    const { t, items, a, b } = duel(5);
+    const f = fieldOf([b, a]);
+    items.grant(a, "comet");
+    items.use(a, [a, b], f);
+    for (let i = 0; i < 30; i++) items.update(1 / 60, t, [a, b], f); // on its way
+    const c = items.comets[0];
+    [c.x, c.y] = [b.x + 5, b.y]; // right over b
+    items.grant(b, "horn");
+    items.press(b, [a, b], f);
+    expect(items.comets.length).toBe(0);
+    expect(a.spin).toBeGreaterThan(0); // a was 5 m behind
+    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeLessThan(HORN_R);
+    expect(b.spin).toBe(0);
+  });
+
+  it("fill the screens of everyone ahead with static, and nobody's behind", () => {
+    const { items, a, b } = duel(30);
+    const c = new Kart(3, "C", 3, false);
+    c.dist = a.dist - 20; // behind
+    items.grant(a, "static");
+    items.press(a, [a, b, c]);
+    expect(b.staticT).toBe(STATIC_TIME);
+    expect(c.staticT).toBe(0);
+    expect(a.staticT).toBe(0);
+  });
+
+  it("put a grabber in front of the kart that bites karts and items, a boost with every bite", () => {
+    const { t, items, a, b } = duel(3);
+    const f = fieldOf([b, a]);
+    items.grant(a, "grabber");
+    items.press(a, [a, b], f);
+    expect(a.grab).toBeGreaterThan(0);
+    for (let i = 0; i < 40 && b.spin <= 0; i++) items.update(1 / 60, t, [a, b], f);
+    expect(b.spin).toBeGreaterThan(0);
+    expect(a.boostTime).toBeGreaterThan(0);
+    expect(items.events.some((e) => e.kind === "bite")).toBe(true);
+  });
+
+  it("set a jackpot's eight circling, then use them one press at a time", () => {
+    const { items, a, b } = duel(30);
+    items.grant(a, "jackpot");
+    items.press(a, [a, b]);
+    expect(a.jackpot).toEqual(JACKPOT);
+    const used: number[] = [];
+    for (let k = 0; k < 8; k++) {
+      a.itemAge = 5;
+      expect(items.press(a, [a, b])).toBe(true);
+      used.push(a.jackpot.length);
+    }
+    expect(used).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
+    expect(a.item).toBeNull();
+    expect(items.slicks.length + items.bombs.length + items.pucks.length + items.orbs.length).toBe(4);
+    expect(a.prism).toBeGreaterThan(0); // the last of the eight
+  });
+
+  it("give coins that add top speed, up to ten, and lose three of them in a spin", () => {
+    const { items, a, b } = duel(30);
+    const cls = CLASSES.pro, before = a.topSpeed(cls);
+    items.grant(a, "coin");
+    items.press(a, [a, b]);
+    expect(a.coins).toBe(2);
+    a.coins = 12;
+    for (let k = 0; k < 2; k++) {
+      items.grant(a, "coin");
+      items.press(a, [a, b]);
+    }
+    expect(a.coins).toBe(10);
+    expect(a.topSpeed(cls)).toBeCloseTo(before * (1 + 10 * COIN_SPEED), 9);
+    a.spinOut();
+    expect(a.coins).toBe(7);
+  });
+
+  it("make a phantom untouchable and steal it the item of a kart ahead", () => {
+    const { t, items, a, b } = duel(30);
+    const f = fieldOf([b, a]);
+    items.grant(b, "prism");
+    items.grant(a, "phantom");
+    items.press(a, [a, b], f);
+    expect(a.phantom).toBeGreaterThan(0);
+    expect(b.item).toBeNull(); // taken
+    expect(a.item).toBeNull();
+    for (let i = 0; i < 70; i++) items.update(1 / 60, t, [a, b], f);
+    expect(a.item).toBe("prism"); // arrived
+    expect(a.spinOut()).toBe(false); // nothing touches a phantom
+    b.x = a.x + 0.5;
+    b.y = a.y;
+    expect(collideKarts([a, b]).hits.length).toBe(0); // karts pass through it
+  });
+
+  it("boost on every press of a gold turbo until it runs out, then it is gone", () => {
+    const { t, items, a, b } = duel(30);
+    const f = fieldOf([b, a]);
+    items.grant(a, "gold");
+    let boosts = 0;
+    for (let i = 0; i < 60 * (GOLD_TIME + 1); i++) {
+      if (i % 30 === 0 && a.item === "gold") {
+        a.boostTime = 0;
+        items.press(a, [a, b], f);
+        if (a.boostTime > 0) boosts++;
+      }
+      items.update(1 / 60, t, [a, b], f);
+    }
+    expect(boosts).toBeGreaterThanOrEqual(14);
+    expect(a.item).toBeNull();
+  });
+
+  it("throw a fireball on every press while flares last, and they spin the kart they hit", () => {
+    const { t, items, a, b } = duel(14);
+    const f = fieldOf([b, a]);
+    a.v = 15;
+    items.grant(a, "flares");
+    items.press(a, [a, b], f);
+    expect(items.pucks.filter((p) => p.kind === "flare").length).toBe(1);
+    expect(items.press(a, [a, b], f)).toBe(false); // not again so soon
+    for (let i = 0; i < 60 * 2 && b.spin <= 0; i++) items.update(1 / 60, t, [a, b], f);
+    expect(b.spin).toBeGreaterThan(0);
+    expect(a.item).toBe("flares"); // still burning
   });
 
   it("turn the last kart into a rocket that flies itself up the road, past two karts at most", async () => {
@@ -800,6 +1065,34 @@ describe("the new items", () => {
     expect(from - best).toBeLessThanOrEqual(2); // two karts passed at most
     expect(best).toBeGreaterThan(1); // never into the lead
     expect(p.dist - start).toBeGreaterThan(CLASSES.pro.vmax * flown * 1.1); // faster than driving while it lasts
+  });
+
+  it("are all used by rivals in a race", async () => {
+    // seven rivals at a time, each handed a different item, in a race of their own (the shock,
+    // which knocks every item out of every hand, in a round of its own)
+    const kinds = ITEM_KINDS.filter((k) => k !== "rocket" && k !== "shock");
+    const rounds = [kinds.slice(0, 7), kinds.slice(7, 14), kinds.slice(14), ["shock"]];
+    const used = new Set<string>();
+    for (const [n, round] of rounds.entries()) {
+      const race = new Race({ rivals: 7, difficulty: "legend", theme: THEMES[0], seed: 8 + n, replay: twisty() }, null, () => {});
+      await race.prepare();
+      race.phase = "racing";
+      const pilot = new RivalDriver(new Rand(3), race.player, 0);
+      const use = race.items.use.bind(race.items);
+      race.items.use = (k, karts, field) => {
+        const item = k.item;
+        const ok = use(k, karts, field);
+        if (ok && item && !k.isPlayer) used.add(item);
+        return ok;
+      };
+      for (let i = 0; i < 60 * 4; i++) race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
+      race.karts.filter((k) => !k.isPlayer).forEach((k, i) => { if (i < round.length) race.items.grant(k, round[i] as never); });
+      for (let i = 0; i < 60 * 14; i++) {
+        race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts, race.items));
+        race.events = [];
+      }
+    }
+    expect([...kinds, "shock"].filter((k) => !used.has(k))).toEqual([]);
   });
 });
 
@@ -901,7 +1194,7 @@ describe("the touch joystick", () => {
 });
 
 describe("aiming", () => {
-  it("sweeps the arrow while a boomerang is ready, and throws along it on the press", async () => {
+  it("sweeps the arrow while an aimed item is ready, stops it on the first press, throws on the second", async () => {
     const race = new Race({ rivals: 3, difficulty: "pro", theme: THEMES[0], seed: 6, replay: twisty() }, null, () => {});
     await race.prepare();
     const coast = { steer: 0, throttle: 1, brake: 0, drift: false };
@@ -914,11 +1207,17 @@ describe("aiming", () => {
     }
     expect(Math.max(...aims) - Math.min(...aims)).toBeGreaterThan(1); // it really sweeps
     for (const a of aims) expect(Math.abs(a)).toBeLessThanOrEqual(AIM_MAX + 1e-9);
-    race.update(1 / 60, { ...coast, item: true });
-    const b = race.items.boomerangs[0];
     const p = race.player;
-    const off = Math.atan2(b.vy, b.vx) - (p.heading + p.aim);
-    expect(Math.abs(Math.atan2(Math.sin(off), Math.cos(off)))).toBeLessThan(1e-6); // thrown along the arrow
+    race.update(1 / 60, { ...coast, item: true }); // press: locked
+    const locked = p.aimLocked!;
+    expect(locked).not.toBeNull();
+    for (let i = 0; i < 40; i++) race.update(1 / 60, coast); // let go and wait: it stays put
+    expect(p.aimLocked).toBe(locked);
+    expect(race.items.boomerangs.length).toBe(0);
+    race.update(1 / 60, { ...coast, item: true }); // press again: thrown
+    const b = race.items.boomerangs[0];
+    const off = Math.atan2(b.vy, b.vx) - (p.heading + locked);
+    expect(Math.abs(Math.atan2(Math.sin(off), Math.cos(off)))).toBeLessThan(1e-6); // along the locked arrow
   });
 });
 
@@ -941,11 +1240,12 @@ describe("the grand prix", () => {
     expect(cup.podium().map((x) => x.id)).toEqual([0, 1, 2]); // 39, 37, 35
   });
 
-  it("runs through every world, the reef, the mountains and the volcano too", () => {
+  it("runs through every world, the reef, the mountains, the volcano, the building site and the moon too", () => {
     const ids = THEMES.map((t) => t.id);
-    expect(ids).toEqual(expect.arrayContaining(["valley", "neon", "mesa", "reef", "mountain", "volcano"]));
+    expect(ids).toEqual(["valley", "neon", "mesa", "reef", "mountain", "volcano", "construction", "moon"]);
     expect(THEMES.find((t) => t.id === "reef")!.underwater).toBe(true);
     expect(THEMES.find((t) => t.id === "volcano")!.volcano).toBe(true);
+    expect(THEMES.find((t) => t.id === "moon")!.gravity).toBeLessThan(0.5);
   });
 });
 
@@ -962,7 +1262,7 @@ describe("the mountains", () => {
     for (let i = 1; i < t.count; i++) {
       steepest = Math.max(steepest, Math.abs(t.elev[i] - t.elev[i - 1]) / Math.max(1e-6, t.s[i] - t.s[i - 1]));
     }
-    expect(steepest).toBeLessThan(0.16); // never steeper than about 15%
+    expect(steepest).toBeLessThan(0.23); // a mountain road: never steeper than about 22%
     const pilot = new RivalDriver(new Rand(2), race.player, 0);
     let climbing = 0;
     for (let i = 0; i < 60 * 240 && race.phase !== "done"; i++) {
@@ -1010,6 +1310,21 @@ describe("the mountains", () => {
 });
 
 describe("the soundtrack", () => {
+  it("has a song of its own for every world, every bar of it whole", async () => {
+    const { SONGS, chord, midi } = await import("../src/game/core/music");
+    for (const t of THEMES) expect(SONGS[t.id], t.id).toBeDefined();
+    for (const [name, song] of Object.entries(SONGS)) {
+      for (const bar of song.lead) {
+        const toks = bar.split(/\s+/);
+        expect(toks.length, `${name}: ${bar}`).toBe(16);
+        for (const tok of toks) if (tok !== "-" && tok !== ".") expect(() => midi(tok), `${name}: ${tok}`).not.toThrow();
+      }
+      for (const c of song.chords) expect(chord(c).length).toBeGreaterThanOrEqual(3);
+      for (const d of Object.values(song.drums)) expect(d.length).toBe(16);
+    }
+    expect(new Set(THEMES.map((t) => SONGS[t.id].lead.join("|"))).size).toBe(THEMES.length);
+  });
+
   it("parses its notes and chords", async () => {
     const { chord, midi } = await import("../src/game/core/music");
     expect(midi("A4")).toBe(69);
@@ -1188,6 +1503,189 @@ describe("what a track type confirms", () => {
         expect(d > h.len + 20 && d < t.length - 60).toBe(true);
       }
     }
+  });
+});
+
+describe("the mountain pass, driven on", () => {
+  const mountain = THEMES.find((t) => t.id === "mountain")!;
+
+  it("builds its climbs as rocky mountainsides and as ledges along cliffs", async () => {
+    const styles = new Set<string>();
+    for (const seed of [3, 4, 5, 6]) {
+      const race = new Race({ rivals: 0, difficulty: "pro", theme: mountain, seed, replay: twisty() }, null, () => {});
+      await race.prepare();
+      for (const h of race.track.hills) {
+        styles.add(h.style!);
+        if (h.style === "cliff") {
+          expect(h.shape).toBe("plateau"); // a level ledge, cut into the rock
+          expect([1, -1]).toContain(h.side);
+        }
+      }
+    }
+    expect([...styles].sort()).toEqual(["cliff", "rock"]);
+  });
+});
+
+describe("the construction zone", () => {
+  const site = THEMES.find((t) => t.id === "construction")!;
+  const middle = (t: Track, h: { s0: number; len: number }) => t.s.findIndex((s) => s >= h.s0 + h.len / 2);
+
+  it("builds its climbs as foundations, scaffolds and girders, a tower crane by every girder", async () => {
+    const styles = new Set<string>();
+    let girders = 0, cranes = 0;
+    for (const seed of [3, 4, 5, 6]) {
+      const race = new Race({ rivals: 0, difficulty: "pro", theme: site, seed, replay: twisty() }, null, () => {});
+      await race.prepare();
+      const t = race.track;
+      for (const h of t.hills) {
+        styles.add(h.style!);
+        expect(h.shape).toBe("plateau");
+        if (h.style !== "girder") continue;
+        girders++;
+        expect(h.h).toBeGreaterThan(6); // high up on the crane's arm
+        const i = middle(t, h);
+        const by = race.scenery.items.some((it) => Math.abs(Math.hypot(it.x - t.xs[i], it.y - t.ys[i]) - (HALF_WIDTH + 5)) < 0.01);
+        if (by) cranes++;
+      }
+    }
+    expect([...styles].sort()).toEqual(["foundation", "girder", "scaffold"]);
+    expect(girders).toBeGreaterThan(0);
+    expect(cranes).toBe(girders);
+  });
+
+  it("runs its tunnels through the steel frames of buildings", async () => {
+    let tunnels = 0;
+    for (const seed of [3, 4]) {
+      const race = new Race({ rivals: 0, difficulty: "pro", theme: site, seed, replay: calm() }, null, () => {});
+      await race.prepare();
+      tunnels += race.features.tunnels.length;
+    }
+    expect(site.tunnels).toBe("frame");
+    expect(tunnels).toBeGreaterThan(0);
+  });
+
+  it("is raced to the finish up on the structures, nobody falling through or off them", async () => {
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: site, seed: 3, replay: twisty() }, null, () => {});
+    await race.prepare();
+    const pilot = new RivalDriver(new Rand(2), race.player, 0);
+    let up = 0;
+    for (let i = 0; i < 60 * 240 && race.phase !== "done"; i++) {
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
+      race.events = [];
+      if (race.player.elev > 1.5) up++;
+      for (const k of race.karts) {
+        expect(Number.isFinite(k.x) && Number.isFinite(k.elev)).toBe(true);
+        if (!k.air && !k.falling) expect(k.elev).toBeGreaterThan(k.ground - 0.05);
+        if (!k.air && k.ground > 0.8) expect(Math.abs(k.offset)).toBeLessThanOrEqual(HALF_WIDTH - 0.69);
+      }
+    }
+    expect(race.player.finished).toBe(true);
+    expect(up).toBeGreaterThan(120); // the player really drove up on them
+  });
+});
+
+describe("the moon", () => {
+  const moon = THEMES.find((t) => t.id === "moon")!;
+  /** Frames the player spends floating off a crater's rim (a crest, not a ramp) in a race. */
+  const floating = async (theme: typeof moon) => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme, seed: 3, replay: twisty() }, null, () => {});
+    await race.prepare();
+    const p = race.player, pilot = new RivalDriver(new Rand(2), p, 0);
+    let frames = 0, launches = 0, crest = false;
+    for (let i = 0; i < 60 * 240 && race.phase !== "done"; i++) {
+      const was = p.air;
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, p, race.karts));
+      race.events = [];
+      if (!was && p.air) {
+        crest = p.rampU < 0;
+        if (crest) launches++;
+      }
+      if (p.air && crest) frames++;
+      expect(Number.isFinite(p.elev)).toBe(true);
+    }
+    return { frames, launches, finished: p.finished, gravity: p.gravity, craters: race.track.hills.length };
+  };
+
+  it("has low gravity: karts float off the tops of crater rims, and still finish", async () => {
+    const low = await floating(moon);
+    const earth = await floating({ ...moon, gravity: 1 });
+    expect(low.gravity).toBeCloseTo(26 * 0.3, 5);
+    expect(low.craters).toBeGreaterThan(3);
+    expect(low.launches).toBeGreaterThan(2);
+    expect(low.frames).toBeGreaterThan(Math.max(30, 4 * earth.frames)); // the same rims, hardly a hop at home
+    expect(low.finished).toBe(true);
+  });
+
+  it("puts every driver in a helmet", () => {
+    expect(moon.helmets).toBe(true);
+  });
+});
+
+describe("drawing the worlds", () => {
+  const scene = async () => {
+    const { makeCamera } = await import("../src/game/render/mode7");
+    const gfx = await import("../src/game/core/gfx");
+    const cam = makeCamera();
+    const scr = { buf: new Uint32Array(gfx.W * gfx.H) } as unknown as import("../src/game/core/gfx").Screen;
+    const faces: { z: number; draw: () => void }[] = [];
+    return { cam, scr, faces, painter: { cam, scr, fog: gfx.hex("#000000"), faces } };
+  };
+  const look = (cam: { x: number; y: number; heading: number }, t: Track, i: number) => {
+    const [tx, ty] = t.tangent(i);
+    cam.x = t.xs[i] - tx * 6;
+    cam.y = t.ys[i] - ty * 6;
+    cam.heading = Math.atan2(ty, tx);
+  };
+
+  it("builds every style of climb out of faces, and draws them", async () => {
+    const { hillFaces } = await import("../src/game/render/structures");
+    for (const style of ["earth", "rock", "cliff", "foundation", "girder", "scaffold", "crater"] as const) {
+      const t = Track.fromPoints(calm());
+      const plateau = ["cliff", "foundation", "girder", "scaffold"].includes(style);
+      t.addHill({ s0: 200, len: 160, h: 6, shape: plateau ? "plateau" : "sine", style, side: 1 });
+      const { cam, scr, faces, painter } = await scene();
+      look(cam, t, t.s.findIndex((s) => s >= 215));
+      hillFaces(painter, t, THEMES[0]);
+      expect(faces.length, style).toBeGreaterThan(40);
+      for (const f of faces) f.draw();
+      expect(scr.buf.some((c) => c !== 0), style).toBe(true);
+    }
+  });
+
+  it("builds a tunnel through rock, or through a building's steel frame", async () => {
+    const { tunnelFaces } = await import("../src/game/render/structures");
+    const t = Track.fromPoints(calm());
+    const f = new Features(true);
+    f.onCommit(t, 0, t.count, () => false, () => 0.5);
+    const counts: number[] = [];
+    for (const theme of [THEMES.find((x) => x.id === "mountain")!, THEMES.find((x) => x.id === "construction")!]) {
+      const { cam, faces, painter } = await scene();
+      look(cam, t, f.tunnels[0].start);
+      tunnelFaces(painter, t, f, theme);
+      for (const face of faces) face.draw();
+      counts.push(faces.length);
+    }
+    expect(counts[0]).toBeGreaterThan(20);
+    expect(counts[1]).toBeGreaterThan(counts[0]); // columns, slabs and glass: more parts than rock
+  });
+
+  it("paints a city of towers and tower cranes behind the building site, and the Earth in the moon's sky", async () => {
+    const { Sky } = await import("../src/game/render/sky");
+    const { channels } = await import("../src/game/core/gfx");
+    const sees = async (id: string, test: (r: number, g: number, b: number) => boolean) => {
+      const sky = new Sky(THEMES.find((x) => x.id === id)!, 74, 5);
+      const { scr } = await scene();
+      for (let k = 0; k < 24; k++) {
+        sky.draw(scr, (k * Math.PI) / 12);
+        if (scr.buf.some((c) => test(...channels(c)))) return true;
+      }
+      return false;
+    };
+    const crane = (r: number, g: number, b: number) => r > 180 && g > 120 && b < 90;
+    const sea = (r: number, _g: number, b: number) => b > 110 && b > r + 60;
+    expect(await sees("construction", crane)).toBe(true);
+    expect(await sees("moon", sea)).toBe(true);
+    expect(await sees("moon", crane)).toBe(false);
   });
 });
 

@@ -1034,6 +1034,219 @@ export function droneFrames(): SceneryArt[] {
   });
 }
 
+// ---------------------------------------------------------------------------------- the construction zone
+
+const STEEL_Y = hex("#f2b705"), STEEL_YD = hex("#b38300");
+
+/** A tower crane: a yellow lattice mast, a cab at the top, the jib out to one side with its
+ * trolley and hook, the counter-jib and its concrete weights on the other. */
+function crane(rng: Rand): SceneryArt {
+  const W = 56, Hh = 96;
+  const s = makeSprite(W, Hh);
+  const mx = 16; // the mast's left rail
+  for (let y = 12; y < Hh; y++) { // the mast: two rails and zigzag lacing
+    px(s, mx, y, STEEL_Y);
+    px(s, mx + 5, y, STEEL_YD);
+    const k = (y - 12) % 10;
+    px(s, mx + Math.round(k < 5 ? k : 10 - k), y, k < 5 ? STEEL_Y : STEEL_YD);
+  }
+  for (let x = 2; x < W; x++) { // the jib and the counter-jib, a lattice beam
+    px(s, x, 10, STEEL_Y);
+    px(s, x, 14, STEEL_YD);
+    const k = x % 6;
+    px(s, x, 10 + Math.round(k < 3 ? k * 1.3 : (6 - k) * 1.3), STEEL_Y);
+  }
+  stroke(s, mx + 2.5, 2, 4, 10, 0.4, hex("#4a4f5a")); // the tie rods from the top of the mast
+  stroke(s, mx + 2.5, 2, W - 2, 10, 0.4, hex("#4a4f5a"));
+  rect(s, mx - 1, 0, mx + 7, 3, STEEL_Y);
+  rect(s, 2, 15, 9, 22, hex("#9a9a94")); // the counterweights
+  rect(s, 2, 15, 9, 16, hex("#c4c4bc"));
+  rect(s, mx + 6, 15, mx + 13, 22, hex("#e8e8e2")); // the cab, and its window
+  rect(s, mx + 7, 16, mx + 12, 19, hex("#3a6fd8"));
+  const tx = rng.int(30, W - 6); // the trolley, the cable and the hook
+  rect(s, tx - 1, 14, tx + 2, 16, hex("#4a4f5a"));
+  for (let y = 16; y < 44; y++) px(s, tx, y, hex("#2a2d36"));
+  rect(s, tx - 1, 44, tx + 2, 47, hex("#c0392b"));
+  outline(s, hex("#3a2a00"));
+  return { sprite: s, height: 30 + rng.range(0, 8), solid: false };
+}
+
+/** A building going up: a concrete-and-steel frame, floor by floor, columns standing up from the
+ * unfinished top, a safety net on one floor. */
+function skeleton(rng: Rand): SceneryArt {
+  const W = 52, Hh = 76;
+  const s = makeSprite(W, Hh);
+  const floors = rng.int(5, 8), fh = Math.floor((Hh - 8) / floors);
+  for (let f = 0; f <= floors; f++) {
+    const y = Hh - 1 - f * fh;
+    rect(s, 0, y - 2, W, y + 1, f === 0 ? hex("#8a8a86") : hex("#b8b8b2")); // the slab
+    rect(s, 0, y - 2, W, y - 1, hex("#d6d6d0"));
+  }
+  for (let x = 1; x < W; x += 10) { // the columns, lit on the left
+    rect(s, x, Hh - floors * fh - 6, x + 2, Hh, hex("#9a9ea8"));
+    px(s, x, Hh - floors * fh - 6, hex("#c8ccd4"));
+  }
+  const net = rng.int(1, floors);
+  for (let y = Hh - 1 - net * fh + 2; y < Hh - 1 - (net - 1) * fh - 2; y++) {
+    for (let x = 0; x < W; x++) if ((x + y) % 3 === 0) px(s, x, y, hex("#ff7a1a"));
+  }
+  outline(s, hex("#3a3c42"));
+  return { sprite: s, height: 22 + rng.range(0, 14), solid: false };
+}
+
+/** A cement mixer truck: the cab, the turning drum (lit round its length), the wheels. */
+function mixer(rng: Rand): SceneryArt {
+  const s = makeSprite(36, 22);
+  const paint = rng.pick([hex("#ff7a1a"), hex("#e8e8e2"), hex("#2f80ed")]);
+  rect(s, 2, 12, 34, 17, hex("#3a3d46")); // the chassis
+  rect(s, 25, 5, 34, 15, paint); // the cab
+  rect(s, 27, 7, 32, 10, hex("#9ad0ff"));
+  rod(s, 4, 11, 24, 7, (t) => 5.2 - Math.abs(t - 0.45) * 4, (t, n) => (Math.floor(t * 8 + n * 2) % 2 ? hex("#e8e8e2") : paint));
+  for (const wx of [6, 16, 30]) ball(s, wx, 18, 3, () => hex("#24242c"), 0, 0.5);
+  outline(s, hex("#16171c"));
+  return { sprite: s, height: 3.4, solid: true };
+}
+
+/** An excavator: a yellow cab on its tracks, the boom and the arm reaching up, the bucket. */
+function digger(rng: Rand): SceneryArt {
+  const s = makeSprite(38, 28);
+  rect(s, 2, 21, 24, 27, hex("#2a2b30")); // the tracks
+  for (let x = 3; x < 24; x += 3) px(s, x, 24, hex("#5a5c66"));
+  rect(s, 4, 13, 22, 21, STEEL_Y); // the body and the cab
+  rect(s, 4, 13, 22, 14, hex("#ffd45a"));
+  rect(s, 6, 8, 14, 15, STEEL_Y);
+  rect(s, 7, 9, 13, 13, hex("#9ad0ff"));
+  const up = rng.range(4, 10);
+  stroke(s, 18, 14, 28, up, 1.3, STEEL_YD); // the boom
+  stroke(s, 28, up, 34, 18, 1.1, STEEL_Y); // the arm
+  poly(s, [[31, 18], [37, 18], [36, 23], [32, 23]], () => hex("#5a5c66")); // the bucket
+  outline(s, hex("#2a1e00"));
+  return { sprite: s, height: 4.2, solid: true };
+}
+
+/** A stack of concrete pipes, end on: rings with dark middles, in a pyramid. */
+function pipes(rng: Rand): SceneryArt {
+  const s = makeSprite(30, 18);
+  const c = rng.pick([hex("#a8a49a"), hex("#b06a3a")]);
+  for (const [cx, cy] of [[6, 12], [15, 12], [24, 12], [10.5, 5], [19.5, 5]]) {
+    ball(s, cx, cy, 4.6, () => c, 0, 0.6);
+    disc(s, cx, cy, 2.2, () => hex("#2a2620"));
+  }
+  outline(s, hex("#3a352c"));
+  return { sprite: s, height: 2, solid: true };
+}
+
+/** Steel beams in a pile, red with primer, their flanges catching the light. */
+function girders(rng: Rand): SceneryArt {
+  const s = makeSprite(34, 12);
+  for (let k = 0; k < 3; k++) {
+    const y = 9 - k * 3, x0 = rng.int(0, 4), x1 = 34 - rng.int(0, 4);
+    rect(s, x0, y, x1, y + 1, hex("#d65a3a"));
+    rect(s, x0, y + 1, x1, y + 2, hex("#8a3220"));
+    rect(s, x0, y + 2, x1, y + 3, hex("#b5442a"));
+  }
+  outline(s, hex("#2a120a"));
+  return { sprite: s, height: 1.3, solid: true };
+}
+
+/** A concrete barrier with a red and white band. */
+function barrier(): SceneryArt {
+  const s = makeSprite(26, 12);
+  poly(s, [[1, 12], [5, 4], [21, 4], [25, 12]], (x, y) => (y < 7 ? (Math.floor(x / 4) % 2 ? hex("#e8e8e2") : hex("#d62828")) : x < 6 ? hex("#c8c6bc") : hex("#a8a69c")));
+  outline(s, hex("#3a3a36"));
+  return { sprite: s, height: 1.1, solid: true };
+}
+
+/** A traffic drum: orange and white bands, round. */
+function drum(): SceneryArt {
+  const s = makeSprite(12, 17);
+  rod(s, 6, 1, 6, 16, () => 5, (t) => (Math.floor(t * 5) % 2 ? hex("#f4f4f0") : hex("#ff6a14")));
+  outline(s, hex("#2a1408"));
+  return { sprite: s, height: 1.2, solid: true };
+}
+
+// ---------------------------------------------------------------------------------- the moon
+
+const FOIL = [hex("#f2c14e"), hex("#c8922a"), hex("#ffe08a")];
+
+/** A lunar lander: a gold-foil descent stage on splayed legs, the white ascent stage on top, a
+ * dish. */
+function lander(rng: Rand): SceneryArt {
+  const s = makeSprite(38, 36);
+  for (const [x0, x1] of [[6, 2], [32, 36]]) stroke(s, x0 + (x0 < 19 ? 8 : -8), 22, x1, 34, 0.7, hex("#c8ccd4")); // the legs
+  for (const x of [2, 36]) rect(s, x - 2, 33, x + 3, 35, hex("#a8acb4")); // the pads
+  for (let y = 17; y < 28; y++) for (let x = 9; x < 30; x++) px(s, x, y, FOIL[(x * 7 + y * 3 + Math.floor(rng.next() * 2)) % 3]); // the foil
+  ball(s, 19, 13, 8, (u) => (u < -0.3 ? hex("#ffffff") : hex("#d8dce4")), 0, 0.55); // the ascent stage
+  rect(s, 16, 10, 22, 13, hex("#2a2d36"));
+  stroke(s, 27, 8, 32, 2, 0.5, hex("#c8ccd4"));
+  disc(s, 32.5, 2.5, 2, () => hex("#f4f4f0"));
+  outline(s, hex("#2a2620"));
+  return { sprite: s, height: 7, solid: true };
+}
+
+/** A radio dish on its mount, turned up to the sky. */
+function dish(rng: Rand): SceneryArt {
+  const s = makeSprite(32, 34);
+  rect(s, 14, 18, 18, 34, hex("#9aa0aa")); // the mount
+  rect(s, 10, 31, 22, 34, hex("#7a808a"));
+  const tilt = rng.range(-0.4, 0.4);
+  for (let y = 0; y < 22; y++) {
+    for (let x = 0; x < 32; x++) {
+      const u = (x - 16) / 15, v = (y - 11) / 7, rr = u * u + v * v;
+      if (rr > 1) continue;
+      const lit = 0.75 + 0.35 * (-u * 0.5 - v * 0.6 + tilt * u);
+      px(s, x, y, shade(hex("#e8ecf2"), lit));
+    }
+  }
+  stroke(s, 16, 11, 16 + tilt * 6, 2, 0.5, hex("#5a606c")); // the feed
+  outline(s, hex("#3a3e48"));
+  return { sprite: s, height: 6, solid: true };
+}
+
+/** A habitat: a white dome with a lit window band and a door, a solar panel beside it. */
+function habitat(): SceneryArt {
+  const s = makeSprite(40, 22);
+  for (let y = 0; y < 22; y++) {
+    for (let x = 0; x < 30; x++) {
+      const u = (x - 15) / 14.5, v = (y - 21) / 20;
+      if (u * u + v * v > 1) continue;
+      const [diff] = lit(u, v, Math.sqrt(Math.max(0, 1 - u * u - v * v)));
+      px(s, x, y, shade(hex("#e8ecf2"), 0.55 + diff * 0.6));
+    }
+  }
+  for (let x = 4; x < 26; x += 4) rect(s, x, 13, x + 2, 15, hex("#ffd98a")); // the windows, lit
+  rect(s, 13, 15, 17, 22, hex("#5a606c")); // the door
+  rect(s, 33, 12, 34, 22, hex("#9aa0aa")); // the solar panel
+  poly(s, [[29, 6], [40, 4], [40, 12], [29, 14]], (x, y) => ((x + y) % 3 ? hex("#2a4fb0") : hex("#4a7fe0")));
+  outline(s, hex("#3a3e48"));
+  return { sprite: s, height: 4.5, solid: true };
+}
+
+/** A moon rock, pocked with little craters. */
+function boulder(rng: Rand): SceneryArt {
+  const r = rock(rng, hex("#8a8b91"));
+  for (let k = 0; k < 4; k++) {
+    const x = Math.round(rng.range(5, 17)), y = Math.round(rng.range(4, 12));
+    if (r.sprite.data[y * r.sprite.w + x]) {
+      px(r.sprite, x, y, hex("#5a5b60"));
+      px(r.sprite, x + 1, y, hex("#b0b1b6"));
+    }
+  }
+  return { ...r, height: 1.4 + rng.range(0, 1.8) };
+}
+
+/** A rover: six wheels, a white body with a solar deck, a mast with a camera head. */
+function rover(): SceneryArt {
+  const s = makeSprite(30, 20);
+  rect(s, 5, 9, 25, 14, hex("#e8ecf2"));
+  rect(s, 3, 7, 27, 9, hex("#2a4fb0"));
+  for (const x of [6, 15, 24]) ball(s, x, 16, 3.2, () => hex("#5a5c66"), 0, 0.5);
+  rect(s, 20, 1, 22, 9, hex("#9aa0aa"));
+  rect(s, 18, 0, 25, 3, hex("#d8dce4"));
+  outline(s, hex("#2a2d36"));
+  return { sprite: s, height: 2.2, solid: true };
+}
+
 export function makeScenery(kind: SceneryKind, rng: Rand): SceneryArt {
   switch (kind) {
     case "kelp": return kelp(rng);
@@ -1050,6 +1263,19 @@ export function makeScenery(kind: SceneryKind, rng: Rand): SceneryArt {
     case "vent": return vent(rng);
     case "spire": return spire(rng);
     case "magmarock": return magmarock(rng);
+    case "crane": return crane(rng);
+    case "skeleton": return skeleton(rng);
+    case "mixer": return mixer(rng);
+    case "digger": return digger(rng);
+    case "pipes": return pipes(rng);
+    case "girders": return girders(rng);
+    case "barrier": return barrier();
+    case "drum": return drum();
+    case "lander": return lander(rng);
+    case "dish": return dish(rng);
+    case "habitat": return habitat();
+    case "boulder": return boulder(rng);
+    case "rover": return rover();
     case "pine": return pine(rng);
     case "oak": return oak(rng);
     case "bush": return bush(rng);
@@ -1388,8 +1614,8 @@ export function bombFrames(k = 1): SceneryArt[] {
   });
 }
 
-/** An explosion: a white flash that blooms into fire and drifts off as smoke. */
-export function blastFrames(): SceneryArt[] {
+/** An explosion ``height`` m tall: a white flash that blooms into fire and drifts off as smoke. */
+export function blastFrames(height = 3.2): SceneryArt[] {
   return [0, 1, 2, 3, 4, 5].map((f) => {
     const s = makeSprite(40, 36);
     const rng = new Rand(17 + f);
@@ -1405,7 +1631,7 @@ export function blastFrames(): SceneryArt[] {
           ? (d < 0.4 ? hex("#ffe27a") : d < 0.75 ? hex("#ff8a1f") : hex("#d9381e"))
           : (d < 0.5 ? hex("#8f8a90") : hex("#5d5862")), lower);
     });
-    return { sprite: s, height: 3.2, solid: false };
+    return { sprite: s, height, solid: false };
   });
 }
 
@@ -1467,22 +1693,278 @@ function rocketIcon(k = 1): Sprite {
   return s;
 }
 
+/** A puck: a thick disc seen from a little above, its top lit and its edge showing, with three
+ * studs round the rim that turn as it spins (four frames). */
+export function puckFrames(k = 1): SceneryArt[] {
+  const W = Math.round(18 * k), Hh = Math.round(12 * k), cx = W / 2, rx = W / 2 - 1, ry = rx * 0.42, top = ry + 1;
+  const edge = 3 * k;
+  return [0, 1, 2, 3].map((f) => {
+    const s = makeSprite(W, Hh);
+    // the edge: a band under the top face, lit on the left
+    for (let y = Math.floor(top); y < Math.ceil(top + edge + ry); y++) {
+      for (let x = 0; x < W; x++) {
+        const n = (x + 0.5 - cx) / rx;
+        if (Math.abs(n) > 1) continue;
+        const bottom = top + edge + ry * Math.sqrt(1 - n * n);
+        if (y + 0.5 > bottom) continue;
+        const [diff] = lit(n, 0.3, Math.sqrt(1 - n * n));
+        px(s, x, y, shade(hex("#0f6b36"), 0.55 + diff * 0.7));
+      }
+    }
+    // the top: an ellipse, brighter toward the light, with a pale ring and three turning studs
+    for (let y = 0; y < Hh; y++) {
+      for (let x = 0; x < W; x++) {
+        const u = (x + 0.5 - cx) / rx, v = (y + 0.5 - top) / ry, d = Math.hypot(u, v);
+        if (d > 1) continue;
+        const a = Math.atan2(v, u) - (f * Math.PI) / 6;
+        const stud = d > 0.62 && d < 0.88 && Math.cos(3 * a) > 0.82;
+        const ring = Math.abs(d - 0.45) < 0.1;
+        const base = stud ? hex("#f6f2d2") : ring ? hex("#a8f5c8") : hex("#23b45d");
+        px(s, x, y, shade(base, 0.82 + 0.3 * Math.max(0, -u * 0.6 - v * 0.5)));
+      }
+    }
+    outline(s, hex("#06331a"));
+    return { sprite: s, height: 0.75, solid: false };
+  });
+}
+
+/** A fireball: a hot white core, orange flame round it and red tongues licking up (two frames). */
+export function flareFrames(k = 1): SceneryArt[] {
+  const W = Math.round(14 * k), Hh = Math.round(16 * k);
+  return [0, 1].map((f) => {
+    const s = makeSprite(W, Hh);
+    const cx = W / 2, cy = Hh - W / 2;
+    for (let y = 0; y < Hh; y++) {
+      for (let x = 0; x < W; x++) {
+        const dx = (x + 0.5 - cx) / (W / 2 - 0.5), dy = (y + 0.5 - cy) / (W / 2 - 0.5);
+        // a ball, drawn up into tongues of flame
+        const lick = dy < 0 ? Math.abs(dx) * 1.4 + Math.max(0, -dy - 0.2) * (0.9 + 0.35 * Math.sin(dx * 7 + f * 2)) : 0;
+        const d = Math.hypot(dx, dy > 0 ? dy : 0) + lick;
+        if (d > 1) continue;
+        px(s, x, y, d < 0.35 ? hex("#fff6c8") : d < 0.6 ? hex("#ffd23f") : d < 0.82 ? hex("#ff8a1f") : hex("#e0401a"));
+      }
+    }
+    return { sprite: s, height: 0.9, solid: false };
+  });
+}
+
+/** The comet: an icy blue ball wrapped in pale blue fire, sparkling. */
+export function cometArt(k = 1): SceneryArt {
+  const n = Math.round(22 * k), c = n / 2, r = n * 0.3;
+  const s = makeSprite(n, n);
+  for (let y = 0; y < n; y++) { // the fire round it
+    for (let x = 0; x < n; x++) {
+      const dx = x + 0.5 - c, dy = y + 0.5 - c, d = Math.hypot(dx, dy) / (n / 2 - 0.5);
+      const a = Math.atan2(dy, dx);
+      if (d > 0.82 + 0.16 * Math.sin(a * 7)) continue;
+      px(s, x, y, d > 0.7 ? hex("#2a6bff") : hex("#7cc4ff"));
+    }
+  }
+  ball(s, c, c, r, () => hex("#cfeeff"), hex("#5aa8ff"), 0.6);
+  for (const [dx, dy] of [[-0.9, -0.7], [0.8, -0.85], [0.95, 0.6]]) px(s, c + dx * r * 1.4, c + dy * r * 1.4, 0xffffffff);
+  outline(s, hex("#0b2a6b"));
+  return { sprite: s, height: 1.8, solid: false };
+}
+
+/** A spark of the comet's tail: a small glowing blue ball. */
+export function trailArt(): SceneryArt {
+  const s = makeSprite(8, 8);
+  disc(s, 3.5, 3.5, 3.6, (x, y) => (Math.hypot(x - 3.5, y - 3.5) < 1.8 ? hex("#e6f6ff") : hex("#5aa8ff")));
+  return { sprite: s, height: 0.7, solid: false };
+}
+
+/** A coin, turning (six frames): gold, lit across its face, a star struck in it while it faces you. */
+export function coinFrames(k = 1): SceneryArt[] {
+  const n = Math.round(14 * k);
+  return [0, 1, 2, 3, 4, 5].map((f) => {
+    const s = makeSprite(n, n);
+    const turn = Math.cos((f / 6) * Math.PI), w = Math.max(1.2, (n / 2 - 0.6) * Math.abs(turn));
+    const c = n / 2, r = n / 2 - 0.6;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const u = (x + 0.5 - c) / w, v = (y + 0.5 - c) / r;
+        if (u * u + v * v > 1) continue;
+        const [diff, spec] = lit(u * 0.7, v * 0.7, Math.sqrt(Math.max(0, 1 - 0.49 * (u * u + v * v))));
+        const rim = u * u + v * v > 0.62;
+        const star = Math.abs(turn) > 0.5 && !rim && starAt(u * Math.sign(turn), v);
+        const base = star ? hex("#fff1a8") : rim ? hex("#e0a020") : hex("#ffc93a");
+        px(s, x, y, mix(shade(base, 0.6 + diff * 0.7), 0xffffffff, spec * 0.8));
+      }
+    }
+    outline(s, hex("#6b4500"));
+    return { sprite: s, height: 0.9, solid: false };
+  });
+}
+
+/** Whether (u, v), in -1..1, is on a small five-point star. */
+function starAt(u: number, v: number): boolean {
+  const a = Math.atan2(v, u) + Math.PI / 2, d = Math.hypot(u, v);
+  const r = 0.28 + 0.2 * Math.max(0, Math.cos(((a % ((2 * Math.PI) / 5)) - Math.PI / 5) * 5) ** 3);
+  return d < r * 1.25;
+}
+
+/** The grabber: a steel snapping trap on an arm, its two jaws lined with teeth round a dark
+ * mouth, red lamps for eyes; frame 0 half open, frame 1 wide open, frame 2 snapped shut. */
+export function grabberFrames(k = 1): SceneryArt[] {
+  const W = Math.round(20 * k), Hh = Math.round(20 * k);
+  return [0.55, 1, 0].map((open) => {
+    const s = makeSprite(W, Hh);
+    const cx = W / 2, cy = Hh * 0.5, gap = open * 5 * k, jw = 8 * k, jh = 5 * k;
+    rod(s, cx, Hh - 0.5, cx, cy + gap / 2 + 2 * k, () => 1.5 * k, () => hex("#7a808c")); // the arm
+    if (gap > 0.5) rect(s, Math.round(cx - jw * 0.8), Math.round(cy - gap / 2), Math.round(cx + jw * 0.8), Math.round(cy + gap / 2) + 1, hex("#4a0d18"));
+    for (const half of [-1, 1]) { // the upper jaw (-1) and the lower (+1), each a half shell
+      const edge = cy + (half * gap) / 2;
+      for (let y = Math.floor(edge - jh - 1); y <= edge + jh + 1; y++) {
+        for (let x = Math.floor(cx - jw); x <= cx + jw; x++) {
+          const nx = (x + 0.5 - cx) / jw, ny = (y + 0.5 - edge) / jh;
+          if (nx * nx + ny * ny > 1 || ny * half < 0) continue;
+          const [diff, spec] = lit(nx, ny, Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny)));
+          const stripe = Math.abs(ny) > 0.5 && Math.abs(ny) < 0.68;
+          px(s, x, y, mix(shade(stripe ? hex("#ffcf3a") : hex("#8d95a3"), 0.5 + diff * 0.75), 0xffffffff, spec * 0.7));
+        }
+      }
+      // teeth along the jaw's edge, pointing across the mouth
+      const th = Math.max(1, Math.min(2.2 * k, gap / 2 + 0.5));
+      for (let t = -3; t <= 3; t++) {
+        const tx = cx + t * jw * 0.24;
+        for (let d = 0; d < th; d++) {
+          const w = Math.max(0, (th - d) * 0.45);
+          for (let x = Math.round(tx - w); x <= Math.round(tx + w); x++) px(s, x, edge - half * (d + 0.5), hex("#f4f2e6"));
+        }
+      }
+    }
+    for (const ex of [-0.5, 0.5]) disc(s, cx + ex * jw, cy - gap / 2 - jh * 0.6, 1.1 * k, () => hex("#ff3b2a"));
+    outline(s, hex("#1d2028"));
+    return { sprite: s, height: 1.2, solid: false };
+  });
+}
+
+/** The horn: a red canister with a polished bell flaring out of it. */
+function hornIcon(k = 1): Sprite {
+  const n = Math.round(18 * k);
+  const s = makeSprite(n, n);
+  rod(s, 2 * k, n * 0.62, n * 0.5, n * 0.62, () => 3.6 * k, (t) => (t < 0.15 ? hex("#3a3d46") : hex("#e0302a")));
+  rod(s, n * 0.45, n * 0.62, n - 1, n * 0.32, (t) => (1.2 + 5.2 * t ** 2.2) * k, () => hex("#d8dde6"));
+  for (let y = 0; y < 3; y++) px(s, n - 2, n * 0.32 - 1 + y, hex("#ffffff"));
+  outline(s, hex("#20232a"));
+  return s;
+}
+
+/** Static: an old television, its screen a snowstorm, aerials up. */
+function staticIcon(k = 1): Sprite {
+  const n = Math.round(18 * k);
+  const s = makeSprite(n, n);
+  const x0 = 1.5 * k, x1 = n - 3 * k, y0 = 5 * k, y1 = n - 1.5 * k, d = 2 * k; // the front face, and its depth
+  stroke(s, n / 2, y0, n / 2 - 4 * k, 0.5, 0.45 * k, hex("#c9ccd6"));
+  stroke(s, n / 2, y0, n / 2 + 4 * k, 1, 0.45 * k, hex("#c9ccd6"));
+  poly(s, [[x0 + d, y0 - d], [x1 + d, y0 - d], [x1, y0], [x0, y0]], () => hex("#b58a5a")); // the top
+  poly(s, [[x1, y0], [x1 + d, y0 - d], [x1 + d, y1 - d], [x1, y1]], () => hex("#6b4a2a")); // the side
+  rect(s, Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1), hex("#8f6a40")); // the front
+  let seed = 7;
+  for (let y = Math.round(y0 + 1.5 * k); y < y1 - 1.5 * k; y++) {
+    for (let x = Math.round(x0 + 1.5 * k); x < x1 - 1.5 * k; x++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const g = (seed >> 16) & 255;
+      px(s, x, y, g > 170 ? 0xffffffff : g > 90 ? hex("#9aa0b0") : hex("#3a3f4c"));
+    }
+  }
+  outline(s, hex("#1d1408"));
+  return s;
+}
+
+/** The phantom: a pale violet sheet of a ghost, hollow eyes, glowing at its edges. */
+function phantomIcon(k = 1): Sprite {
+  const n = Math.round(18 * k);
+  const s = makeSprite(n, n);
+  const cx = n / 2;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const u = (x + 0.5 - cx) / (n * 0.38), v = (y + 0.5) / n;
+      const body = v < 0.45 ? u * u + ((v - 0.45) / 0.4) ** 2 <= 1 : Math.abs(u) <= 1 &&
+        v < 0.92 - 0.08 * Math.max(0, Math.sin((u + 1) * Math.PI * 1.5));
+      if (!body) continue;
+      const [diff] = lit(u * 0.8, (v - 0.45) * 0.8, 0.6);
+      px(s, x, y, shade(mix(hex("#d8c8ff"), hex("#9b7bff"), Math.abs(u) * 0.6), 0.65 + diff * 0.6));
+    }
+  }
+  for (const ex of [-0.38, 0.38]) disc(s, cx + ex * n * 0.38, n * 0.4, 1.3 * k, () => hex("#2a1a5a"));
+  outline(s, hex("#4a2a9a"));
+  return s;
+}
+
+/** The jackpot: a gold medal with an 8 on it and eight gems round its rim. */
+function jackpotIcon(k = 1): Sprite {
+  const n = Math.round(18 * k), c = n / 2;
+  const s = makeSprite(n, n);
+  ball(s, c, c, n / 2 - 1, (u, v) => (Math.hypot(u, v) > 0.8 ? hex("#e0a020") : hex("#ffc93a")), 0, 0.55);
+  const gems = ["#ff5fa2", "#5dff7a", "#63c8ff", "#ffffff", "#c79bff", "#ff8a1f", "#3a6fd8", "#ffd23f"].map(hex);
+  for (let j = 0; j < 8; j++) {
+    const a = (j / 8) * Math.PI * 2;
+    disc(s, c + Math.cos(a) * (n / 2 - 2.6 * k), c + Math.sin(a) * (n / 2 - 2.6 * k), 0.9 * k, () => gems[j]);
+  }
+  for (const [oy, r] of [[-1.9, 1.7], [2, 2]]) { // the 8: two rings
+    for (let a = 0; a < 40; a++) {
+      const t = (a / 40) * Math.PI * 2;
+      px(s, c + Math.cos(t) * r * k, c + oy * k + Math.sin(t) * r * k, hex("#5a3a00"));
+    }
+  }
+  outline(s, hex("#6b4500"));
+  return s;
+}
+
+/** Three of an item, one on top of two, for the HUD (a triple oil, puck or orb). */
+function threeOf(item: Sprite, n: number): Sprite {
+  const s = makeSprite(n, n);
+  for (const [fx, fy] of [[0.5, 0.05], [0.2, 0.45], [0.8, 0.45]]) {
+    const ox = Math.round(fx * n - item.w / 2), oy = Math.round(fy * n);
+    for (let y = 0; y < item.h; y++) for (let x = 0; x < item.w; x++) {
+      const c = item.data[y * item.w + x];
+      if (c) px(s, ox + x, oy + y, c);
+    }
+  }
+  return s;
+}
+
+/** A turbo cell, gilded: the gold turbo. */
+function goldCell(k = 1): Sprite {
+  const s = turboCell(k);
+  for (let i = 0; i < s.data.length; i++) {
+    const c = s.data[i];
+    if (!c || c === 0xffffffff) continue;
+    const [r, g, b] = [c & 255, (c >> 8) & 255, (c >> 16) & 255];
+    if (r > 150 && g < 160 && b < 90) s.data[i] = mix(c, hex("#ffd23f"), 0.75); // the orange body turns gold
+  }
+  return s;
+}
+
+type Icons = Record<"turbo" | "triple" | "gold" | "oil" | "oil3" | "puck" | "puck3" | "orb" | "orb3" | "comet" | "bomb" |
+  "rocket" | "static" | "shock" | "prism" | "flares" | "boomerang" | "grabber" | "horn" | "jackpot" | "coin" | "phantom",
+  Sprite>;
+
 /** The item slot's icons, drawn big enough to show pixel for pixel in the HUD (about 28 px). */
-export function itemIcons(): Record<"turbo" | "triple" | "oil" | "orb" | "boomerang" | "bomb" | "prism" | "shock" | "rocket", Sprite> {
+export function itemIcons(): Icons {
   return {
-    turbo: turboCell(1.55), triple: tripleIcon(1.6), oil: oilIcon(1.5), orb: orbArt(1.4).sprite,
-    boomerang: boomerangFrames(1.12)[1].sprite, bomb: bombFrames(1.12)[0].sprite, prism: prismIcon(1.6),
-    shock: shockIcon(1.6), rocket: rocketIcon(1.6),
+    turbo: turboCell(1.55), triple: tripleIcon(1.6), gold: goldCell(1.55), oil: oilIcon(1.5),
+    oil3: threeOf(oilBarrel(0.8), 29), puck: puckFrames(1.55)[0].sprite, puck3: threeOf(puckFrames(0.85)[0].sprite, 29),
+    orb: orbArt(1.4).sprite, orb3: threeOf(orbArt(0.62).sprite, 29), comet: cometArt(1.3).sprite,
+    bomb: bombFrames(1.12)[0].sprite, rocket: rocketIcon(1.6), static: staticIcon(1.6), shock: shockIcon(1.6),
+    prism: prismIcon(1.6), flares: flareFrames(1.8)[0].sprite, boomerang: boomerangFrames(1.12)[1].sprite,
+    grabber: grabberFrames(1.4)[0].sprite, horn: hornIcon(1.6), jackpot: jackpotIcon(1.6), coin: coinFrames(2)[0].sprite,
+    phantom: phantomIcon(1.6),
   };
 }
 
-/** What a kart carries over its driver's head (and holds out behind it). */
-export function heldArt(): Record<"turbo" | "triple" | "oil" | "orb" | "boomerang" | "bomb" | "prism" | "shock" | "rocket", SceneryArt> {
+/** What a kart carries over its driver's head (and holds out behind it, or circling it). */
+export function heldArt(): Record<keyof Icons, SceneryArt> {
   const art = (sprite: Sprite, height = 0.85): SceneryArt => ({ sprite, height, solid: false });
+  const puck = puckFrames()[0].sprite, orb = orbArt().sprite;
   return {
-    turbo: art(turboCell()), triple: art(turboCell()), oil: art(oilBarrel(), 0.95), orb: art(orbArt().sprite, 0.9),
-    boomerang: art(boomerangFrames()[1].sprite, 0.9), bomb: art(bombFrames()[0].sprite, 0.95), prism: art(prismIcon()),
-    shock: art(shockIcon()), rocket: art(rocketIcon(), 0.95),
+    turbo: art(turboCell()), triple: art(turboCell()), gold: art(goldCell()), oil: art(oilBarrel(), 0.95),
+    oil3: art(oilBarrel(), 0.95), puck: art(puck, 0.55), puck3: art(puck, 0.55), orb: art(orb, 0.9), orb3: art(orb, 0.9),
+    comet: art(cometArt().sprite, 0.95), bomb: art(bombFrames()[0].sprite, 0.95), rocket: art(rocketIcon(), 0.95),
+    static: art(staticIcon()), shock: art(shockIcon()), prism: art(prismIcon()), flares: art(flareFrames()[0].sprite),
+    boomerang: art(boomerangFrames()[1].sprite, 0.9), grabber: art(grabberFrames()[0].sprite, 0.9), horn: art(hornIcon()),
+    jackpot: art(jackpotIcon()), coin: art(coinFrames()[0].sprite, 0.7), phantom: art(phantomIcon(), 0.9),
   };
 }
 

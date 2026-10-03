@@ -1,5 +1,5 @@
 // Chiptune music: a four-channel sequencer (pulse lead, pulse arpeggio, triangle bass, noise
-// drums) playing short original loops, one for the title and one per world. The tempo rises on
+// drums) playing short original loops, one for the title and one per world (each its own song). The tempo rises on
 // the final lap. Notes are scheduled ahead on the WebAudio clock, so the beat stays tight even
 // when frames drop.
 
@@ -12,7 +12,7 @@ interface Song {
   drums: { kick: string; snare: string; hat: string };
 }
 
-const SONGS: Record<string, Song> = {
+export const SONGS: Record<string, Song> = {
   title: {
     bpm: 104,
     chords: ["Fmaj7", "Em7", "Dm7", "Cmaj7"],
@@ -118,6 +118,44 @@ const SONGS: Record<string, Song> = {
     bass: "drive",
     arp: 16,
     drums: { kick: "x...x.x.x...x.x.", snare: "....x.......x...", hat: "x.x.x.x.x.x.x.x." },
+  },
+  // the building site: a hammering, funky riff (the flat seventh of a work song) over a busy bass,
+  // a hat on every sixteenth like a riveter, the kick pushed off the beat
+  construction: {
+    bpm: 138,
+    chords: ["G", "F", "C", "G", "G", "F", "Bb", "D"],
+    lead: [
+      "G5 . G5 . D5 . G5 - F5 . G5 . A5 - - .",
+      "C6 . A5 . F5 . A5 - G5 . F5 . C5 - - .",
+      "E5 . G5 . C6 . G5 - E5 . D5 . C5 - - .",
+      "D5 . D5 . G5 - - . B5 . A5 . G5 - - .",
+      "G5 . G5 . D6 . B5 - A5 . G5 . F5 - - .",
+      "F5 . A5 . C6 . A5 - F5 . C6 . F6 - - .",
+      "F5 . A#5 . D6 . A#5 - F5 . D5 . A#4 - - .",
+      "A5 - - . F#5 - - . D5 - - . A5 . . .",
+    ],
+    bass: "drive",
+    arp: 8,
+    drums: { kick: "x..x..x.x..x..x.", snare: "....x.......x.x.", hat: "xxxxxxxxxxxxxxxx" },
+  },
+  // the moon: slow and weightless, long notes that hang in the air (the raised fourth of the
+  // lydian mode) over a glittering arpeggio, hardly any drums
+  moon: {
+    bpm: 100,
+    chords: ["Fmaj7", "G", "Em7", "Am7", "Fmaj7", "G", "Em7", "Am7"],
+    lead: [
+      "C6 - - - - - A5 - B5 - - - E6 - - .",
+      "D6 - - - - - B5 - G5 - - - D5 - - .",
+      "E5 - - - G5 - - - B5 - - - D6 - - .",
+      "C6 - - - - - - - - - - - B5 - A5 .",
+      "A5 - - - C6 - - - E6 - - - - - - .",
+      "D6 - - - B5 - - - D6 - G6 - - - - .",
+      "G6 - - - - - E6 - D6 - - - B5 - - .",
+      "C6 - - - - - - - A5 - - - - - - .",
+    ],
+    bass: "pad",
+    arp: 16,
+    drums: { kick: "x.........x.....", snare: "................", hat: "......x.......x." },
   },
 };
 
