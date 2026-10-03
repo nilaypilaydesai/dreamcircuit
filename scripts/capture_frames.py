@@ -1,7 +1,7 @@
-"""Receive files from the browser and write them to disk: the hero video and its poster, and
-canvas frames for stills.
+"""Receive files from the browser and write them to disk: the trailer (one MP4 per size) and its
+poster, every few frames at game resolution (for the README's GIF and figures) and the shot list.
 
-    python scripts/capture_frames.py --out runs/hero
+    python scripts/capture_frames.py --out runs/trailer
 
 The cinema tool (web/src/tools/cinema.ts) POSTs each file to /save/<name>. Listens on 127.0.0.1
 only. Requests are "simple" (text/plain), so the browser sends them without a CORS preflight,
@@ -32,7 +32,7 @@ def serve(out: Path, port: int) -> None:
 
         def do_POST(self) -> None:
             m = re.fullmatch(r"/save/([A-Za-z0-9_.-]{1,80})", self.path)
-            if not m or not m.group(1).endswith((".png", ".jpg", ".mp4")):
+            if not m or not m.group(1).endswith((".png", ".jpg", ".mp4", ".json")):
                 self.send_response(400)
                 self._cors()
                 self.end_headers()
@@ -53,7 +53,7 @@ def serve(out: Path, port: int) -> None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", default="runs/hero")
+    ap.add_argument("--out", default="runs/trailer")
     ap.add_argument("--port", type=int, default=8765)
     a = ap.parse_args()
     serve(Path(a.out), a.port)
