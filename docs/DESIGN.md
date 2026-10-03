@@ -178,11 +178,17 @@ the unbuilt edge: the ground there shimmers into fog, and the road appears out o
 ## 3. The game (`web/src/game/`)
 
 **Loop.** A fixed 60 Hz update with an accumulator, rendered once per animation frame into a
-384x216 `Uint32Array` framebuffer that is blitted with `putImageData` and scaled up with
-nearest-neighbor CSS, so every pixel stays square.
+`Uint32Array` framebuffer that is blitted with `putImageData` and scaled up with
+nearest-neighbor CSS, so every pixel stays square. The framebuffer takes the window's shape: a
+whole-number scale is picked so the buffer is as close to 225 rows as it can be (216 on a 1080p
+screen, at 5x), and the buffer is made exactly big enough to cover the window at that scale,
+cropping at most scale-1 screen pixels. A phone held upright fits its width instead (320 pixels
+across) with bands above and below. The horizon and focal length scale with the buffer's height,
+so a wider window simply sees more to the sides; the HUD and the menus are laid out against the
+edges and wrap long lines.
 
 **Mode-7 ground.** Each scanline below the horizon is a line across the ground plane at distance
-`z = h f / (y - horizon)` (camera 2.9 m up, focal length 250 px). The world is one 2560x2560
+`z = h f / (y - horizon)` (camera 2.9 m up, focal length 250 px at 216 rows). The world is one 2560x2560
 texture at 0.3 m per texel (768 m across, which is why the architect keeps every lap within 235 m
 of its start line), painted when road is committed (grass noise, asphalt, kerbs on corners
 tighter than 40 m, edge lines, the start checkers and grid slots, and the shadow a bridge casts on
@@ -246,19 +252,63 @@ start was impossible; filming one found it, and a test now drives the start proc
 
 **Soundtrack.** Each world, and the title screen, has its own chiptune, sequenced in code
 (`core/music.ts`): four channels (pulse lead, pulse arpeggio, triangle bass, noise drums) over a
-chord progression, synthesized with WebAudio. The tempo steps up on the final lap.
+chord progression, synthesized with WebAudio. The tempo steps up on the final lap. The music
+leads the mix: the engine note (a sawtooth and a square an octave apart, pitched by speed) sits
+under it as a low-passed hum at under a fifth of its first loudness, or not at all (ENGINE on the
+main menu); its buzzy upper harmonics were what made it grate.
+
+**The garage.** A kart is a body, wheels, a spoiler and an exhaust (`race/parts.ts`), plus paint
+and an accent colour, which are only looks. There are 13 bodies, each taking its cues from a
+kind of real car (an Italian mid-engine V8, a V12 wedge, a British carbon-tub GT, a rear-engine
+flat-six, a W16 hypercar, a Swedish megacar, a JDM twin-turbo, American muscle, a kei car, a
+rally hatch, a Le Mans prototype, an electric hypercar, and the classic go-kart), 13 wheels, 10
+spoilers and 11 exhausts named after real tuner parts. Every part adds points to six stats, the
+six a classic kart racer shows (speed, acceleration, weight, handling, traction, mini-turbo),
+around a neutral 10 out of 20, and the stats become multipliers on the race class's numbers:
+top speed within 8%, acceleration within 25%, cornering grip within 12%, the speed kept on the
+shoulder and the grass, a mini-turbo that charges sooner and fires up to 35% longer, and weight,
+which splits each bump's push and impulse by mass. The classic kart is exactly neutral, so the
+race physics (and its tests) are unchanged for it. Rivals draw 24 random builds, rank them by a
+racing score (speed and mini-turbo count most) and take one from the bottom third on Rookie, the
+middle on Pro and the top on Legend. Each kart is assembled as a voxel model from its parts (a
+shell sampled from a width and roof-height profile along the car, a carved cockpit, lights,
+intakes, stripes; wheels with rims painted on their outer faces; the spoiler and pipes mounted
+where the body says) and baked into its 16 views once per build; the garage's turntable splats
+the same voxels live at any angle, so the kart can turn slowly on its pedestal.
+
+**Controls.** Keyboard, gamepad and touch feed one set of driving controls. On touch the left
+half of the screen is a floating joystick: it appears under the thumb, its base follows a thumb
+that slides past the rim, it has a dead zone and a gentle curve for small corrections, pushed all
+the way to the side it drifts (with hysteresis, so a drift does not flicker off mid-corner), and
+pulled back it brakes. The gas is automatic once the race is on, so steering and drifting take
+one thumb; before GO the engine revs only while the thumb is on the stick, which keeps the rocket
+start a matter of timing. DRIFT (hops and tricks too) and ITEM sit under the right thumb.
 
 **Items.** A row of four boxes spans the road every 210 m of committed road (the first one
 shortly after the start, none in the last 70 m before the line), so boxes appear as the road is
-dreamed. Driving through one gives an item; the player's slot spins for 1.2 s first. Odds are
-weighted by position: the leader gets 60% Oil Slick, 25% Dream Orb, 15% Turbo, and last place
-gets 55% Turbo, 40% Orb, 5% Oil. A slick spins out the first kart that drives through it (its
-owner is spared for a second); an orb travels up the centerline at the shooter's speed plus
-12 m/s, eases toward its target's lane, homes in directly within 22 m, and vanishes into the
-dream mist if it reaches road that does not exist yet. A spin-out takes control away for a
-second while the kart slides on, slowing. Items fire on the press of the button, never on the
-hold. Rivals fire turbos on straights, oil with a kart close behind and orbs with a kart in
-range ahead, after a reaction time that shortens with difficulty.
+dreamed. Driving through one gives an item; the player's slot spins for 1.2 s first. There are
+nine (`race/items.ts`). Turbo and Triple Turbo (three shots) boost. A slick spins out the first
+kart that drives through it (its owner is spared for a second). An orb travels up the centerline
+at the shooter's speed plus 12 m/s, eases toward its target's lane, homes in directly within
+22 m, and vanishes into the dream mist if it reaches road that does not exist yet. A boomerang
+(three throws) flies up the road for a second, then turns and homes on its thrower, spinning
+every kart it passes through once. A bomb is lobbed ahead on a ballistic arc, arms after 0.6 s,
+and goes off when a kart comes within 2.6 m or its fuse runs out, spinning everyone within
+5.5 m. A prism makes a kart invincible and 15% faster for 7 s, keeps its speed off the road, and
+spins out whoever it touches. A shock spins, shrinks (top speed down 28% for 3.5 s) and disarms
+everyone else. A rocket drives the kart itself for 6 s: it rides the road's own points at 1.7
+times the class top speed, easing to the middle, so it can neither cut a corner nor fall off a
+deck, and barges through the pack. Odds are interpolated by position between four tables (the
+leader gets defensive items and no big ones; the back of the pack gets triple turbos, prisms,
+shocks and the odd rocket), and dead last gets the rocket nine times in ten. A spin-out takes
+control away for a second while the kart slides on, slowing. Items act on the press of the
+button, never on the hold: most fire at once, while oil, orbs and bombs come out behind the
+kart while the button is down (where they block one orb or boomerang from behind) and are
+dropped or fired on the release. Every kart shows what it carries, riding out behind it (low and
+close while it is held as a shield). Rivals save each item for its moment (turbos on straights,
+oil with a kart close behind, orbs, boomerangs and bombs with a kart in range ahead, the rest at
+once), hold an item out as a shield when someone is on their tail, and react sooner in the
+faster classes.
 
 **Bumps, and a bug the item tests found.** Karts change speed only along their heading. The
 first collision model exchanged the closing speed along the contact normal straight into each
@@ -267,7 +317,9 @@ collides frame after frame, so speed was pumped into one kart, and a kart shoved
 read as still approaching and ran away backwards: one reached 88 m/s and another -55 m/s.
 Projecting the impulse onto each heading makes the exchange physical (a reversing kart is now
 slowed, not accelerated), and speeds are clamped and bled off above the class limit. A crowded
-8-kart race in the test suite holds every kart under 1.3 times the class top speed.
+8-kart race in the test suite holds every kart under 1.3 times its own top speed (a rocket is
+meant to go faster). Weight from the garage splits each bump by mass, and an invincible kart
+(prism or rocket) is not moved at all: it shoves the other kart aside and spins it.
 
 **Race.** A state machine: dreaming, countdown, racing, done. Positions sort by race distance;
 laps count crossings of the start line by the sign change of the arc length past it, so backing

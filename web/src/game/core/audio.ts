@@ -11,6 +11,8 @@ export class Sound {
   readonly music = new Music(() => this.ctx, () => this.master);
   private engine: { a: OscillatorNode; b: OscillatorNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
   muted = false;
+  /** The engine note's loudness: a soft hum well under the music (LOW), or nothing (OFF). */
+  engineLevel = 0.18;
 
   ensure(): void {
     if (this.ctx) {
@@ -95,8 +97,9 @@ export class Sound {
     const f = 55 + 150 * Math.min(1.2, speedFrac);
     this.engine.a.frequency.setTargetAtTime(f, t, 0.05);
     this.engine.b.frequency.setTargetAtTime(f * 0.5 * (offroad ? 1.03 : 1), t, 0.05);
-    this.engine.filter.frequency.setTargetAtTime(500 + 1400 * speedFrac, t, 0.08);
-    this.engine.gain.gain.setTargetAtTime(on ? 0.05 + 0.04 * speedFrac : 0, t, 0.1);
+    // a low, muffled hum: the buzzy upper harmonics are what made it grate
+    this.engine.filter.frequency.setTargetAtTime(260 + 600 * speedFrac, t, 0.08);
+    this.engine.gain.gain.setTargetAtTime(on ? (0.05 + 0.04 * speedFrac) * this.engineLevel : 0, t, 0.1);
   }
 
   count(): void { this.tone(440, 0.22, "square", 0.14); }
@@ -124,6 +127,16 @@ export class Sound {
     notes.forEach((f, i) => this.tone(f, 0.11, "square", 0.08, i * 0.06));
   }
   rocket(): void { [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.1, "sawtooth", 0.07, i * 0.04)); }
+  boomerang(): void { this.tone(500, 0.35, "triangle", 0.08, 0, 1100); this.tone(1100, 0.3, "triangle", 0.05, 0.3, 500); }
+  bombThrow(): void { this.tone(260, 0.3, "square", 0.06, 0, 520); }
+  explode(near: boolean): void {
+    this.noise(near ? 0.7 : 0.4, near ? 0.32 : 0.14, 700);
+    this.tone(70, 0.5, "triangle", near ? 0.22 : 0.08, 0, 35);
+  }
+  prism(): void { [1047, 1319, 1568, 2093, 1568, 2093, 2637].forEach((f, i) => this.tone(f, 0.09, "square", 0.06, i * 0.05)); }
+  shock(): void { this.tone(1400, 0.45, "square", 0.08, 0, 90); this.noise(0.35, 0.12, 5000); }
+  rocketGo(): void { this.tone(110, 1.1, "sawtooth", 0.09, 0, 440); this.noise(1.0, 0.1, 1800); }
+  blocked(): void { this.tone(1568, 0.08, "square", 0.08); this.noise(0.1, 0.12, 2500); }
   burnout(): void { this.noise(0.6, 0.14, 700); this.tone(70, 0.5, "sawtooth", 0.08, 0, 50); }
   select(): void { this.tone(660, 0.07, "square", 0.08); }
   move(): void { this.tone(440, 0.04, "square", 0.05); }

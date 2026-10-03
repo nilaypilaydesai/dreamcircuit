@@ -1,15 +1,28 @@
 html, body { margin: 0; height: 100%; background: #05030d; overflow: hidden; }
-body.game { display: grid; place-items: center; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.frame { display: grid; place-items: center; width: 100vw; height: 100vh; height: 100dvh; }
-#game { image-rendering: pixelated; image-rendering: crisp-edges; display: block; background: #000; box-shadow: 0 0 120px rgba(157, 107, 255, 0.25); }
-.touch { display: none; position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); justify-content: space-between; pointer-events: none; }
-.touch .pad { display: flex; gap: 10px; pointer-events: auto; }
-.touch button { font: 12px "Press Start 2P", monospace; color: #fff; min-width: 64px; height: 56px; border-radius: 12px; border: 2px solid rgba(199, 155, 255, 0.6); background: rgba(12, 10, 29, 0.55); touch-action: none; }
-.touch button.on { background: rgba(199, 155, 255, 0.45); }
-.touch .pause { position: fixed; top: calc(10px + env(safe-area-inset-top)); right: 10px; min-width: 44px; height: 44px; pointer-events: auto; }
-@media (pointer: coarse) { .touch { display: flex; } }
-@media (max-width: 440px) {
-  .touch { padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); }
-  .touch .pad { gap: 5px; }
-  .touch button { font-size: 8px; min-width: 50px; height: 52px; padding: 0 6px; }
+body.game { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+/* the framebuffer takes the window's shape and is scaled up to cover it edge to edge */
+.frame { position: fixed; inset: 0; overflow: hidden; }
+#game { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); image-rendering: pixelated; image-rendering: crisp-edges; display: block; background: #000; }
+
+/* touch: a floating joystick on the left half steers (push it hard to drift, pull back to brake;
+   the gas is automatic), DRIFT and ITEM on the right. Shown only while racing. */
+.touch { display: none; position: fixed; inset: 0; pointer-events: none; }
+@media (pointer: coarse) { .touch { display: block; } }
+.touch .pause { position: fixed; top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); width: 44px; height: 44px; pointer-events: auto; font: 12px "Press Start 2P", monospace; color: #fff; border-radius: 12px; border: 2px solid rgba(199, 155, 255, 0.6); background: rgba(12, 10, 29, 0.55); touch-action: none; }
+.touch .zone { position: fixed; left: 0; bottom: 0; width: 50%; height: 78%; pointer-events: auto; touch-action: none; }
+.touch .stick { position: fixed; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 2px solid rgba(199, 155, 255, 0.55); background: radial-gradient(circle, rgba(199, 155, 255, 0.10), rgba(12, 10, 29, 0.45)); opacity: 0.55; transition: opacity 0.15s; pointer-events: none; }
+.touch .stick.on { opacity: 1; }
+.touch .knob { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%; background: radial-gradient(circle at 38% 35%, #f4ecff, #c79bff 60%, #7b3cff); box-shadow: 0 0 14px rgba(199, 155, 255, 0.55); }
+.touch .stick.drift .knob { background: radial-gradient(circle at 38% 35%, #fff2c4, #ffb347 60%, #ff7a1a); box-shadow: 0 0 16px rgba(255, 179, 71, 0.8); }
+.touch .buttons { position: fixed; right: calc(16px + env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: auto auto; align-items: end; gap: 14px; pointer-events: auto; }
+.touch .buttons button { font: 10px "Press Start 2P", monospace; color: #fff; border-radius: 50%; border: 2px solid rgba(199, 155, 255, 0.6); background: rgba(12, 10, 29, 0.55); touch-action: none; }
+.touch .buttons .item { width: 64px; height: 64px; margin-bottom: 46px; }
+.touch .buttons .hop { width: 84px; height: 84px; }
+.touch .buttons button.on { background: rgba(199, 155, 255, 0.45); }
+.touch:not(.racing) .zone, .touch:not(.racing) .stick, .touch:not(.racing) .buttons { display: none; }
+.touch:not(.pausable) .pause { display: none; }
+@media (max-height: 420px) {
+  .touch .stick { width: 96px; height: 96px; margin: -48px 0 0 -48px; }
+  .touch .buttons .item { width: 56px; height: 56px; margin-bottom: 36px; }
+  .touch .buttons .hop { width: 72px; height: 72px; }
 }

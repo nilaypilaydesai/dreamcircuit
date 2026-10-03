@@ -1,6 +1,6 @@
 // DREAM CIRCUIT: the retro kart racer whose circuit is dreamed live by a diffusion model.
-// Screens: title (with an AI attract race behind it), main menu, race setup, how to play, the
-// "dreaming" intro, the race itself, pause and results. DATA and DREAM LAB open data.html.
+// Screens: title (with an AI attract race behind it), main menu, the garage, race setup, how to
+// play, the "dreaming" intro, the race itself, pause and results. DATA and DREAM LAB open data.html.
 
 import "./game.css";
 import { Sound } from "./core/audio";
@@ -8,21 +8,27 @@ import { PixelFont, drawTextToSprite } from "./core/font";
 import { H, Rand, Screen, W, hex, mix, type Sprite } from "./core/gfx";
 import { GameInput, type MenuEvent } from "./core/input";
 import { RivalDriver } from "./race/ai";
-import { CLASSES, type Controls, type Difficulty } from "./race/kart";
+import { type ItemKind, BLAST_TIME } from "./race/items";
+import { CLASSES, type Controls, type Difficulty, type Kart } from "./race/kart";
+import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
 import { type WorldSprite, drawWorldSprites } from "./render/billboards";
-import { type Camera, drawGround, makeCamera } from "./render/mode7";
+import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
 import type { Face } from "./render/poly";
 import { bridgeFaces, padFaces, rampFaces } from "./render/structures";
 import { Sky } from "./render/sky";
-import { LIVERIES, type SceneryArt, bakeKart, itemBoxFrames, orbArt, slickArt } from "./render/sprites";
+import {
+  LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, heldArt, itemBoxFrames, kartSprites, orbArt,
+  slickArt,
+} from "./render/sprites";
 import { THEMES } from "./themes";
-import { Hud, formatTime } from "./ui/hud";
+import { Garage } from "./ui/garage";
+import { Hud, formatTime, kartColor } from "./ui/hud";
 import { Menu } from "./ui/menus";
 import { type Layout, N, checkLap } from "./world/track";
 import { CircuitDesigner, fromSteps, smoothArc, toGame } from "./world/trackgen";
 
-type Mode = "boot" | "title" | "main" | "setup" | "howto" | "dreaming" | "race" | "pause" | "results";
+type Mode = "boot" | "title" | "main" | "garage" | "setup" | "howto" | "dreaming" | "race" | "pause" | "results";
 
 const INK = hex("#0b0b14");
 const HOT = hex("#ffd23f");
@@ -35,12 +41,24 @@ const LAYOUTS: { id: Layout; label: string }[] = [
 ];
 const BASE_HEIGHT = 2.9; // m, camera over the player's kart
 const BASE_FOCAL = 250;
+const ENGINE_LEVELS = [{ label: "LOW", level: 0.18 }, { label: "OFF", level: 0 }];
+const SAVE = "dreamcircuit.v3"; // the garage build and the engine setting (this browser only)
 
 interface Attract {
   race: Race;
   sky: Sky;
   cam: Camera;
   driver: RivalDriver;
+}
+
+/** Read the saved garage build and settings; storage can be missing or blocked. */
+function loadSaved(): { build: Build; engine: number } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SAVE) ?? "{}") as { build?: unknown; engine?: unknown };
+    return { build: cleanBuild(raw.build), engine: raw.engine === 1 ? 1 : 0 };
+  } catch {
+    return { build: DEFAULT_BUILD, engine: 0 }; // private window or blocked storage: defaults
+  }
 }
 
 class Game {
@@ -53,10 +71,13 @@ class Game {
   private designerError = "";
   private designerReady: Promise<void> = Promise.resolve();
   private waitingForDesigner = false;
-  private kartSprites: Sprite[][] = [];
   private readonly boxArt: SceneryArt[] = itemBoxFrames();
   private readonly slickArt: SceneryArt = slickArt();
   private readonly orbArt: SceneryArt = orbArt();
+  private readonly boomArt: SceneryArt[] = boomerangFrames();
+  private readonly bombArt: SceneryArt[] = bombFrames();
+  private readonly blastArt: SceneryArt[] = blastFrames();
+  private readonly held: Record<ItemKind, SceneryArt> = heldArt();
   private mode: Mode = "boot";
   private race: Race | null = null;
   private sky: Sky | null = null;
@@ -69,8 +90,12 @@ class Game {
   private lastCircuit: Float64Array | null = null;
   private seed = (Math.random() * 1e9) | 0;
   private shake = 0;
+  private flash = 0; // s of white flash left (a shock)
   private time = 0;
-  private settings = { rivals: 5, diff: 1, theme: 0, circuit: 0, layout: 0 };
+  private settings = { rivals: 5, diff: 1, theme: 0, circuit: 0, layout: 0, engine: 0 };
+  private build: Build = DEFAULT_BUILD;
+  private garage!: Garage;
+  private garageReturn: Mode = "main";
   private menus!: Record<"main" | "setup" | "pause" | "results", Menu>;
 
   constructor() {
@@ -78,6 +103,30 @@ class Game {
     this.scr = new Screen(canvas);
     this.input = new GameInput(canvas, document.getElementById("touch")!);
     this.input.onMute = () => this.sound.toggleMute();
+    this.scr.onResize = () => this.refit();
+    const saved = loadSaved();
+    this.build = saved.build;
+    this.settings.engine = saved.engine;
+    this.sound.engineLevel = ENGINE_LEVELS[saved.engine].level;
+  }
+
+  private save(): void {
+    try {
+      localStorage.setItem(SAVE, JSON.stringify({ build: this.build, engine: this.settings.engine }));
+    } catch {
+      // storage blocked: the build lasts until the tab closes, which is fine
+    }
+  }
+
+  /** The screen changed shape: re-frame the cameras and repaint the skies for the new horizon. */
+  private refit(): void {
+    fitCamera(this.cam);
+    if (this.race && this.sky) this.sky = new Sky(this.race.setup.theme, this.cam.horizon, this.seed + 3);
+    const a = this.attract;
+    if (a) {
+      fitCamera(a.cam);
+      a.sky = new Sky(a.race.setup.theme, a.cam.horizon, this.seed + 3);
+    }
   }
 
   private watchVisibility(): void {
@@ -98,8 +147,8 @@ class Game {
     this.watchVisibility();
     this.font = await PixelFont.load();
     this.hud = new Hud(this.font);
-    this.kartSprites = LIVERIES.map((l) => bakeKart(l));
     this.buildMenus();
+    this.garage = new Garage(this.build, (b) => { this.build = b; this.save(); }, () => this.go(this.garageReturn));
     this.mode = "title";
     requestAnimationFrame((t) => this.frame(t));
     this.designerReady = CircuitDesigner.create("models").then(
@@ -129,17 +178,21 @@ class Game {
     this.menus = {
       main: new Menu("MAIN MENU", [
         { label: "GRAND PRIX", action: () => this.go("setup"), hint: "3 LAPS ON A CIRCUIT THE AI DREAMS FOR YOU" },
+        { label: "GARAGE", action: () => this.openGarage("main"), hint: "BUILD YOUR KART: BODY, WHEELS, SPOILER, EXHAUST, PAINT" },
         { label: "DREAM LAB", action: () => { location.href = "data.html#lab"; }, hint: "DRIVE INSIDE THE NEURAL WORLD MODEL" },
         { label: "DATA", action: () => { location.href = "data.html"; }, hint: "THE MODELS, THE PHYSICS AUDIT, THE CHARTS" },
         { label: "HOW TO PLAY", action: () => this.go("howto") },
         { label: "SOUND", value: () => (this.sound.muted ? "OFF" : "ON"), action: () => this.sound.toggleMute(), hint: "M TOGGLES SOUND ANYTIME" },
+        { label: "ENGINE", value: () => ENGINE_LEVELS[s.engine].label, hint: "THE ENGINE HUM UNDER THE MUSIC",
+          left: () => this.setEngine(), right: () => this.setEngine() },
       ]),
       setup: new Menu("GRAND PRIX", [
         { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(0, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "HOW MANY AI KARTS RACE YOU (0-7)" },
-        { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS AND HOW SHARP THE RIVALS DRIVE" },
+        { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); } },
-        { label: "LAYOUT", value: () => LAYOUTS[s.layout].label, left: () => { s.layout = (s.layout + LAYOUTS.length - 1) % LAYOUTS.length; }, right: () => { s.layout = (s.layout + 1) % LAYOUTS.length; }, hint: "WHAT THE DREAM SHOULD BE: FIGURE 8S CROSS OVER A BRIDGE" },
+        { label: "LAYOUT", value: () => LAYOUTS[s.layout].label, left: () => { s.layout = (s.layout + LAYOUTS.length - 1) % LAYOUTS.length; }, right: () => { s.layout = (s.layout + 1) % LAYOUTS.length; }, hint: "LOOP, OR A FIGURE 8 THAT CROSSES ITSELF ON A BRIDGE" },
         { label: "CIRCUIT", value: () => (s.circuit === 0 || !this.lastCircuit ? "NEW DREAM" : "LAST ONE"), left: () => { s.circuit = s.circuit ? 0 : 1; }, right: () => { s.circuit = s.circuit ? 0 : 1; }, hint: "A FRESH DREAM, OR RE-RACE YOUR LAST LOCKED CIRCUIT" },
+        { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("setup"), hint: "OPEN THE GARAGE" },
         { label: "START RACE", action: () => void this.startRace(s.circuit === 1 && !!this.lastCircuit) },
         { label: "BACK", action: () => this.go("main") },
       ], 300),
@@ -156,11 +209,24 @@ class Game {
     };
   }
 
+  private setEngine(): void {
+    this.settings.engine = (this.settings.engine + 1) % ENGINE_LEVELS.length;
+    this.sound.engineLevel = ENGINE_LEVELS[this.settings.engine].level;
+    this.save();
+  }
+
+  private openGarage(from: Mode): void {
+    this.garageReturn = from;
+    this.garage.menu.index = 0;
+    this.go("garage");
+  }
+
   private go(m: Mode): void {
     this.mode = m;
     if (m === "setup") this.menus.setup.index = this.menus.setup.items.length - 2;
     if (m === "pause") this.sound.setEngine(0, false, false);
     if (m !== "pause") this.autoPaused = false;
+    this.input.setRacing(m === "race", m === "race" || m === "dreaming");
     this.music();
   }
 
@@ -202,8 +268,8 @@ class Game {
     const rng = new Rand(this.seed + 99 + 7919 * this.attractRuns++); // a new circuit each time
     const theme = THEMES[rng.int(0, THEMES.length)];
     const pts = await this.dreamWholeCircuit(rng, rng.next() < 0.5 ? "figure8" : "loop");
-    const race = new Race({ rivals: 5, difficulty: "pro", theme, seed: this.seed + 7, replay: pts }, null,
-                          (s) => this.banner(s));
+    const race = new Race({ rivals: 5, difficulty: "pro", theme, seed: this.seed + 7, replay: pts, build: this.build },
+                          null, (s) => this.banner(s));
     await race.prepare();
     race.phase = "racing";
     const cam = makeCamera();
@@ -227,7 +293,7 @@ class Game {
     const r = this.race;
     if (!r) return;
     const replay = r.track.locked ? Float64Array.from(r.track.points) : r.setup.replay;
-    void this.startRace(false, { ...r.setup, replay });
+    void this.startRace(false, { ...r.setup, replay, build: this.build });
   }
 
   private async startRace(sameCircuit: boolean, again?: RaceSetup): Promise<void> {
@@ -245,13 +311,14 @@ class Game {
     // a live race with the same seed dreams the same circuit again
     const setup: RaceSetup = again ?? {
       rivals: s.rivals, difficulty: DIFFS[s.diff], theme, seed: (Math.random() * 1e9) | 0,
-      replay: sameCircuit && this.lastCircuit ? this.lastCircuit : null, layout: LAYOUTS[s.layout].id,
+      replay: sameCircuit && this.lastCircuit ? this.lastCircuit : null, layout: LAYOUTS[s.layout].id, build: this.build,
     };
     this.seed = setup.seed;
     const race = new Race(setup, this.designer, (sp) => this.banner(sp));
     this.race = race;
     this.sky = new Sky(setup.theme, this.cam.horizon, this.seed + 3);
     this.hud.banners = [];
+    this.flash = 0;
     this.sound.setEngine(0, false, false);
     this.go("dreaming");
     this.sound.ensure();
@@ -282,18 +349,20 @@ class Game {
     const target = p.heading + p.slip * 0.45;
     let d = target - cam.heading;
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    cam.heading += d * (1 - Math.exp(-dt * 6.5));
+    cam.heading += d * (1 - Math.exp(-dt * (p.rocket > 0 ? 9 : 6.5)));
     const jitter = this.shake > 0 ? (Math.random() - 0.5) * this.shake * 0.04 : 0;
-    cam.x = p.x - Math.cos(cam.heading) * 6.2;
-    cam.y = p.y - Math.sin(cam.heading) * 6.2;
+    const back = p.rocket > 0 ? 7.4 : 6.2;
+    cam.x = p.x - Math.cos(cam.heading) * back;
+    cam.y = p.y - Math.sin(cam.heading) * back;
     cam.heading += jitter;
     // ride up onto bridges with the kart; on a jump, rise only partway for a sense of air
     const lift = p.ground + (p.elev - p.ground) * 0.55;
     cam.lift += (lift - cam.lift) * (1 - Math.exp(-dt * (p.air ? 5 : 9)));
     cam.height = BASE_HEIGHT + cam.lift;
-    // speed: a wider view and speed lines while boosting
-    cam.fx += ((p.boostTime > 0 ? 1 : 0) - cam.fx) * (1 - Math.exp(-dt * 6));
-    cam.focal = BASE_FOCAL * (1 - 0.12 * cam.fx);
+    // speed: a wider view and speed lines while boosting (and much more as a rocket)
+    const fx = p.rocket > 0 ? 1.6 : p.boostTime > 0 || p.prism > 0 ? 1 : 0;
+    cam.fx += (fx - cam.fx) * (1 - Math.exp(-dt * 6));
+    cam.focal = BASE_FOCAL * viewScale() * (1 - 0.12 * cam.fx);
   }
 
   /** White streaks rushing past the edges of the screen while boosting. */
@@ -301,13 +370,14 @@ class Game {
     if (cam.fx < 0.05) return;
     const scr = this.scr;
     const t = this.time;
+    const k0 = viewScale();
     for (let k = 0; k < 18; k++) {
       const a = (k / 18) * Math.PI * 2 + Math.sin(k * 7.3) * 0.2;
       const phase = (t * 3.2 + k * 0.37) % 1;
-      const r0 = 120 + phase * 90, r1 = r0 + 18 + 14 * cam.fx;
+      const r0 = (120 + phase * 90) * k0, r1 = r0 + (18 + 14 * cam.fx) * k0;
       for (let r = r0; r < r1; r += 1.5) {
-        const x = W / 2 + Math.cos(a) * r * 1.25, y = cam.horizon + 20 + Math.sin(a) * r * 0.62;
-        if (x >= 0 && x < W && y >= 0 && y < H) scr.dimRect(x, y, 1, 1, 0xffffffff, 0.55 * cam.fx);
+        const x = W / 2 + Math.cos(a) * r * 1.25 * (W / 384 / k0), y = cam.horizon + 20 * k0 + Math.sin(a) * r * 0.62;
+        if (x >= 0 && x < W && y >= 0 && y < H) scr.dimRect(x, y, 1, 1, 0xffffffff, Math.min(1, 0.55 * cam.fx));
       }
     }
   }
@@ -340,12 +410,13 @@ class Game {
       else if (e.kind === "bump") { this.sound.bump(); this.shake = 0.25; }
       else if (e.kind === "roll") this.sound.roll();
       else if (e.kind === "item") this.sound.itemGet();
-      else if (e.kind === "use") {
-        if (e.item === "turbo") this.sound.boost();
-        else if (e.item === "oil") this.sound.oil();
-        else this.sound.orb();
-      } else if (e.kind === "spun") { this.sound.spin(); this.shake = 0.35; }
+      else if (e.kind === "use") this.useSound(e.item, now);
+      else if (e.kind === "spun") { this.sound.spin(); this.shake = 0.35; }
       else if (e.kind === "hit") this.sound.hit();
+      else if (e.kind === "blocked") { this.sound.blocked(); this.hud.popup("BLOCKED!", now, hex("#63c8ff")); }
+      else if (e.kind === "boom") { this.sound.explode(e.near); if (e.near) this.shake = Math.max(this.shake, 0.4); }
+      else if (e.kind === "shock") { this.sound.shock(); this.flash = 0.22; }
+      else if (e.kind === "rocketOver") this.hud.popup("ROCKET SPENT", now, DIM);
       else if (e.kind === "jump") this.sound.jump();
       else if (e.kind === "land") {
         this.sound.land();
@@ -356,6 +427,19 @@ class Game {
       else if (e.kind === "rocket") { this.sound.rocket(); this.hud.popup("ROCKET START!", now, HOT); }
       else if (e.kind === "burnout") { this.sound.burnout(); this.hud.popup("TOO EARLY!", now, hex("#ff6b6b")); }
       else if (e.kind === "bridge") this.hud.popup("BRIDGE AHEAD!", now, DREAM);
+    }
+  }
+
+  private useSound(item: ItemKind, now: number): void {
+    switch (item) {
+      case "turbo": case "triple": this.sound.boost(); break;
+      case "oil": this.sound.oil(); break;
+      case "orb": this.sound.orb(); break;
+      case "boomerang": this.sound.boomerang(); break;
+      case "bomb": this.sound.bombThrow(); break;
+      case "prism": this.sound.prism(); this.hud.popup("PRISM!", now, DREAM); break;
+      case "shock": break; // the shock event plays it, for everyone's shocks
+      case "rocket": this.sound.rocketGo(); this.hud.popup("ROCKET!", now, hex("#ff8a1f")); break;
     }
   }
 
@@ -393,7 +477,10 @@ class Game {
       this.sound.ensure(); // the first key press unlocks audio: start the soundtrack too
       this.music();
     }
-    const menuFor: Partial<Record<Mode, Menu>> = { main: this.menus.main, setup: this.menus.setup, pause: this.menus.pause, results: this.menus.results };
+    const menuFor: Partial<Record<Mode, Menu>> = {
+      main: this.menus.main, setup: this.menus.setup, pause: this.menus.pause, results: this.menus.results,
+      garage: this.garage.menu,
+    };
     for (const e of evs) this.onEvent(e, menuFor[this.mode]);
     if (click) {
       if (this.mode === "title") this.go("main");
@@ -420,7 +507,7 @@ class Game {
       return;
     }
     if (this.mode === "dreaming") {
-      if (e === "back" || e === "cancel") this.quitToMenu();
+      if (e === "back" || e === "cancel" || e === "pause") this.quitToMenu(); // pause: the touch II button
       return;
     }
     if (menu) {
@@ -429,12 +516,14 @@ class Game {
         if (this.mode === "pause") this.go("race");
         else if (this.mode === "setup") this.go("main");
         else if (this.mode === "main") this.go("title");
+        else if (this.mode === "garage") this.go(this.garageReturn);
       }
     }
   }
 
   private update(dt: number): void {
     if (this.shake > 0) this.shake -= dt;
+    if (this.flash > 0) this.flash -= dt;
     const a = this.attract;
     if (a && (this.mode === "title" || this.mode === "main" || this.mode === "setup" || this.mode === "howto")) {
       const c = a.driver.act(dt, a.race.track, a.race.cls, a.race.player, a.race.karts);
@@ -446,7 +535,8 @@ class Game {
     const r = this.race;
     if (!r) return;
     if (this.mode === "race" || (this.mode === "dreaming" && r.phase !== "dreaming")) {
-      const c: Controls = takesControls(r.phase) ? this.input.drive() : { steer: 0, throttle: 0, brake: 0, drift: false };
+      const c: Controls = takesControls(r.phase) ? this.input.drive(r.phase === "countdown")
+        : { steer: 0, throttle: 0, brake: 0, drift: false };
       r.update(dt, c);
       this.handleEvents(r, r.events);
       r.events = [];
@@ -481,22 +571,37 @@ class Game {
     drawGround(this.scr, cam, race.tex, race.setup.theme.fog, mist);
     const extras: WorldSprite[] = [];
     const now = this.time;
-    race.items.boxes.forEach((b, i) => {
+    const it = race.items;
+    it.boxes.forEach((b, i) => {
       if (b.respawn > 0) return;
       const art = this.boxArt[(Math.floor(now * 6) + i) % this.boxArt.length];
-      extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i) });
+      extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i), base: b.elev });
     });
-    for (const sl of race.items.slicks) extras.push({ x: sl.x, y: sl.y, art: this.slickArt, base: sl.elev });
-    for (const o of race.items.orbs) {
+    for (const sl of it.slicks) extras.push({ x: sl.x, y: sl.y, art: this.slickArt, base: sl.elev });
+    for (const o of it.orbs) {
       extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: t.elev[o.idx] ?? 0 });
+    }
+    for (const b of it.boomerangs) {
+      extras.push({ x: b.x, y: b.y, art: this.boomArt[Math.floor(now * 16) % this.boomArt.length], lift: 0.4, base: b.z - 0.9 });
+    }
+    for (const b of it.bombs) {
+      const ground = t.elev[b.idx] ?? 0;
+      extras.push({ x: b.x, y: b.y, art: this.bombArt[Math.floor(now * 8) % 2], lift: Math.max(0, b.z - ground), base: ground });
+    }
+    for (const b of it.blasts) {
+      const f = Math.min(this.blastArt.length - 1, Math.floor((b.age / BLAST_TIME) * this.blastArt.length));
+      extras.push({ x: b.x, y: b.y, art: this.blastArt[f], base: b.z });
     }
     const faces: Face[] = [];
     const painter = { cam, scr: this.scr, fog: race.setup.theme.fog, faces };
     bridgeFaces(painter, t, race.setup.theme);
     rampFaces(painter, t, race.features, race.setup.theme);
     padFaces(painter, t, race.features, now);
-    drawWorldSprites(this.scr, cam, race.scenery.items, race.karts, this.kartSprites, race.setup.theme.fog,
-                     (k) => (k.drifting ? Math.max(1, k.boostLevel) : 0), extras, faces);
+    drawWorldSprites(this.scr, cam, race.scenery.items, race.karts, {
+      sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0),
+      sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
+      held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
+    }, race.setup.theme.fog, extras, faces);
   }
 
   private render(): void {
@@ -510,31 +615,42 @@ class Game {
         for (let y = 0; y < H; y++) scr.fillRect(0, y, W, 1, mix(hex("#140a35"), hex("#5d2a7a"), y / H));
       }
     };
+    this.hud.touch = this.input.touchMode;
     switch (this.mode) {
       case "boot":
         scr.clear(INK);
         break;
       case "title": {
         background();
-        f.draw(scr, "DREAM", W / 2, 38, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
-        f.draw(scr, "CIRCUIT", W / 2, 82, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
-        f.draw(scr, "THE KART RACER AN AI DREAMS AS YOU DRIVE", W / 2, 132, { color: DREAM, outline: INK, align: "center" });
+        const oy = Math.max(-12, Math.round((H - 216) / 2)); // centred on taller and shorter screens
+        f.draw(scr, "DREAM", W / 2, 38 + oy, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
+        f.draw(scr, "CIRCUIT", W / 2, 82 + oy, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
+        f.wrap("THE KART RACER AN AI DREAMS AS YOU DRIVE", W - 16).forEach((line, i) =>
+          f.draw(scr, line, W / 2, 132 + oy + i * 10, { color: DREAM, outline: INK, align: "center" }));
         if (Math.floor(now * 2) % 2 === 0) {
-          f.draw(scr, this.designer ? "PRESS ENTER" : this.designerError || "WAKING THE DREAMER...", W / 2, 160, { scale: 1, color: 0xffffffff, outline: INK, align: "center" });
+          const prompt = this.input.touchMode ? "TAP TO START" : "PRESS ENTER";
+          f.draw(scr, this.designer ? prompt : this.designerError || "WAKING THE DREAMER...", W / 2, 160 + oy, { scale: 1, color: 0xffffffff, outline: INK, align: "center" });
         }
         f.draw(scr, "A DIFFUSION MODEL DESIGNS EVERY TRACK", W / 2, H - 14, { color: DIM, outline: INK, align: "center" });
         break;
       }
       case "main":
-      case "setup":
+      case "setup": {
         background();
-        f.draw(scr, "DREAM CIRCUIT", W / 2, 16, { scale: 2, rows: LOGO_ROWS, outline: INK, align: "center" });
-        (this.mode === "main" ? this.menus.main : this.menus.setup).draw(scr, f, W / 2, 46, now);
-        if (this.mode === "setup" && (!this.designer || this.raceError)) {
-          const err = this.raceError || this.designerError;
-          f.draw(scr, err || "WAKING THE DREAMER...", W / 2, H - 12,
-                 { color: err ? HOT : DREAM, outline: INK, align: "center" });
-        }
+        const menu = this.mode === "main" ? this.menus.main : this.menus.setup;
+        const logo = H < 214 ? 6 : 16;
+        f.draw(scr, "DREAM CIRCUIT", W / 2, logo, { scale: 2, rows: LOGO_ROWS, outline: INK, align: "center" });
+        // the panel and its hint (up to two lines) sit in the space under the logo; on the setup
+        // screen, a designer that is still loading (or a failed dream) takes the hint's place
+        const top = Math.max(logo + 22, Math.min(46, Math.round((H - menu.height() - 24 + logo + 22) / 2)));
+        const err = this.raceError || this.designerError;
+        const note = this.mode === "setup" && (!this.designer || this.raceError)
+          ? { text: err || "WAKING THE DREAMER...", color: err ? HOT : DREAM } : undefined;
+        menu.draw(scr, f, W / 2, top, now, note);
+        break;
+      }
+      case "garage":
+        this.garage.draw(scr, f, now);
         break;
       case "howto":
         background();
@@ -550,10 +666,11 @@ class Game {
         if (!r || !this.sky) break;
         this.drawWorld(r, this.sky, this.cam);
         this.speedLines(this.cam);
+        if (this.flash > 0) scr.dimRect(0, 0, W, H, 0xffffffff, Math.min(0.85, this.flash * 4));
         if (this.mode === "race") this.hud.draw(scr, r, now);
         if (this.mode === "pause") {
           scr.dimRect(0, 0, W, H, INK, 0.45);
-          this.menus.pause.draw(scr, f, W / 2, 60, now);
+          this.menus.pause.draw(scr, f, W / 2, Math.max(20, Math.round((H - this.menus.pause.height()) / 2) - 10), now);
         }
         if (this.mode === "results") this.results(r);
         break;
@@ -578,7 +695,7 @@ class Game {
       if (this.debugPilot?.kart !== r.player) this.debugPilot = new RivalDriver(new Rand(5), r.player, 0);
       this.input.drive = () => {
         const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts);
-        return { ...a, item: !!a.item };
+        return { ...a, item: held.has("item") || !!a.item };
       };
     } else {
       this.input.drive = () => c;
@@ -607,13 +724,32 @@ class Game {
   debugRace(points: number[], theme = 0, rivals = 5): void {
     void this.startRace(false, {
       rivals, difficulty: "pro", theme: THEMES[theme], seed: 1234, replay: Float64Array.from(points), layout: "any",
+      build: this.build,
     });
+  }
+
+  /** Dev only: hand the player an item, as if from a box. */
+  debugGive(item: ItemKind): void {
+    const r = this.race;
+    if (r) r.items.grant(r.player, item);
+  }
+
+  /** Dev only: pin the framebuffer size (the film tool records at 384x216). */
+  debugPin(size: [number, number] | null): void {
+    this.scr.pin(size);
+  }
+
+  /** Dev only: open a screen (garage, howto, ...). */
+  debugGo(mode: Mode): void {
+    if (mode === "garage") this.openGarage("main");
+    else this.go(mode);
   }
 
   debugState(): Record<string, unknown> {
     const r = this.race;
     return {
       mode: this.mode,
+      size: [W, H],
       designer: !!this.designer,
       attract: !!this.attract,
       attractRuns: this.attractRuns,
@@ -634,6 +770,9 @@ class Game {
       lap: r?.lapForHud,
       speed: r ? Math.round(Math.abs(r.player.v) * 3.6) : 0,
       surface: r?.player.surface,
+      item: r?.player.item ?? null,
+      rocket: r ? r.player.rocket > 0 : false,
+      build: this.build,
       stats: r?.live?.stats,
       busy: r?.live?.busy ?? false,
       length: r?.track.locked ? Math.round(r.track.length) : null,
@@ -642,31 +781,37 @@ class Game {
 
   private howTo(): void {
     const f = this.font, scr = this.scr;
-    scr.dimRect(24, 18, W - 48, H - 36, hex("#0c0a1d"), 0.88);
-    f.draw(scr, "HOW TO PLAY", W / 2, 28, { color: HOT, outline: INK, align: "center" });
-    const lines: [string, string][] = [
+    const x0 = Math.max(8, Math.round(W / 2 - 176)), right = Math.min(W - 8, Math.round(W / 2 + 176));
+    scr.dimRect(x0, 8, right - x0, H - 16, hex("#0c0a1d"), 0.88);
+    f.draw(scr, "HOW TO PLAY", W / 2, 14, { color: HOT, outline: INK, align: "center" });
+    const rows: [string, string][] = [
       ["DRIVE", "ARROWS OR W A S D"],
-      ["DRIFT", "HOLD SHIFT OR SPACE IN A TURN"],
-      ["", "RELEASE FOR A MINI-TURBO BOOST"],
-      ["ITEM", "E OR C: TURBO, OIL OR DREAM ORB"],
-      ["RAMP", "SPACE AT THE LIP: TRICK BOOST"],
-      ["START", "GAS RIGHT BEFORE GO: ROCKET"],
-      ["PAUSE", "ESC          SOUND  M"],
-      ["PAD", "A GAS B BRAKE RB DRIFT Y ITEM"],
+      ["DRIFT", "HOLD SHIFT OR SPACE IN A TURN, LET GO FOR A MINI-TURBO"],
+      ["ITEM", "E: TAP TO USE. HOLD TO KEEP OIL, ORBS OR A BOMB BEHIND YOU AS A SHIELD"],
+      ["RAMP", "SPACE AT THE LIP FOR A TRICK BOOST"],
+      ["START", "GAS JUST BEFORE GO: ROCKET START"],
+      ["TOUCH", "THE STICK STEERS. PUSH IT ALL THE WAY OVER TO DRIFT, PULL BACK TO BRAKE"],
+      ["PAD", "A GAS  B BRAKE  RB DRIFT  Y ITEM"],
+      ["PAUSE", "ESC    SOUND M"],
     ];
-    lines.forEach(([k, v], i) => {
-      f.draw(scr, k, 40, 46 + i * 10, { color: DREAM });
-      f.draw(scr, v, 104, 46 + i * 10, { color: 0xffffffff });
-    });
-    const story = [
-      "NOBODY DESIGNED YOUR CIRCUIT.",
-      "A DIFFUSION MODEL DREAMS THE ROAD",
-      "AHEAD OF THE PACK DURING LAP 1.",
-      "WHEN THE LOOP CLOSES, IT LOCKS:",
-      "LAPS 2 AND 3 RACE ON YOUR DREAM.",
-    ];
-    story.forEach((s, i) => f.draw(scr, s, W / 2, 128 + i * 10, { color: i === 0 ? HOT : DIM, align: "center" }));
-    f.draw(scr, "PRESS ANY KEY", W / 2, H - 30, { color: 0xffffffff, align: "center" });
+    const kx = x0 + 10, vx = kx + 52;
+    let y = 30;
+    for (const [k, v] of rows) {
+      f.draw(scr, k, kx, y, { color: DREAM });
+      for (const line of f.wrap(v, right - vx - 8)) {
+        f.draw(scr, line, vx, y, { color: 0xffffffff });
+        y += 9;
+      }
+      y += 1;
+    }
+    y += 4;
+    const story = "NOBODY DESIGNED YOUR CIRCUIT: A DIFFUSION MODEL DREAMS THE ROAD AHEAD OF THE PACK ON LAP 1, THEN IT LOCKS.";
+    for (const line of f.wrap(story, right - x0 - 20)) {
+      if (y > H - 30) break;
+      f.draw(scr, line, W / 2, y, { color: DIM, align: "center" });
+      y += 9;
+    }
+    f.draw(scr, this.input.touchMode ? "TAP TO GO BACK" : "PRESS ANY KEY", W / 2, H - 20, { color: 0xffffffff, align: "center" });
   }
 
   private dreamingScreen(): void {
@@ -681,7 +826,7 @@ class Game {
       const pts = Array.from({ length: N }, (_, j) => [pv[2 * j], pv[2 * j + 1]]);
       for (const [x, y] of pts) { minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); }
       const span = Math.max(maxx - minx, maxy - miny) || 1;
-      const size = 130, cx = W / 2, cy = 112;
+      const size = Math.min(130, H - 86), cx = W / 2, cy = Math.round(H / 2) + 4;
       for (let j = 0; j < N; j++) {
         const [ax, ay] = pts[j], [bx, by] = pts[(j + 1) % N];
         const known = r.track.known[j];
@@ -697,33 +842,34 @@ class Game {
     } else if (r && !r.live) {
       f.draw(scr, "LOADING YOUR LOCKED CIRCUIT", W / 2, H / 2, { color: 0xffffffff, align: "center" });
     }
-    f.draw(scr, "ESC TO CANCEL", W / 2, H - 18, { color: DIM, align: "center" });
+    f.draw(scr, this.input.touchMode ? "II TO CANCEL" : "ESC TO CANCEL", W / 2, H - 18, { color: DIM, align: "center" });
   }
 
   private results(r: Race): void {
     const scr = this.scr, f = this.font;
     scr.dimRect(0, 0, W, H, INK, 0.6);
+    const c0 = Math.round(W / 2);
     f.draw(scr, "RESULTS", W / 2, 6, { scale: 2, rows: LOGO_ROWS, outline: INK, align: "center" });
-    f.draw(scr, "TIME", 262, 28, { color: DIM, align: "right" });
-    f.draw(scr, "BEST LAP", 346, 28, { color: DIM, align: "right" });
+    f.draw(scr, "TIME", c0 + 70, 28, { color: DIM, align: "right" });
+    f.draw(scr, "BEST LAP", c0 + 154, 28, { color: DIM, align: "right" });
     const rows = r.results();
     rows.forEach((row, i) => {
       const y = 39 + i * 10;
       const me = row.kart.isPlayer;
       const c = me ? HOT : 0xffffffff;
-      f.draw(scr, `${i + 1}`, 52, y, { color: c, align: "right", outline: INK });
-      scr.fillRect(60, y + 1, 6, 6, LIVERIES[row.kart.livery].body);
-      f.draw(scr, row.kart.name, 72, y, { color: c, outline: INK });
-      f.draw(scr, (row.estimated ? "~" : "") + formatTime(row.time), 262, y, { color: c, align: "right", outline: INK });
-      f.draw(scr, row.best ? formatTime(row.best) : "--", 346, y, { color: DIM, align: "right", outline: INK });
+      f.draw(scr, `${i + 1}`, c0 - 140, y, { color: c, align: "right", outline: INK });
+      scr.fillRect(c0 - 132, y + 1, 6, 6, kartColor(row.kart));
+      f.draw(scr, row.kart.name, c0 - 120, y, { color: c, outline: INK });
+      f.draw(scr, (row.estimated ? "~" : "") + formatTime(row.time), c0 + 70, y, { color: c, align: "right", outline: INK });
+      f.draw(scr, row.best ? formatTime(row.best) : "--", c0 + 154, y, { color: DIM, align: "right", outline: INK });
     });
     const st = r.live?.stats;
     if (st) {
       const resampled = st.retries === 1 ? "1 ARC RESAMPLED" : `${st.retries} ARCS RESAMPLED`;
-      f.draw(scr, `CIRCUIT DREAMED LIVE IN ${st.arcs} ARCS, ${resampled}`, W / 2, 41 + rows.length * 10,
-             { color: DREAM, align: "center", outline: INK });
+      f.wrap(`CIRCUIT DREAMED LIVE IN ${st.arcs} ARCS, ${resampled}`, W - 16).forEach((line, i) =>
+        f.draw(scr, line, W / 2, 41 + rows.length * 10 + i * 10, { color: DREAM, align: "center", outline: INK }));
     }
-    this.menus.results.draw(scr, f, W / 2, H - 66, this.time);
+    this.menus.results.draw(scr, f, W / 2, H - this.menus.results.height() - 2, this.time);
   }
 }
 
@@ -738,5 +884,8 @@ if (import.meta.env.DEV) {
     state: () => game.debugState(),
     race: (points: number[], theme = 0, rivals = 5) => game.debugRace(points, theme, rivals),
     hold: (on = true) => { game.debugHold = on; },
+    give: (item: ItemKind) => game.debugGive(item),
+    pin: (size: [number, number] | null) => game.debugPin(size),
+    go: (mode: Mode) => game.debugGo(mode),
   };
 }

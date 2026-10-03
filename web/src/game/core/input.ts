@@ -1,9 +1,14 @@
 // Game input: keyboard, gamepad and touch, read as continuous driving controls plus
 // edge-triggered menu events. Listens only while the game screen is active, so the rest of the
 // site (the DATA pages) keeps normal keyboard scrolling.
+//
+// Touch races with one thumb on a floating joystick (steer; push it all the way over to drift,
+// pull it back to brake) while the gas is automatic, and the other on DRIFT and ITEM.
 
 // "cancel" is the pad's B: back in menus, but not a pause in a race (there B brakes)
 export type MenuEvent = "up" | "down" | "left" | "right" | "confirm" | "back" | "cancel" | "pause";
+
+export interface DriveInput { steer: number; throttle: number; brake: number; drift: boolean; item: boolean }
 
 const DRIVE: Record<string, string> = {
   ArrowUp: "gas", KeyW: "gas", ArrowDown: "brake", KeyS: "brake",
@@ -17,6 +22,24 @@ const MENU: Record<string, MenuEvent> = {
   Escape: "back", Backspace: "back", KeyP: "pause",
 };
 
+const DEAD = 0.12; // stick dead zone, in stick radii
+const DRIFT_ON = 0.9; // pushed this far over, the stick drifts
+const DRIFT_OFF = 0.72; // and keeps drifting until it comes back inside this
+
+/** Joystick deflection (in stick radii, +x right, +y down) to driving controls. Steering has a
+ * dead zone and a gentle curve for small corrections; a stick pushed all the way to the side
+ * drifts (with hysteresis, so a drift does not flicker off mid-corner); pulled back, it brakes. */
+export function stickControls(dx: number, dy: number, drifting: boolean):
+  { steer: number; brake: number; drift: boolean } {
+  const x = Math.max(-1, Math.min(1, dx)), ax = Math.abs(x);
+  const mag = ax < DEAD ? 0 : Math.min(1, ((ax - DEAD) / (1 - DEAD)) ** 1.25);
+  return {
+    steer: mag === 0 ? 0 : -Math.sign(x) * mag, // the game's steer is + = left
+    brake: dy > 0.6 && dy > ax ? 1 : 0,
+    drift: drifting ? ax > DRIFT_OFF : ax > DRIFT_ON,
+  };
+}
+
 export class GameInput {
   private held = new Set<string>();
   private events: MenuEvent[] = [];
@@ -24,8 +47,19 @@ export class GameInput {
   active = true;
   onMute: (() => void) | null = null;
   pointer: { x: number; y: number; down: boolean; clicked: boolean } = { x: -1, y: -1, down: false, clicked: false };
+  /** Set once the player drives by touch: the gas then works by itself. */
+  touchMode = false;
+  private stickId: number | null = null;
+  private stickVec: [number, number] = [0, 0];
+  private stickDrift = false;
+  private readonly touchRoot: HTMLElement;
+  private readonly stick: HTMLElement | null;
+  private readonly knob: HTMLElement | null;
 
   constructor(canvas: HTMLCanvasElement, touchRoot: HTMLElement) {
+    this.touchRoot = touchRoot;
+    // a phone or tablet drives by touch from the start (its prompts say TAP, its gas is automatic)
+    this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     window.addEventListener("keydown", (e) => {
       if (!this.active || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.code === "KeyM") {
@@ -52,6 +86,7 @@ export class GameInput {
     canvas.addEventListener("pointerdown", (e) => {
       toLocal(e);
       this.pointer.down = true;
+      if (e.pointerType === "touch") this.touchMode = true;
     });
     canvas.addEventListener("pointerup", (e) => {
       toLocal(e);
@@ -60,7 +95,7 @@ export class GameInput {
     });
     touchRoot.querySelectorAll<HTMLButtonElement>("button[data-k]").forEach((b) => {
       const k = b.dataset.k!;
-      const on = (e: Event) => { e.preventDefault(); this.held.add(k); b.classList.add("on"); };
+      const on = (e: Event) => { e.preventDefault(); this.touchMode = true; this.held.add(k); b.classList.add("on"); };
       const off = (e: Event) => { e.preventDefault(); this.held.delete(k); b.classList.remove("on"); };
       b.addEventListener("pointerdown", on);
       b.addEventListener("pointerup", off);
@@ -73,6 +108,86 @@ export class GameInput {
         this.events.push(b.dataset.ev as MenuEvent);
       });
     });
+    this.stick = touchRoot.querySelector<HTMLElement>("#stick");
+    this.knob = this.stick?.querySelector<HTMLElement>(".knob") ?? null;
+    const zone = touchRoot.querySelector<HTMLElement>("#stick-zone");
+    if (zone) this.wireStick(zone);
+    this.restStick();
+    window.addEventListener("resize", () => { if (this.stickId === null) this.restStick(); });
+  }
+
+  /** The floating joystick: it appears under the thumb, and its base follows a thumb that slides
+   * past the rim, so steering never runs out. */
+  private wireStick(zone: HTMLElement): void {
+    let ox = 0, oy = 0;
+    const radius = () => (this.stick ? this.stick.offsetWidth / 2 - 6 : 50);
+    const place = () => {
+      if (!this.stick) return;
+      this.stick.style.left = `${ox}px`;
+      this.stick.style.top = `${oy}px`;
+    };
+    zone.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (this.stickId !== null) return;
+      this.stickId = e.pointerId;
+      this.touchMode = true;
+      zone.setPointerCapture?.(e.pointerId);
+      ox = e.clientX;
+      oy = e.clientY;
+      this.stickVec = [0, 0];
+      place();
+      this.stick?.classList.add("on");
+      this.moveKnob(0, 0, radius());
+    });
+    zone.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== this.stickId) return;
+      e.preventDefault();
+      const r = radius();
+      let dx = (e.clientX - ox) / r, dy = (e.clientY - oy) / r;
+      const m = Math.hypot(dx, dy);
+      if (m > 1) {
+        ox += (dx / m) * (m - 1) * r;
+        oy += (dy / m) * (m - 1) * r;
+        dx /= m;
+        dy /= m;
+        place();
+      }
+      this.stickVec = [dx, dy];
+      this.moveKnob(dx, dy, r);
+    });
+    const end = (e: PointerEvent) => {
+      if (e.pointerId !== this.stickId) return;
+      this.stickId = null;
+      this.stickVec = [0, 0];
+      this.stickDrift = false;
+      this.stick?.classList.remove("on", "drift");
+      this.moveKnob(0, 0, radius());
+      this.restStick();
+    };
+    zone.addEventListener("pointerup", end);
+    zone.addEventListener("pointercancel", end);
+  }
+
+  private moveKnob(dx: number, dy: number, r: number): void {
+    if (this.knob) this.knob.style.transform = `translate(${dx * r}px, ${dy * r}px)`;
+  }
+
+  /** Where the stick waits for a thumb: low on the left. */
+  private restStick(): void {
+    if (!this.stick) return;
+    this.stick.style.left = `${Math.max(86, window.innerWidth * 0.15)}px`;
+    this.stick.style.top = `${window.innerHeight - Math.max(104, window.innerHeight * 0.27)}px`;
+  }
+
+  /** Show the touch controls only during a race (in menus, taps go to the menus); the pause
+   * button also while a circuit is being dreamed, where it cancels. */
+  setRacing(on: boolean, pausable = on): void {
+    this.touchRoot.classList.toggle("racing", on);
+    this.touchRoot.classList.toggle("pausable", pausable);
+    if (!on) {
+      this.held.delete("drift");
+      this.held.delete("item");
+    }
   }
 
   private pollPad(): { steer: number; gas: number; brake: number; drift: boolean; item: boolean } | null {
@@ -103,15 +218,25 @@ export class GameInput {
     return null;
   }
 
-  /** Driving controls this frame. steer: + = left. */
-  drive(): { steer: number; throttle: number; brake: number; drift: boolean; item: boolean } {
+  /** Driving controls this frame. steer: + = left. ``countdown``: before GO, touch revs the
+   * engine only while the thumb is on the stick (so a rocket start is a well-timed touch). */
+  drive(countdown = false): DriveInput {
     const pad = this.pollPad();
     const h = this.held;
-    const steer = (h.has("left") ? 1 : 0) - (h.has("right") ? 1 : 0);
-    const k = {
-      steer, throttle: h.has("gas") ? 1 : 0, brake: h.has("brake") ? 1 : 0, drift: h.has("drift"),
-      item: h.has("item"),
+    const k: DriveInput = {
+      steer: (h.has("left") ? 1 : 0) - (h.has("right") ? 1 : 0),
+      throttle: h.has("gas") ? 1 : 0, brake: h.has("brake") ? 1 : 0, drift: h.has("drift"), item: h.has("item"),
     };
+    if (this.touchMode) {
+      const s = stickControls(this.stickVec[0], this.stickVec[1], this.stickDrift);
+      if (this.stickId !== null) this.stickDrift = s.drift;
+      this.stick?.classList.toggle("drift", this.stickId !== null && s.drift);
+      if (Math.abs(s.steer) > Math.abs(k.steer)) k.steer = s.steer;
+      k.brake = Math.max(k.brake, s.brake);
+      k.drift ||= this.stickId !== null && s.drift;
+      const gas = countdown ? (this.stickId !== null ? 1 : 0) : k.brake > 0 ? 0 : 1;
+      k.throttle = Math.max(k.throttle, gas);
+    }
     if (!pad) return k;
     return {
       steer: Math.abs(pad.steer) > Math.abs(k.steer) ? pad.steer : k.steer,

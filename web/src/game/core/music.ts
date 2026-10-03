@@ -109,7 +109,7 @@ export class Music {
   private setup(ac: AudioContext): void {
     if (this.out) return;
     this.out = ac.createGain();
-    this.out.gain.value = 0.3;
+    this.out.gain.value = 0.42; // the music leads the mix; the engine sits far under it
     this.out.connect(this.master()!);
     const wave = (duty: number) => {
       const n = 32, re = new Float32Array(n), im = new Float32Array(n);

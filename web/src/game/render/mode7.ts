@@ -18,8 +18,20 @@ export interface Camera {
   clear?: number; // m: scenery nearer than this is not drawn (scripted film cameras only)
 }
 
+/** The screen's height relative to the 216 rows the view was composed for: the horizon and the
+ * focal length scale with it, so a taller or shorter window keeps the same vertical framing
+ * (and a wider one simply sees more to the sides). */
+export const viewScale = (): number => H / 216;
+
 export function makeCamera(): Camera {
-  return { x: 0, y: 0, heading: 0, height: 2.9, focal: 250, horizon: 74, far: 240, lift: 0, fx: 0 };
+  return { x: 0, y: 0, heading: 0, height: 2.9, focal: 250 * viewScale(), horizon: Math.round(74 * viewScale()),
+           far: 240, lift: 0, fx: 0 };
+}
+
+/** Re-frame a camera after the screen changed size. */
+export function fitCamera(cam: Camera): void {
+  cam.horizon = Math.round(74 * viewScale());
+  cam.focal = 250 * viewScale();
 }
 
 export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: number,

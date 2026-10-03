@@ -1,10 +1,13 @@
 // Rival drivers. Pure pursuit on a racing line that cuts the inside of corners, a speed profile
-// from the curvature ahead, a little sloppiness, simple overtaking room and the classic kart
-// racer rubber band: rivals far behind the player find a few percent, rivals far ahead lift.
-// Like a human, they drift the tight corners and release on the exit for the mini-turbo.
+// from the curvature ahead (each kart's own top speed and cornering, from its build), a little
+// sloppiness, simple overtaking room and the classic kart racer rubber band: rivals far behind
+// the player find a few percent, rivals far ahead lift. Like a human, they drift the tight
+// corners and release on the exit for the mini-turbo, hold oil, orbs and bombs out behind them
+// when someone is on their tail, and save each item for the moment it works best.
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
+import { TRAILS } from "./items";
 import type { ClassParams, Controls, Kart } from "./kart";
 
 export class RivalDriver {
@@ -16,6 +19,8 @@ export class RivalDriver {
   private driftSide = 0;
   private driftCooldown = 0; // one "drift this corner?" decision per corner
   private trickTried = false; // one trick attempt per ramp
+  private holding = false; // the item button is held: an item is out behind the kart
+  private tapped = false; // the button went down last frame (a press lasts one frame)
 
   constructor(private readonly rng: Rand, readonly kart: Kart, rank: number) {
     this.lane = rng.range(-2.5, 2.5);
@@ -49,10 +54,11 @@ export class RivalDriver {
     const steer = Math.max(-1, Math.min(1, err * 2.6 + this.wobble));
 
     // speed: friction-limited corners within braking distance, then the rubber band
-    let vt = cls.vmax * cls.aiSpeed * this.skill;
+    let vt = k.topSpeed(cls) * cls.aiSpeed * this.skill;
+    const grip = cls.grip * k.perf.turn * cls.aiCorner;
     for (let m = 0; m <= 60; m += 6) {
       const kk = Math.abs(track.curvature(track.ahead(k.idx, m))) + 1e-4;
-      const vc = Math.sqrt((cls.grip * cls.aiCorner) / kk);
+      const vc = Math.sqrt(grip / kk);
       vt = Math.min(vt, Math.sqrt(vc * vc + 2 * 14 * m));
     }
     const gap = k.dist - player.dist;
@@ -63,7 +69,7 @@ export class RivalDriver {
     const brake = v > vt + 2 ? Math.min(1, (v - vt) / 6) : 0;
     return {
       steer, throttle, brake, drift: this.drift(dt, track, cls, steer) || this.trick(cls),
-      item: this.wantsItem(track, cls, others),
+      item: this.itemButton(track, cls, others),
     };
   }
 
@@ -79,25 +85,65 @@ export class RivalDriver {
     return this.rng.next() < 0.35 + 0.55 * cls.aiCorner;
   }
 
-  /** When to fire the item: a turbo on a straight, oil with a kart close behind, an orb with a
-   * kart in range ahead; anything held too long gets used. Sharper classes react sooner. */
-  private wantsItem(track: Track, cls: ClassParams, others: Kart[]): boolean {
+  /** The item button. Instant items get a one-frame press when the moment is right; oil, orbs and
+   * bombs are held out behind as a shield while someone is close behind, and let go (dropped or
+   * fired) when the moment comes. Sharper classes react sooner. */
+  private itemButton(track: Track, cls: ClassParams, others: Kart[]): boolean {
     const k = this.kart;
-    if (!k.item || k.spin > 0 || k.finished) return false;
-    if (k.itemAge < 1.6 - cls.aiCorner) return false; // reaction time: 0.9 s rookie, 0.65 s legend
-    if (k.itemAge > 9) return true;
-    if (k.item === "turbo") {
-      const straight = [10, 25, 40].every((m) => Math.abs(track.curvature(track.ahead(k.idx, m))) < 1 / 90);
-      return straight && k.v > 0.5 * cls.vmax && k.surface === "road";
+    if (!k.item || k.roulette > 0 || k.spin > 0 || k.finished || k.rocket > 0) {
+      this.holding = this.tapped = false;
+      return false;
     }
-    let behind = Infinity, ahead = Infinity;
+    const ready = k.itemAge >= 1.6 - cls.aiCorner; // reaction time: 0.9 s rookie, 0.65 s legend
+    const fire = ready && (k.itemAge > 9 || this.wantsItem(track, cls, others));
+    if (TRAILS.has(k.item)) {
+      if (this.holding) {
+        if (fire) this.holding = false; // the release drops or fires it
+        return this.holding;
+      }
+      if (fire || (ready && this.gaps(others).behind < 18)) this.holding = true;
+      return this.holding;
+    }
+    if (this.tapped) {
+      this.tapped = false;
+      return false;
+    }
+    this.tapped = fire;
+    return fire;
+  }
+
+  /** Race distance to the nearest kart ahead and behind. */
+  private gaps(others: Kart[]): { ahead: number; behind: number } {
+    const k = this.kart;
+    let ahead = Infinity, behind = Infinity;
     for (const o of others) {
       if (o === k) continue;
       const gap = o.dist - k.dist;
       if (gap > 0) ahead = Math.min(ahead, gap);
       else behind = Math.min(behind, -gap);
     }
-    return k.item === "oil" ? behind > 3 && behind < 28 : ahead > 6 && ahead < 90;
+    return { ahead, behind };
+  }
+
+  /** The moment for each item: turbos on a straight, oil with a kart close behind, an orb or a
+   * boomerang with a kart in range ahead, a bomb lobbed onto the kart in front; the prism, the
+   * shock and the rocket as soon as possible. */
+  private wantsItem(track: Track, cls: ClassParams, others: Kart[]): boolean {
+    const k = this.kart;
+    const { ahead, behind } = this.gaps(others);
+    switch (k.item) {
+      case "turbo":
+      case "triple": {
+        const straight = [10, 25, 40].every((m) => Math.abs(track.curvature(track.ahead(k.idx, m))) < 1 / 90);
+        return straight && k.v > 0.5 * cls.vmax && k.surface === "road";
+      }
+      case "oil": return behind > 3 && behind < 28;
+      case "orb": return ahead > 6 && ahead < 90;
+      case "boomerang": return ahead > 4 && ahead < 40;
+      case "bomb": return ahead > 8 && ahead < 35;
+      case "rocket": return k.surface === "road";
+      default: return true; // prism, shock
+    }
   }
 
   private drift(dt: number, track: Track, cls: ClassParams, steer: number): boolean {

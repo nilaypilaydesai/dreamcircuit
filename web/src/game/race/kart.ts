@@ -2,8 +2,9 @@
 // kart-to-kart bumps and a soft outer fence; road height (bridges) with guard rails; jumps off
 // ramps, with a trick for a well-timed hop. Tuned for fun, not for the research simulator.
 
-import { HALF_WIDTH, type Track } from "../world/track";
+import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import type { ItemKind } from "./items";
+import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "./parts";
 
 export type Difficulty = "rookie" | "pro" | "legend";
 
@@ -37,6 +38,10 @@ export const GRAVITY = 26; // m/s^2: arcade jumps are short and punchy
 const TRICK_EARLY = 0.24; // s before the lip a hop still counts as a trick
 const TRICK_LATE = 0.18; // s after leaving the lip
 const PERFECT = 0.085; // s either side of the lip for a perfect trick
+export const SPIN_TIME = 1.0; // s
+export const PRISM_SPEED = 1.15; // top speed while invincible
+export const ROCKET_SPEED = 1.7; // the rocket's speed, relative to the class top speed
+const SHRUNK_SPEED = 0.72; // top speed while shrunk by a shock
 
 export type TrickGrade = 0 | 1 | 2; // none, good, perfect
 
@@ -59,11 +64,20 @@ export class Kart {
   bumpTime = 0;
   // items (see items.ts)
   item: ItemKind | null = null;
+  uses = 0; // shots left in the item (triple turbo, boomerang)
   roulette = 0; // s left on the player's spinning item slot
   itemAge = 0; // s since the current item arrived
   itemHeld = false; // the item button was down last frame
+  trailing = false; // the item is held out behind the kart (it blocks one hit from behind)
   spin = 0; // s left in a spin-out
   spinAngle = 0; // the sprite's extra rotation while spinning
+  prism = 0; // s left invincible (a prism)
+  rocket = 0; // s left as a rocket (it drives itself)
+  private rocketCarry = 0; // m travelled as a rocket that has not yet reached the next road point
+  shrink = 0; // s left shrunk by a shock
+  // the kart's build (garage parts) and what it does to the class's numbers
+  build: Build = DEFAULT_BUILD;
+  perf: Perf = NEUTRAL;
   // height: the road under the kart (set by the race each frame), and the kart's own
   ground = 0; // m, road surface height here (bridge decks, ramps)
   elev = 0; // m, the kart's height
@@ -91,6 +105,35 @@ export class Kart {
   constructor(readonly id: number, readonly name: string, readonly livery: number,
               readonly isPlayer: boolean) {}
 
+  /** Fit the kart with a build: its parts set its stats. */
+  equip(b: Build): this {
+    this.build = b;
+    this.perf = perfOf(statsOf(b));
+    return this;
+  }
+
+  /** A prism or a rocket: nothing can spin the kart, and it spins whatever it touches. */
+  get invincible(): boolean {
+    return this.prism > 0 || this.rocket > 0;
+  }
+
+  /** Knocked into a spin: it slides on, slowing, with no control for a moment. Returns false
+   * for an invincible kart. */
+  spinOut(time = SPIN_TIME): boolean {
+    if (this.invincible) return false;
+    this.spin = Math.max(this.spin, time);
+    this.v *= 0.45;
+    this.drifting = false;
+    this.boostLevel = 0;
+    this.boostTime = 0;
+    return true;
+  }
+
+  /** This kart's top speed in a class, from its build and what it is under right now. */
+  topSpeed(cls: ClassParams): number {
+    return cls.vmax * this.perf.vmax * (this.prism > 0 ? PRISM_SPEED : 1) * (this.shrink > 0 ? SHRUNK_SPEED : 1);
+  }
+
   placeOn(track: Track, idx: number, lateral: number): void {
     const [tx, ty] = track.tangent(idx);
     this.x = track.xs[idx] - ty * lateral;
@@ -111,6 +154,10 @@ export class Kart {
 
   update(dt: number, input: Controls, track: Track, cls: ClassParams):
     { boosted: boolean; landed: TrickGrade | -1 } {
+    if (this.prism > 0) this.prism = Math.max(0, this.prism - dt);
+    if (this.shrink > 0) this.shrink = Math.max(0, this.shrink - dt);
+    if (this.rocket > 0) return this.fly(dt, track, cls);
+    const P = this.perf;
     // spun out: no control while the kart slides on, slowing, and the sprite turns
     let c = input;
     if (this.burnout > 0) {
@@ -176,13 +223,18 @@ export class Kart {
       this.bumpTime = 0.2;
       this.surface = "kerb";
     }
-    const surfaceSpeed = { road: 1, kerb: 0.97, shoulder: 0.82, grass: 0.52, air: 1 }[this.surface];
+    // traction: how much speed the kart keeps on the shoulder and the grass (a prism keeps it all)
+    const tr = P.offroad - 1;
+    const surfaceSpeed = this.prism > 0 ? 1 : {
+      road: 1, kerb: 0.97, shoulder: 0.82 + 0.13 * tr, grass: 0.52 + 0.31 * tr, air: 1,
+    }[this.surface];
     let boosted = false;
-    const vmax = cls.vmax * surfaceSpeed * (this.boostTime > 0 ? 1.28 : 1);
+    const vmax = this.topSpeed(cls) * surfaceSpeed * (this.boostTime > 0 ? 1.28 : 1);
+    const accel = cls.accel * P.accel * (this.shrink > 0 ? 0.8 : 1);
 
     // longitudinal
     if (c.throttle > 0 && this.v >= -0.5) {
-      if (this.v < vmax) this.v += cls.accel * c.throttle * (1 - this.v / vmax) * dt * 1.6;
+      if (this.v < vmax) this.v += accel * c.throttle * (1 - this.v / vmax) * dt * 1.6;
     } else if (c.brake > 0) {
       this.v -= (this.v > 0 ? 22 : 6) * c.brake * dt;
       this.v = Math.max(this.v, -6);
@@ -190,23 +242,27 @@ export class Kart {
       this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), 3.2 * dt);
     }
     if (this.v > vmax && !this.air) this.v -= (this.v - vmax) * 2.2 * dt; // over the limit: bleed it off
-    if (this.surface === "grass") this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), 5 * dt);
+    if (this.surface === "grass" && this.prism <= 0) {
+      this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), (5 / P.offroad) * dt);
+    }
     if (this.boostTime > 0) {
       this.boostTime -= dt;
       this.v = Math.min(this.v + 14 * dt, vmax);
     }
 
-    // steering and drifting
+    // steering and drifting; a better mini-turbo charges sooner and fires for longer
     this.steer += (c.steer - this.steer) * Math.min(1, dt * 9);
     const speed = Math.abs(this.v);
+    const charge = (t: number) => t * (0.8 + 0.2 * P.turbo);
     if (c.drift && !this.drifting && !this.air && Math.abs(c.steer) > 0.3 && speed > 11 && this.surface !== "grass") {
       this.drifting = true;
       this.driftDir = Math.sign(c.steer);
       this.driftTime = 0;
     }
     if (this.drifting && (!c.drift || speed < 8 || this.surface === "grass" || this.air)) {
-      if (this.driftTime > 0.7) {
-        this.boostTime = this.driftTime > 1.6 ? 1.1 : 0.55; // mini-turbo
+      const ch = charge(this.driftTime);
+      if (ch > 0.7) {
+        this.boostTime = (ch > 1.6 ? 1.1 : 0.55) * P.turbo; // mini-turbo
         boosted = true;
       }
       this.drifting = false;
@@ -216,11 +272,12 @@ export class Kart {
     let yawGain = 1;
     if (this.drifting) {
       this.driftTime += dt;
-      this.boostLevel = this.driftTime > 1.6 ? 2 : this.driftTime > 0.7 ? 1 : 0;
+      const ch = charge(this.driftTime);
+      this.boostLevel = ch > 1.6 ? 2 : ch > 0.7 ? 1 : 0;
       steerEff = this.driftDir * (0.55 + 0.45 * this.steer * this.driftDir);
       yawGain = 1.3;
     }
-    const turn = Math.min(1.9, cls.grip / Math.max(speed, 1)) * yawGain * (this.air ? 0.35 : 1);
+    const turn = Math.min(1.9 * P.turn, (cls.grip * P.turn) / Math.max(speed, 1)) * yawGain * (this.air ? 0.35 : 1);
     this.yawRate = steerEff * turn * Math.min(1, speed / 3.5) * Math.sign(this.v || 1);
     this.heading += this.yawRate * dt;
     const slipTarget = this.drifting ? this.driftDir * 0.32 : 0;
@@ -239,6 +296,39 @@ export class Kart {
     }
     if (this.bumpTime > 0) this.bumpTime -= dt;
     return { boosted, landed };
+  }
+
+  /** As a rocket the kart rides the road itself at rocket speed: along the centerline, easing
+   * into the middle, over ramps and bridges at road height (it can neither cut a corner nor fall
+   * off a deck), and comes out of it with a boost. */
+  private fly(dt: number, track: Track, cls: ClassParams): { boosted: boolean; landed: -1 } {
+    this.rocket = Math.max(0, this.rocket - dt);
+    this.spin = this.spinAngle = this.trickAngle = 0;
+    this.drifting = false;
+    this.boostLevel = 0;
+    this.v += (cls.vmax * ROCKET_SPEED - this.v) * Math.min(1, dt * 2.5);
+    this.rocketCarry += Math.max(0, this.v) * dt;
+    const n = Math.floor(this.rocketCarry / SPACING);
+    this.rocketCarry -= n * SPACING;
+    this.idx = track.wrap(this.idx + n); // (before the lap locks, the road simply ends at the dream)
+    this.offset *= Math.exp(-2.5 * dt);
+    const [tx, ty] = track.tangent(this.idx);
+    this.x = track.xs[this.idx] - ty * this.offset;
+    this.y = track.ys[this.idx] + tx * this.offset;
+    const d = Math.atan2(Math.sin(Math.atan2(ty, tx) - this.heading), Math.cos(Math.atan2(ty, tx) - this.heading));
+    this.heading += d * Math.min(1, dt * 10);
+    this.steer += (Math.max(-1, Math.min(1, d * 4)) - this.steer) * Math.min(1, dt * 9);
+    this.slip *= Math.exp(-6 * dt);
+    this.surface = "road";
+    this.air = false;
+    this.vz = this.airTime = 0;
+    this.trick = 0;
+    this.elev = this.ground;
+    if (this.rocket <= 0) {
+      this.v = Math.min(this.v, this.topSpeed(cls) * 1.2);
+      this.boostTime = Math.max(this.boostTime, 0.8);
+    }
+    return { boosted: false, landed: -1 };
   }
 
   /** Lap bookkeeping from the arc length past the start line. */
@@ -279,9 +369,13 @@ export class Kart {
   }
 }
 
-/** Resolve kart-kart overlaps with a springy bump. ``vmax`` bounds what a bump can do. */
-export function collideKarts(karts: Kart[], vmax = 45): Kart[] {
+/** Resolve kart-kart overlaps with a springy bump in which the heavier kart gives less ground.
+ * An invincible kart (prism, rocket) is not moved at all and spins out whoever it touches.
+ * ``vmax`` bounds what a bump can do (scaled by each kart's own top speed). Returns the karts
+ * that bumped, and the spin-outs as [victim, by] pairs. */
+export function collideKarts(karts: Kart[], vmax = 45): { hits: Kart[]; spun: [Kart, Kart][] } {
   const hits: Kart[] = [];
+  const spun: [Kart, Kart][] = [];
   const R = 1.05;
   for (let i = 0; i < karts.length; i++) {
     for (let j = i + 1; j < karts.length; j++) {
@@ -291,8 +385,18 @@ export function collideKarts(karts: Kart[], vmax = 45): Kart[] {
       const d = Math.hypot(dx, dy);
       if (d >= 2 * R || d < 1e-6) continue;
       const nx = dx / d, ny = dy / d, push = (2 * R - d) / 2;
-      a.x -= nx * push; a.y -= ny * push;
-      b.x += nx * push; b.y += ny * push;
+      if (a.invincible !== b.invincible) {
+        // a prism or a rocket barges through: the other kart is shoved aside and spun
+        const [hard, soft, sgn] = a.invincible ? [a, b, 1] : [b, a, -1];
+        soft.x += sgn * nx * push * 2;
+        soft.y += sgn * ny * push * 2;
+        if (soft.spinOut()) spun.push([soft, hard]);
+        continue;
+      }
+      const ma = a.perf.mass, mb = b.perf.mass;
+      const wa = (2 * mb) / (ma + mb), wb = (2 * ma) / (ma + mb); // both 1 for equal weights
+      a.x -= nx * push * wa; a.y -= ny * push * wa;
+      b.x += nx * push * wb; b.y += ny * push * wb;
       // An impulse along the contact normal, projected onto each kart's heading (karts only
       // change speed along their heading). Without the projection, a side-on pile-up pumps
       // speed into one kart frame after frame, and a kart shoved into reverse runs away.
@@ -300,13 +404,13 @@ export function collideKarts(karts: Kart[], vmax = 45): Kart[] {
       const hb = Math.cos(b.heading) * nx + Math.sin(b.heading) * ny;
       const closing = a.v * ha - b.v * hb;
       if (closing > 0) {
-        const j = closing * 0.35;
-        a.v = Math.max(-8, Math.min(vmax, a.v - j * ha));
-        b.v = Math.max(-8, Math.min(vmax, b.v + j * hb));
+        const imp = closing * 0.35;
+        a.v = Math.max(-8, Math.min(vmax * a.perf.vmax, a.v - imp * ha * wa));
+        b.v = Math.max(-8, Math.min(vmax * b.perf.vmax, b.v + imp * hb * wb));
         a.bumpTime = b.bumpTime = 0.3;
         hits.push(a, b);
       }
     }
   }
-  return hits;
+  return { hits, spun };
 }

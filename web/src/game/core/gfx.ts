@@ -1,8 +1,32 @@
-// The retro framebuffer: everything in the game is drawn into one 384x216 pixel buffer (16:9 at
-// SNES-like density), then scaled up with nearest-neighbor so every pixel stays crisp.
+// The retro framebuffer: everything in the game is drawn into one low-resolution pixel buffer
+// (about 216 rows, SNES-like density), then scaled up by a whole number with nearest-neighbor so
+// every pixel stays crisp. The buffer takes the window's shape, so the game fills the screen:
+// W and H change when the window does (ES module bindings are live, so readers see the new size).
 
-export const W = 384;
-export const H = 216;
+export let W = 384;
+export let H = 216;
+
+const ROWS = 225; // the framebuffer height the integer scale aims for
+const MIN_ROWS = 180; // fewer rows than this crowds the HUD
+const MIN_W = 320, MAX_W = 800, MAX_H = 300;
+
+/** Framebuffer size and display scale for a window of ``vw`` x ``vh`` CSS pixels. A whole-number
+ * scale makes the buffer cover the window edge to edge (at most scale-1 px is cropped), picked so
+ * the buffer is as close to ROWS tall as it can be; a window narrower than MIN_W game pixels (a
+ * phone held upright) fits the width and leaves bands above and below, and very wide windows are
+ * capped at MAX_W. */
+export function screenSize(vw: number, vh: number): { w: number; h: number; scale: number } {
+  if (!(vw > 0 && vh > 0)) return { w: 384, h: 216, scale: 1 };
+  const lo = Math.max(1, Math.floor(vh / ROWS)), hi = lo + 1;
+  let scale = vh / hi >= MIN_ROWS && Math.abs(vh / hi - ROWS) < Math.abs(vh / lo - ROWS) ? hi : lo;
+  let w = Math.ceil(vw / scale), h = Math.ceil(vh / scale);
+  if (w < MIN_W) {
+    scale = vw / MIN_W;
+    w = MIN_W;
+    h = Math.min(MAX_H, Math.floor(vh / scale));
+  }
+  return { w: Math.min(w, MAX_W), h, scale };
+}
 
 /** Pack an opaque color for the little-endian Uint32 view of ImageData (0xAABBGGRR). */
 export const rgb = (r: number, g: number, b: number): number =>
@@ -39,25 +63,48 @@ export function makeSprite(w: number, h: number): Sprite {
 
 export class Screen {
   readonly ctx: CanvasRenderingContext2D;
-  readonly image: ImageData;
-  readonly buf: Uint32Array;
+  image!: ImageData;
+  buf!: Uint32Array;
+  /** Called after the framebuffer changes size (cameras and skies depend on it). */
+  onResize: (() => void) | null = null;
+  /** A pinned size (the film tool records at exactly 384x216), or null to follow the window. */
+  private pinned: [number, number] | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement) {
-    canvas.width = W;
-    canvas.height = H;
     this.ctx = canvas.getContext("2d", { alpha: false })!;
-    this.image = this.ctx.createImageData(W, H);
-    this.buf = new Uint32Array(this.image.data.buffer);
+    this.alloc(W, H);
     window.addEventListener("resize", () => this.fit());
+    window.visualViewport?.addEventListener("resize", () => this.fit());
     this.fit();
   }
 
-  /** Largest integer scale that fits the window (fractional on tiny screens). */
+  private alloc(w: number, h: number): void {
+    W = w;
+    H = h;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    this.image = this.ctx.createImageData(w, h);
+    this.buf = new Uint32Array(this.image.data.buffer);
+  }
+
+  /** Size the framebuffer to the window and scale it up to cover it. */
   fit(): void {
-    const s = Math.min(window.innerWidth / W, window.innerHeight / H);
-    const scale = s >= 1 ? Math.floor(s) : s;
-    this.canvas.style.width = `${Math.round(W * scale)}px`;
-    this.canvas.style.height = `${Math.round(H * scale)}px`;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const s = this.pinned
+      ? { w: this.pinned[0], h: this.pinned[1], scale: Math.min(vw / this.pinned[0], vh / this.pinned[1]) }
+      : screenSize(vw, vh);
+    if (s.w !== W || s.h !== H) {
+      this.alloc(s.w, s.h);
+      this.onResize?.();
+    }
+    this.canvas.style.width = `${Math.round(s.w * s.scale)}px`;
+    this.canvas.style.height = `${Math.round(s.h * s.scale)}px`;
+  }
+
+  /** Pin the framebuffer to one size (null: follow the window again). */
+  pin(size: [number, number] | null): void {
+    this.pinned = size;
+    this.fit();
   }
 
   present(): void {

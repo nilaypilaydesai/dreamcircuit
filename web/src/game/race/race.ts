@@ -12,6 +12,7 @@ import { RivalDriver } from "./ai";
 import { Features } from "./features";
 import { type ItemKind, Items } from "./items";
 import { CLASSES, type Controls, type Difficulty, Kart, collideKarts } from "./kart";
+import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
 import { LIVERIES } from "../render/sprites";
 
 export const LAPS = 3;
@@ -29,7 +30,11 @@ export type RaceEvent =
   | { kind: "item"; item: ItemKind } // the player's item slot settled
   | { kind: "use"; item: ItemKind } // the player fired an item
   | { kind: "spun" } // the player was spun out
-  | { kind: "hit" } // the player's oil or orb spun out a rival
+  | { kind: "hit" } // the player's item (or prism, or rocket) spun out a rival
+  | { kind: "blocked" } // the item held behind the player soaked up a hit
+  | { kind: "boom"; near: boolean } // a bomb went off (near the player: shake the camera)
+  | { kind: "shock" } // someone used a shock: the screen flashes
+  | { kind: "rocketOver" } // the player's rocket has burned out
   | { kind: "jump" } // the player left a ramp
   | { kind: "land"; trick: 0 | 1 | 2 } // and came down (with a trick grade)
   | { kind: "pad" } // the player hit a boost pad
@@ -44,6 +49,7 @@ export interface RaceSetup {
   seed: number;
   replay: Float64Array | null; // points of a locked circuit to race again (game meters)
   layout?: Layout; // what the designer is asked for (default: anything)
+  build?: Build; // the player's kart from the garage (default: the classic kart)
 }
 
 /** Whether the player's controls reach the race: while racing, and during the countdown, where
@@ -102,12 +108,15 @@ export class Race {
     }
     const n = setup.rivals + 1;
     const order = Array.from({ length: n }, (_, i) => i);
-    // the player starts in the middle of the pack, like the classics
+    // the player starts in the middle of the pack, like the classics; rivals drive random builds
+    // from the garage, better ones in the harder classes
     const playerSlot = Math.min(n - 1, Math.floor(n / 2));
-    this.player = new Kart(0, LIVERIES[0].name, 0, true);
+    this.player = new Kart(0, LIVERIES[0].name, 0, true).equip(setup.build ?? DEFAULT_BUILD);
+    const garage = new Rand(setup.seed + 11);
     let rivalNo = 1;
     for (const slot of order) {
-      const k = slot === playerSlot ? this.player : new Kart(rivalNo, LIVERIES[rivalNo].name, rivalNo++, false);
+      const k = slot === playerSlot ? this.player
+        : new Kart(rivalNo, LIVERIES[rivalNo].name, rivalNo++, false).equip(rivalBuild(garage, setup.difficulty));
       this.karts.push(k);
       if (!k.isPlayer) this.drivers.push(new RivalDriver(this.rng, k, slot));
     }
@@ -213,28 +222,37 @@ export class Race {
       if (this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
     });
     const controls = this.player.finished ? { steer: 0, throttle: 0.3, brake: 0, drift: false } : playerControls;
-    const wasAir = this.player.air;
+    const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
     const { boosted, landed } = this.player.update(dt, controls, this.track, this.cls);
     if (boosted) this.events.push({ kind: "boost" });
     if (!wasAir && this.player.air) this.events.push({ kind: "jump" });
     if (landed !== -1) this.events.push({ kind: "land", trick: landed });
+    if (wasRocket && this.player.rocket <= 0) this.events.push({ kind: "rocketOver" });
     if (this.features.onPad(this.track, this.player)) {
       if (this.player.boostTime < 0.85) this.events.push({ kind: "pad" });
       this.player.boostTime = Math.max(this.player.boostTime, 1.0);
     }
     this.fire(this.player, controls);
     this.items.update(dt, this.track, this.karts, (k) => k.place || 1);
+    const me = this.player;
     for (const e of this.items.events) {
       if (e.kind === "roll") this.events.push({ kind: "roll" });
-      else if (e.kind === "got" && e.kart.isPlayer) this.events.push({ kind: "item", item: e.item });
-      else if (e.kind === "used" && e.kart.isPlayer) this.events.push({ kind: "use", item: e.item });
-      else if (e.kind === "spun" && e.kart.isPlayer) this.events.push({ kind: "spun" });
-      else if (e.kind === "spun" && e.owner.isPlayer) this.events.push({ kind: "hit" });
+      else if (e.kind === "got" && e.kart === me) this.events.push({ kind: "item", item: e.item });
+      else if (e.kind === "used" && e.kart === me) this.events.push({ kind: "use", item: e.item });
+      else if (e.kind === "spun" && e.kart === me) this.events.push({ kind: "spun" });
+      else if (e.kind === "spun" && e.owner === me) this.events.push({ kind: "hit" });
+      else if (e.kind === "blocked" && e.kart === me) this.events.push({ kind: "blocked" });
+      else if (e.kind === "boom") this.events.push({ kind: "boom", near: Math.hypot(e.x - me.x, e.y - me.y) < 40 });
+      else if (e.kind === "shock") this.events.push({ kind: "shock" });
     }
     this.items.events = [];
     if (!this.track.locked) this.holdAtFrontier();
-    const hits = collideKarts(this.karts, this.cls.vmax * 1.3);
-    if (hits.includes(this.player)) this.events.push({ kind: "bump" });
+    const { hits, spun } = collideKarts(this.karts, this.cls.vmax * 1.3);
+    if (hits.includes(me)) this.events.push({ kind: "bump" });
+    for (const [victim, by] of spun) {
+      if (victim === me) this.events.push({ kind: "spun" });
+      else if (by === me) this.events.push({ kind: "hit" });
+    }
     for (const k of this.karts) {
       if (k.elev < 1 && this.scenery.collide(k) && k.isPlayer) this.events.push({ kind: "bump" });
       if (k.updateProgress(this.track) && k.crossings > 1) this.completeLap(k);
@@ -274,10 +292,13 @@ export class Race {
     k.ground = (this.track.elev[k.idx] ?? 0) + r.height;
   }
 
-  /** Items fire on the press of the button, not while it is held. */
+  /** Items act on the press of the button, never while it is merely held: most fire at once;
+   * oil, orbs and bombs come out behind the kart and are dropped or fired on the release. */
   private fire(k: Kart, c: Controls): void {
-    if (c.item && !k.itemHeld && !k.finished) this.items.use(k, this.karts);
-    k.itemHeld = !!c.item;
+    const down = !!c.item && !k.finished;
+    if (down && !k.itemHeld) this.items.press(k, this.karts);
+    else if (!down && k.itemHeld) this.items.release(k, this.karts);
+    k.itemHeld = down;
   }
 
   /** Safety net for slow devices: nobody can drive past road that has not been dreamed yet.

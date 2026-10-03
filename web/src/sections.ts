@@ -2,7 +2,8 @@
 // pipeline writes (results/*.json): nothing here is typed in by hand. When a file is missing, the
 // sentences, quotes and tiles that depend on it are left out rather than shown with a guess.
 
-import { bakeKart, chevron, itemBoxFrames, LIVERIES, orbArt } from "./game/render/sprites";
+import { DEFAULT_BUILD } from "./game/race/parts";
+import { LIVERIES, chevron, itemBoxFrames, kartSprites, orbArt } from "./game/render/sprites";
 import type { Sprite } from "./game/core/gfx";
 import { crossings } from "./page/growth";
 import type { Growth } from "./page/growth";
@@ -139,16 +140,16 @@ export function renderTiles(d: Designer | null, s: Summary | null, p: Probes | n
   const live = d ? `live builds drivable: ${pct(d.live_valid_loop)} of loops, ${pct(d.live_valid_figure8)} of figure-eights` : null;
   const tiles: { icon: () => Element; title: string; body: string; fact: string | null; href: string }[] = [
     {
-      icon: () => spriteCanvas(bakeKart(LIVERIES[0])[3], 3),
+      icon: () => spriteCanvas(kartSprites(DEFAULT_BUILD, LIVERIES[0])[3], 3),
       title: "The race",
-      body: "Mode-7 kart racing: drift through a corner to charge a mini-turbo, hit the gas just before GO for a rocket start, and race up to seven rivals.",
+      body: "Mode-7 kart racing: drift through a corner to charge a mini-turbo, hit the gas just before GO for a rocket start, and race up to seven rivals in karts built in the garage.",
       fact: "0 to 7 rivals, in ROOKIE, PRO and LEGEND classes",
       href: "index.html",
     },
     {
       icon: () => spriteCanvas(itemBoxFrames()[1].sprite, 3),
       title: "Ramps, pads and items",
-      body: "Jump ramps pay a trick boost if you hop at the lip; boost pads sit at corner exits; item boxes hand out a Turbo, an Oil Slick or a Dream Orb.",
+      body: "Jump ramps pay a trick boost if you hop at the lip; boost pads sit at corner exits; item boxes hand out nine items, from turbos and oil to boomerangs, bombs and a rocket for whoever is last.",
       fact: "placed by the game on road the designer has just dreamed",
       href: "index.html",
     },

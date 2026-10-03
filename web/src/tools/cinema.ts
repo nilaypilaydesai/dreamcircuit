@@ -27,6 +27,7 @@ interface Dc {
   state(): Record<string, unknown>;
   race(points: number[], theme?: number, rivals?: number): void;
   hold(on?: boolean): void;
+  pin(size: [number, number] | null): void;
   game: { race: Race | null };
 }
 
@@ -66,6 +67,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   const per = Math.round(60 / fps); // simulation steps per filmed frame
   const post = (name: string, blob: Blob) =>
     fetch(`${url}/save/${name}`, { method: "POST", body: blob, headers: { "Content-Type": "text/plain" } });
+  dc.pin([384, 216]); // the film is composed for the classic 16:9 framebuffer, whatever the window
   dc.hold(true);
   dc.race(o.points, o.theme ?? 1, o.rivals ?? 7);
   for (let i = 0; i < 4000 && dc.state().phase !== "countdown"; i++) await tick();

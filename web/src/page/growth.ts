@@ -52,7 +52,9 @@ export function renderGrowth(g: Growth, figure: HTMLElement, steps: HTMLElement[
   const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
   const span = Math.max(maxx - minx, maxy - miny) * 1.08;
   const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
-  const map = (p: number[]) => [50 + ((p[0] - cx) / span) * 100, 50 - ((p[1] - cy) / span) * 100];
+  // the drawing sits below a band kept clear at the top for the CIRCUIT LOCKED label, so the
+  // label never lands on the road
+  const map = (p: number[]) => [50 + ((p[0] - cx) / span) * 86, 56 - ((p[1] - cy) / span) * 86];
   const path = (pts: number[][], idx: number[], close = false) =>
     idx.map((i, j) => `${j ? "L" : "M"}${map(pts[i]).map((v) => v.toFixed(2)).join(" ")}`).join("") + (close ? "Z" : "");
   const range = (a: number, b: number) => Array.from({ length: Math.max(0, b - a) }, (_, k) => at(a + k));

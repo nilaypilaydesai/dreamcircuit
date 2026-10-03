@@ -5,8 +5,14 @@ import { describe, expect, it } from "vitest";
 import { Rand } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
 import { Features, RAMP_LEN } from "../src/game/race/features";
-import { BOX_SPACING, Items, ROULETTE, itemOdds } from "../src/game/race/items";
-import { CLASSES, Kart } from "../src/game/race/kart";
+import { BOMB_BLAST, BOX_SPACING, ITEM_KINDS, Items, LAST_ROCKET, ROULETTE, itemOdds, rollItem } from "../src/game/race/items";
+import { CLASSES, Kart, collideKarts } from "../src/game/race/kart";
+import {
+  ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
+  cleanBuild, perfOf, rivalBuild, statsOf,
+} from "../src/game/race/parts";
+import { stickControls } from "../src/game/core/input";
+import { screenSize } from "../src/game/core/gfx";
 import { Race, takesControls } from "../src/game/race/race";
 import { THEMES } from "../src/game/themes";
 import {
@@ -300,14 +306,25 @@ describe("rival drivers", () => {
 });
 
 describe("items", () => {
-  it("favor defense at the front of the field and speed at the back", () => {
-    const lead = itemOdds(1, 8), last = itemOdds(8, 8);
-    for (const p of [lead, last, itemOdds(4, 8)]) {
-      expect(p.turbo + p.oil + p.orb).toBeCloseTo(1, 9);
-      for (const v of Object.values(p)) expect(v).toBeGreaterThan(0);
+  it("favor defense at the front of the field and the big items at the back", () => {
+    const lead = itemOdds(1, 8), last = itemOdds(8, 8), mid = itemOdds(4, 8);
+    for (const p of [lead, last, mid, itemOdds(7, 8), itemOdds(1, 1)]) {
+      expect(ITEM_KINDS.reduce((s, k) => s + p[k], 0)).toBeCloseTo(1, 9);
+      for (const v of Object.values(p)) expect(v).toBeGreaterThanOrEqual(0);
     }
     expect(lead.oil).toBeGreaterThan(lead.turbo);
-    expect(last.turbo).toBeGreaterThan(last.oil);
+    expect(lead.rocket + lead.prism + lead.shock).toBe(0); // no big items for the leader
+    expect(mid.rocket).toBeLessThan(0.05);
+    expect(last.rocket).toBeCloseTo(LAST_ROCKET, 9); // dead last: the rocket, nine times in ten
+    expect(itemOdds(1, 1).rocket).toBeLessThan(0.05); // racing alone is not being last
+  });
+
+  it("really do hand the last kart a rocket nine times in ten", () => {
+    const rng = new Rand(11);
+    let rockets = 0;
+    for (let i = 0; i < 4000; i++) if (rollItem(6, 6, rng) === "rocket") rockets++;
+    expect(rockets / 4000).toBeGreaterThan(0.87);
+    expect(rockets / 4000).toBeLessThan(0.93);
   });
 
   it("come in rows of boxes along the road, clear of the run to the line", () => {
@@ -339,8 +356,11 @@ describe("items", () => {
     expect(items.use(me, [me])).toBe(false); // not while the slot is still spinning
     for (let i = 0; i < Math.ceil(ROULETTE * 60) + 2; i++) items.update(1 / 60, t, [me], () => 1);
     expect(items.events.some((e) => e.kind === "got" && e.kart === me)).toBe(true);
+    const uses = me.uses;
+    expect(uses).toBeGreaterThanOrEqual(1);
     expect(items.use(me, [me])).toBe(true);
-    expect(me.item).toBeNull();
+    if (uses === 1) expect(me.item).toBeNull();
+    else expect(me.uses).toBe(uses - 1); // a triple turbo or a boomerang has shots left
   });
 
   it("oil spins out whoever drives through it, but spares its owner at first", () => {
@@ -443,10 +463,11 @@ describe("a crowded race", () => {
       for (let i = 0; i < 60 * 60; i++) {
         race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
         race.events = [];
-        for (const k of race.karts) fastest = Math.max(fastest, Math.abs(k.v));
+        // relative to each kart's own top speed (its build, a prism); a rocket is meant to be fast
+        for (const k of race.karts) if (k.rocket <= 0) fastest = Math.max(fastest, Math.abs(k.v) / k.topSpeed(race.cls));
       }
       // before the fix, bumps at the start pumped one kart to 88 m/s and shoved another to -55
-      expect(fastest).toBeLessThan(race.cls.vmax * 1.3);
+      expect(fastest).toBeLessThan(1.3);
     }
   });
 
@@ -584,6 +605,228 @@ describe("live circuit generation", () => {
   it("reports a designer that cannot dream the opening stretch", async () => {
     const live = new LiveCircuit(fakeDesigner(() => true), new Rand(4));
     await expect(live.start()).rejects.toThrow("opening stretch");
+  });
+});
+
+/** Two karts on the calm circuit, ``gap`` m apart along the road, and a fresh item box set. */
+function duel(gap: number, lateral = 0) {
+  const t = Track.fromPoints(calm());
+  const items = new Items(new Rand(8));
+  const a = new Kart(1, "A", 1, false), b = new Kart(2, "B", 2, false);
+  a.placeOn(t, t.startIndex + 20, lateral);
+  b.placeOn(t, t.wrap(t.startIndex + 20 + Math.round(gap / SPACING)), lateral);
+  for (const k of [a, b]) k.updateProgress(t);
+  return { t, items, a, b };
+}
+
+describe("the new items", () => {
+  it("throw a boomerang up the road that spins the kart ahead and comes home", () => {
+    const { t, items, a, b } = duel(20);
+    items.grant(a, "boomerang");
+    expect(a.uses).toBe(3);
+    expect(items.press(a, [a, b])).toBe(true); // a boomerang flies at once
+    expect(a.uses).toBe(2);
+    expect(a.item).toBe("boomerang");
+    let caught = false;
+    for (let i = 0; i < 60 * 5 && !caught; i++) {
+      items.update(1 / 60, t, [a, b], () => 1);
+      caught = items.boomerangs.length === 0;
+    }
+    expect(b.spin).toBeGreaterThan(0);
+    expect(caught).toBe(true); // back in the thrower's hand
+    expect(a.spin).toBe(0); // and it never hits its own thrower
+  });
+
+  it("lob a bomb that blows up near a kart and spins everyone close to it", () => {
+    const { t, items, a, b } = duel(22);
+    const far = new Kart(3, "C", 3, false);
+    far.placeOn(t, t.wrap(t.startIndex + 20 + Math.round(70 / SPACING)), 0);
+    a.v = 20;
+    items.grant(a, "bomb");
+    expect(items.press(a, [a, b, far])).toBe(true); // held out behind first
+    expect(a.trailing).toBe(true);
+    expect(items.release(a, [a, b, far])).toBe(true); // let go: it is thrown
+    expect(items.bombs.length).toBe(1);
+    let booms = 0;
+    for (let i = 0; i < 60 * 4; i++) {
+      items.update(1 / 60, t, [a, b, far], () => 1);
+      booms += items.events.filter((e) => e.kind === "boom").length;
+      items.events = [];
+    }
+    expect(booms).toBe(1);
+    expect(items.blasts.length + items.bombs.length).toBe(0);
+    expect(b.spin).toBeGreaterThan(0); // caught in the blast
+    expect(far.spin).toBe(0); // well outside it
+    expect(Math.hypot(far.x - b.x, far.y - b.y)).toBeGreaterThan(BOMB_BLAST);
+  });
+
+  it("make a prism kart untouchable, and spin whoever it rams", () => {
+    const { t, items, a, b } = duel(30); // a behind, b ahead
+    items.grant(b, "prism");
+    items.press(b, [a, b]);
+    expect(b.prism).toBeGreaterThan(0);
+    expect(b.invincible).toBe(true);
+    // an orb fired at it is simply used up
+    items.grant(a, "orb");
+    items.use(a, [a, b]);
+    expect(items.orbs[0].target).toBe(b);
+    for (let i = 0; i < 60 * 4 && items.orbs.length; i++) items.update(1 / 60, t, [a, b], () => 1);
+    expect(items.orbs.length).toBe(0);
+    expect(b.spin).toBe(0);
+    // ramming: the prism kart barges into the other one, spins it, and is not slowed itself
+    a.x = b.x - 1.2;
+    a.y = b.y;
+    a.v = 20;
+    b.v = 25;
+    const { spun } = collideKarts([a, b], CLASSES.pro.vmax * 1.3);
+    expect(spun).toEqual([[a, b]]);
+    expect(a.spin).toBeGreaterThan(0);
+    expect(b.v).toBe(25);
+  });
+
+  it("shock everyone else: they spin, shrink and lose their items, the user does not", () => {
+    const { items, a, b } = duel(30);
+    const c = new Kart(3, "C", 3, false);
+    items.grant(b, "orb");
+    c.prism = 3; // invincible: shrugs it off
+    items.grant(a, "shock");
+    items.press(a, [a, b, c]);
+    expect(b.spin).toBeGreaterThan(0);
+    expect(b.shrink).toBeGreaterThan(0);
+    expect(b.item).toBeNull();
+    expect(c.shrink).toBe(0);
+    expect(a.spin + a.shrink).toBe(0);
+    expect(items.events.some((e) => e.kind === "shock")).toBe(true);
+  });
+
+  it("block an orb from behind with an item held out as a shield", () => {
+    const { t, items, a, b } = duel(30);
+    items.grant(b, "oil");
+    items.press(b, [a, b]); // held out behind: trailing
+    expect(b.trailing).toBe(true);
+    items.grant(a, "orb");
+    items.use(a, [a, b]);
+    expect(items.orbs[0].target).toBe(b);
+    for (let i = 0; i < 60 * 4 && items.orbs.length; i++) items.update(1 / 60, t, [a, b], () => 1);
+    expect(b.spin).toBe(0); // the oil took the hit
+    expect(b.item).toBeNull();
+    expect(items.events.some((e) => e.kind === "blocked" && e.kart === b)).toBe(true);
+  });
+
+  it("turn the player into a rocket that flies itself up the road and past the pack", async () => {
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: THEMES[0], seed: 5, replay: twisty() }, null, () => {});
+    await race.prepare();
+    const coast = { steer: 0, throttle: 1, brake: 0, drift: false };
+    for (let i = 0; i < 60 * 5; i++) race.update(1 / 60, coast); // through the countdown and away
+    race.items.grant(race.player, "rocket");
+    const start = race.player.dist;
+    race.update(1 / 60, { ...coast, item: true });
+    expect(race.player.rocket).toBeGreaterThan(0);
+    let over = false, worst = 0;
+    for (let i = 0; i < 60 * 7; i++) {
+      const flying = race.player.rocket > 0;
+      race.update(1 / 60, { steer: flying ? 1 : 0, throttle: 1, brake: 0, drift: false }); // the wheel is ignored
+      if (flying) worst = Math.max(worst, Math.abs(race.player.offset));
+      over ||= race.events.some((e) => e.kind === "rocketOver");
+      race.events = [];
+    }
+    expect(over).toBe(true);
+    expect(race.player.spin).toBe(0);
+    expect(worst).toBeLessThan(HALF_WIDTH); // it stays on the road
+    expect(race.player.dist - start).toBeGreaterThan(CLASSES.pro.vmax * 6 * 1.3); // much faster than driving
+  });
+});
+
+describe("the garage", () => {
+  it("lists real-world-style parts with short names and unique ids", () => {
+    for (const list of [BODIES, WHEELS, SPOILERS, EXHAUSTS, PAINTS, ACCENTS]) {
+      expect(new Set(list.map((p) => p.id)).size).toBe(list.length);
+      for (const p of list) expect(p.name.length).toBeLessThanOrEqual(14);
+    }
+    expect(BODIES.length).toBeGreaterThanOrEqual(12);
+    expect(WHEELS.length + SPOILERS.length + EXHAUSTS.length).toBeGreaterThanOrEqual(30);
+  });
+
+  it("adds up six stats within 0..20, and the classic kart is neutral", () => {
+    expect(perfOf(statsOf(DEFAULT_BUILD))).toEqual(NEUTRAL);
+    const rng = new Rand(3);
+    for (let i = 0; i < 200; i++) {
+      const s = statsOf(rivalBuild(rng, "pro"));
+      for (const k of STAT_KEYS) {
+        expect(s[k]).toBeGreaterThanOrEqual(0);
+        expect(s[k]).toBeLessThanOrEqual(STAT_MAX);
+      }
+    }
+    expect(statsOf({ ...DEFAULT_BUILD, body: "hyper" }).speed).toBeGreaterThan(statsOf(DEFAULT_BUILD).speed);
+    expect(statsOf({ ...DEFAULT_BUILD, wheels: "offroad" }).traction).toBeGreaterThan(10);
+    expect(cleanBuild({ body: "nope", paint: "rosso" })).toEqual({ ...DEFAULT_BUILD, paint: "rosso" });
+  });
+
+  it("gives harder classes better rival karts", () => {
+    const avg = (d: "rookie" | "pro" | "legend") => {
+      const rng = new Rand(21);
+      let sum = 0;
+      for (let i = 0; i < 300; i++) sum += buildScore(rivalBuild(rng, d));
+      return sum / 300;
+    };
+    const rookie = avg("rookie"), pro = avg("pro"), legend = avg("legend");
+    expect(rookie).toBeLessThan(pro);
+    expect(pro).toBeLessThan(legend);
+  });
+
+  it("puts the stats on the road: a fast build is faster, a heavy one wins the bump", () => {
+    const t = Track.fromPoints(calm());
+    const top = (b: typeof DEFAULT_BUILD) => {
+      const k = new Kart(0, "K", 0, true).equip(b);
+      k.placeOn(t, t.startIndex, 0);
+      for (let i = 0; i < 60 * 20; i++) {
+        k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false }, t, CLASSES.pro);
+        k.x = t.xs[k.idx]; k.y = t.ys[k.idx]; k.heading = Math.atan2(t.tangent(k.idx)[1], t.tangent(k.idx)[0]);
+      }
+      return k.v;
+    };
+    const fast = { ...DEFAULT_BUILD, body: "hyper", wheels: "turbofan", exhaust: "turboback" };
+    expect(top(fast)).toBeGreaterThan(top(DEFAULT_BUILD) * 1.04);
+    const heavy = new Kart(1, "H", 1, false).equip({ ...DEFAULT_BUILD, body: "pony", wheels: "steelies" });
+    const light = new Kart(2, "L", 2, false).equip({ ...DEFAULT_BUILD, body: "kei", wheels: "carbon" });
+    heavy.x = 0; heavy.y = 0; heavy.heading = 0; heavy.v = 20;
+    light.x = 1.5; light.y = 0; light.heading = Math.PI; light.v = 20; // head on
+    collideKarts([heavy, light], 40);
+    expect(heavy.v).toBeGreaterThan(light.v);
+  });
+});
+
+describe("the screen", () => {
+  it("covers the window at a whole-number scale near 216 rows", () => {
+    const sizes = [[1920, 1080], [1440, 900], [2560, 1440], [844, 390], [1280, 720], [1000, 557], [1366, 768],
+                   [1536, 864], [932, 430], [667, 375], [3440, 1440]];
+    for (const [vw, vh] of sizes) {
+      const s = screenSize(vw, vh);
+      expect(Number.isInteger(s.scale)).toBe(true);
+      expect(s.w * s.scale).toBeGreaterThanOrEqual(vw);
+      expect(s.h * s.scale).toBeGreaterThanOrEqual(vh);
+      expect(s.w * s.scale - vw).toBeLessThan(s.scale);
+      expect(s.h).toBeGreaterThanOrEqual(180);
+      expect(s.h).toBeLessThanOrEqual(260);
+    }
+    expect(screenSize(1920, 1080)).toEqual({ w: 384, h: 216, scale: 5 });
+    const tall = screenSize(390, 844); // a phone held upright: fit the width
+    expect(tall.w).toBe(320);
+    expect(tall.w * tall.scale).toBeCloseTo(390, 6);
+  });
+});
+
+describe("the touch joystick", () => {
+  it("steers with a dead zone, drifts when pushed all the way over, and brakes when pulled back", () => {
+    expect(stickControls(0.05, 0, false)).toEqual({ steer: 0, brake: 0, drift: false });
+    const right = stickControls(1, 0, false);
+    expect(right.steer).toBeCloseTo(-1, 9); // the game's steer is + = left
+    expect(right.drift).toBe(true);
+    expect(stickControls(-0.5, 0, false).steer).toBeGreaterThan(0);
+    expect(stickControls(-0.5, 0, false).steer).toBeLessThan(0.5);
+    expect(stickControls(0.8, 0, false).drift).toBe(false); // not far enough to start one
+    expect(stickControls(0.8, 0, true).drift).toBe(true); // but enough to keep one going
+    expect(stickControls(0.1, 0.9, false).brake).toBe(1);
   });
 });
 

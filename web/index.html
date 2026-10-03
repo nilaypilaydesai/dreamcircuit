@@ -14,15 +14,11 @@
     </main>
     <div class="touch" id="touch" aria-hidden="true">
       <button class="pause" data-ev="pause" tabindex="-1">II</button>
-      <div class="pad">
-        <button data-k="left" tabindex="-1">&#9664;</button>
-        <button data-k="right" tabindex="-1">&#9654;</button>
-      </div>
-      <div class="pad">
-        <button data-k="item" tabindex="-1">ITEM</button>
-        <button data-k="drift" tabindex="-1">DRIFT</button>
-        <button data-k="brake" tabindex="-1">BRAKE</button>
-        <button data-k="gas" tabindex="-1">GAS</button>
+      <div class="zone" id="stick-zone"></div>
+      <div class="stick" id="stick"><div class="knob"></div></div>
+      <div class="buttons">
+        <button class="item" data-k="item" tabindex="-1">ITEM</button>
+        <button class="hop" data-k="drift" tabindex="-1">DRIFT</button>
       </div>
     </div>
     <noscript>Dream Circuit needs JavaScript to dream its circuits.</noscript>

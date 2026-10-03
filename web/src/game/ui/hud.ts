@@ -6,8 +6,9 @@ import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
 import type { Kart } from "../race/kart";
 import { LAPS, type Race } from "../race/race";
-import { ITEM_KINDS, type ItemKind } from "../race/items";
-import { LIVERIES, itemIcons } from "../render/sprites";
+import { ITEM_KINDS, ITEM_NAMES, type ItemKind, TRAILS } from "../race/items";
+import { paintOf } from "../race/parts";
+import { itemIcons } from "../render/sprites";
 import { N } from "../world/track";
 
 const WHITE = 0xffffffff;
@@ -46,9 +47,14 @@ export interface Banner {
   blink?: boolean;
 }
 
+/** A kart's colour swatch: its paint. */
+export const kartColor = (k: Kart): number => hex(paintOf(k.build).color);
+
 export class Hud {
   banners: Banner[] = [];
   popups: Popup[] = [];
+  /** The player drives by touch: the item slot says ITEM instead of E. */
+  touch = false;
   private mapBox: [number, number, number, number] | null = null;
   private mapFor: unknown = null; // the track the box was fitted to
   private readonly icons: Record<ItemKind, Sprite> = itemIcons();
@@ -84,12 +90,12 @@ export class Hud {
     f.draw(scr, ordinal(p.place || 1), W - 44, 8, { ...o, scale: 1, color: pc });
     f.draw(scr, `/${race.karts.length}`, W - 44, 26, { ...o, color: SILVER });
 
-    // left: standings
-    if (race.karts.length > 1) {
+    // left: standings (on a phone that corner holds the minimap instead, clear of the thumbs)
+    if (race.karts.length > 1 && !this.touch) {
       race.standings.forEach((k, i) => {
         const y = 54 + i * 10;
         const isMe = k.isPlayer;
-        scr.fillRect(10, y + 1, 6, 6, LIVERIES[k.livery].body);
+        scr.fillRect(10, y + 1, 6, 6, kartColor(k));
         f.draw(scr, `${i + 1} ${k.name}`, 20, y, { color: isMe ? GOLD : SILVER, outline: INK });
       });
     }
@@ -108,35 +114,47 @@ export class Hud {
 
     this.minimap(scr, race, now);
     this.dreamStatus(scr, race, now);
+    const mid = Math.round(H * 0.39); // the band the big messages use
     for (const q of this.popups) {
       const age = race.clock - q.at;
       if (age < 0 || age > 0.9) continue;
       if (age > 0.6 && Math.floor(now * 12) % 2) continue;
-      f.draw(scr, q.text, W / 2, 118 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
+      f.draw(scr, q.text, W / 2, mid + 34 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
     }
     this.itemSlot(scr, p, now);
+    if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / 6, hex("#ff8a1f"));
+    else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / 7, hex("#c79bff"));
 
     // banners
     this.banners = this.banners.filter((b) => b.until > race.clock || race.phase === "countdown");
     for (const b of this.banners) {
       if (b.blink && Math.floor(now * 4) % 2) continue;
       // a ribbon behind the big text: it spans the screen, so it lies over the standings
-      scr.dimRect(0, 79, W, b.sub ? 46 : 33, INK, 0.62);
-      f.draw(scr, b.text, W / 2, 84, { scale: 3, color: b.color, outline: INK, align: "center" });
-      if (b.sub) f.draw(scr, b.sub, W / 2, 112, { color: WHITE, outline: INK, align: "center" });
+      scr.dimRect(0, mid - 5, W, b.sub ? 46 : 33, INK, 0.62);
+      f.draw(scr, b.text, W / 2, mid, { scale: 3, color: b.color, outline: INK, align: "center" });
+      if (b.sub) f.draw(scr, b.sub, W / 2, mid + 28, { color: WHITE, outline: INK, align: "center" });
     }
     if (p.wrongWay > 45 && Math.floor(now * 3) % 2 === 0) {
-      f.draw(scr, "WRONG WAY!", W / 2, 120, { scale: 2, color: RED, outline: INK, align: "center" });
+      f.draw(scr, "WRONG WAY!", W / 2, mid + 36, { scale: 2, color: RED, outline: INK, align: "center" });
     }
     if (race.phase === "countdown") this.countdown(scr, race);
   }
 
-  /** The item slot: icons cycle while the roulette spins, then the item waits for E. */
+  /** A draining bar under the item slot while a prism or a rocket lasts. */
+  private meter(scr: Screen, label: string, frac: number, color: number): void {
+    const x = W - 46, y = 96;
+    this.font.draw(scr, label, x + 18, y, { color, outline: INK, align: "center" });
+    scr.fillRect(x - 1, y + 10, 38, 5, INK);
+    scr.fillRect(x, y + 11, Math.round(36 * Math.max(0, Math.min(1, frac))), 3, color);
+  }
+
+  /** The item slot: icons cycle while the roulette spins, then the item waits for the button,
+   * with its name for a moment and how many shots are left. */
   private itemSlot(scr: Screen, p: Kart, now: number): void {
     const x = W - 46, y = 44, size = 36;
     const ready = !!p.item && p.roulette <= 0;
     scr.fillRect(x - 1, y - 1, size + 2, size + 2, INK);
-    scr.fillRect(x, y, size, size, ready ? GOLD : DREAM);
+    scr.fillRect(x, y, size, size, ready ? (p.trailing ? hex("#63c8ff") : GOLD) : DREAM);
     scr.dimRect(x + 2, y + 2, size - 4, size - 4, INK, 0.82);
     const kind = p.roulette > 0 ? ITEM_KINDS[Math.floor(now * 14) % ITEM_KINDS.length] : p.item;
     if (kind) {
@@ -144,7 +162,14 @@ export class Hud {
       const w = icon.w * 2, h = icon.h * 2;
       scr.blitScaled(icon, x + (size - w) / 2, y + (size - h) / 2, w, h);
     }
-    if (ready) this.font.draw(scr, "E", x + size / 2, y + size + 3, { color: SILVER, outline: INK, align: "center" });
+    if (ready && p.uses > 1) this.font.draw(scr, `x${p.uses}`, x + size - 2, y + size - 9, { color: WHITE, outline: INK, align: "right" });
+    if (ready && p.item) {
+      // oil, orbs and bombs can be held out behind the kart: the prompt says so
+      const key = this.touch ? "ITEM" : "E";
+      const label = p.itemAge < 1.6 ? ITEM_NAMES[p.item] : p.trailing ? "LET GO" : TRAILS.has(p.item) ? `HOLD ${key}` : key;
+      this.font.draw(scr, label, Math.min(x + size / 2 + this.font.width(label) / 2, W - 4), y + size + 3,
+                     { color: p.itemAge < 1.6 ? GOLD : SILVER, outline: INK, align: "right" });
+    }
   }
 
   private countdown(scr: Screen, race: Race): void {
@@ -184,7 +209,9 @@ export class Hud {
       this.mapFor = t; // a new race: never draw it in the last circuit's frame
       this.mapBox = null;
     }
-    const size = 74, x0 = W - size - 8, y0 = H - size - 8;
+    // bottom right; on a phone, top left under the timer (the DRIFT and ITEM buttons sit bottom right)
+    const size = this.touch ? 60 : 74;
+    const x0 = this.touch ? 10 : W - size - 8, y0 = this.touch ? 48 : H - size - 8;
     // fit the designer's whole-circuit guess (or the locked circuit) into the box
     const pts = race.live?.preview ?? (t.locked ? t.points : null);
     if (pts) {
@@ -242,9 +269,9 @@ export class Hud {
       const [px, py] = map(k.x, k.y);
       scr.fillRect(px - r, py - r, 2 * r + 1, 2 * r + 1, c);
     };
-    for (const k of race.karts) if (!k.isPlayer) dot(k, 1, LIVERIES[k.livery].body);
+    for (const k of race.karts) if (!k.isPlayer) dot(k, 1, kartColor(k));
     dot(race.player, 2, INK);
-    dot(race.player, 1, Math.floor(now * 4) % 2 ? WHITE : LIVERIES[0].body);
+    dot(race.player, 1, Math.floor(now * 4) % 2 ? WHITE : kartColor(race.player));
   }
 }
 

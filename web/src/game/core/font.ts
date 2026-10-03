@@ -47,6 +47,23 @@ export class PixelFont {
     return text.length * 8 * scale;
   }
 
+  /** Break ``text`` at spaces into lines no wider than ``max`` pixels. */
+  wrap(text: string, max: number, scale = 1): string[] {
+    const per = Math.max(1, Math.floor(max / (8 * scale)));
+    const lines: string[] = [];
+    let cur = "";
+    for (const word of text.split(" ")) {
+      const next = cur ? `${cur} ${word}` : word;
+      if (next.length <= per || !cur) cur = next;
+      else {
+        lines.push(cur);
+        cur = word;
+      }
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
   private glyph(screen: Screen, m: Uint8Array, x: number, y: number, s: number, color: number,
                 rows?: number[]) {
     const buf = screen.buf;

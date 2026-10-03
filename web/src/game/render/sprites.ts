@@ -1,7 +1,11 @@
-// Procedural pixel art. Karts are tiny voxel models rendered from 16 directions at load time
-// (a "voxel baker"); scenery is painted with simple shape primitives. Everything is original.
+// Procedural pixel art. Karts are small voxel models, put together from their garage parts and
+// rendered from 16 directions when a race starts (a "voxel baker"); the garage draws the same
+// voxels live, at any angle, on its turntable. Scenery and items are painted with simple shape
+// primitives. Everything is original: the bodies take their cues from real supercars, but the
+// shapes and names are this game's own.
 
-import { type Sprite, hex, makeSprite, mix, Rand, shade } from "../core/gfx";
+import { H, type Screen, type Sprite, W, hex, makeSprite, mix, Rand, shade } from "../core/gfx";
+import { type Build, accentOf, paintOf } from "../race/parts";
 import type { SceneryKind } from "../themes";
 
 // ---------------------------------------------------------------------------------- karts
@@ -25,84 +29,501 @@ export const LIVERIES: KartLivery[] = [
   { name: "ZEPHYR", body: hex("#00b3a6"), accent: hex("#b8fff7"), helmet: hex("#ffffff"), suit: hex("#0d3330") },
 ];
 
-type Box = [number, number, number, number, number, number, number]; // x0 x1 y0 y1 z0 z1 color
-
-function kartBoxes(l: KartLivery): Box[] {
-  const tire = hex("#1c1c22"), hub = hex("#9aa0aa"), dark = hex("#3a3d46"), visor = hex("#20232b");
-  return [
-    [0, 25, -7, 7, 2, 4, l.body], // floor pan
-    [17, 25, -5, 5, 3, 6, l.body], // nose
-    [23, 26, -7, 7, 1, 3, dark], // front bumper
-    [6, 18, -9, -5, 3, 6, l.accent], // side pods
-    [6, 18, 5, 9, 3, 6, l.accent],
-    [-2, 4, -6, 6, 3, 7, dark], // engine block
-    [-3, -1, -3, -1, 4, 6, hub], [-3, -1, 1, 3, 4, 6, hub], // exhausts
-    [-2, 1, -8, 8, 9, 11, l.accent], [-1, 1, -6, -5, 6, 9, dark], [-1, 1, 5, 6, 6, 9, dark], // spoiler
-    [17, 22, -10, -7, 0, 5, tire], [17, 22, 7, 10, 0, 5, tire], // front wheels
-    [18, 21, -10, -9, 1, 4, hub], [18, 21, 9, 10, 1, 4, hub],
-    [0, 7, -11, -7, 0, 6, tire], [0, 7, 7, 11, 0, 6, tire], // rear wheels
-    [2, 5, -11, -10, 2, 5, hub], [2, 5, 10, 11, 2, 5, hub],
-    [5, 11, -3, 3, 4, 11, l.suit], // driver torso
-    [11, 14, -4, -2, 7, 9, l.suit], [11, 14, 2, 4, 7, 9, l.suit], // arms
-    [13, 14, -2, 2, 7, 10, dark], // steering wheel
-    [5, 11, -3, 3, 11, 16, l.helmet], // helmet
-    [10, 11, -2, 2, 12, 15, visor], // visor
-    [5, 11, -3, 3, 15, 16, shade(l.helmet, 0.85)],
-  ];
+/** A voxel model: x forward (the rear axle near 3, the front near 19), y to the side, z up. */
+class Model {
+  readonly vox = new Map<number, number>();
+  static key(x: number, y: number, z: number): number {
+    return ((x + 64) << 14) | ((y + 64) << 7) | (z + 64);
+  }
+  put(x: number, y: number, z: number, c: number): void {
+    this.vox.set(Model.key(x, y, z), c);
+  }
+  has(x: number, y: number, z: number): boolean {
+    return this.vox.has(Model.key(x, y, z));
+  }
+  del(x: number, y: number, z: number): void {
+    this.vox.delete(Model.key(x, y, z));
+  }
+  /** Fill [x0, x1) x [y0, y1) x [z0, z1). */
+  box(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, c: number): void {
+    for (let x = x0; x < x1; x++) for (let y = y0; y < y1; y++) for (let z = z0; z < z1; z++) this.put(x, y, z, c);
+  }
+  /** A body shell: at each x, half-width ``hw(x)`` and roof height ``top(x)`` above z = 2. */
+  shell(x0: number, x1: number, hw: (x: number) => number, top: (x: number) => number,
+        col: (x: number, y: number, z: number) => number): void {
+    for (let x = x0; x < x1; x++) {
+      const h = Math.round(hw(x)), t = Math.round(top(x));
+      for (let y = -h; y < h; y++) for (let z = 2; z < t; z++) this.put(x, y, z, col(x, y, z));
+    }
+  }
+  /** Empty a cockpit above ``z0``. */
+  carve(x0: number, x1: number, hw: number, z0: number): void {
+    for (let x = x0; x < x1; x++) for (let y = -hw; y < hw; y++) for (let z = z0; z < 24; z++) this.del(x, y, z);
+  }
+  /** Paint the outside faces at |y| = edge (both sides) where ``at`` says so. */
+  sides(edge: number, x0: number, x1: number, z0: number, z1: number, c: number): void {
+    for (let x = x0; x < x1; x++) for (let z = z0; z < z1; z++) {
+      this.put(x, -edge, z, c);
+      this.put(x, edge - 1, z, c);
+    }
+  }
 }
 
-export const KART_VIEWS = 16;
-const KW = 52, KH = 44;
+interface Pal {
+  paint: number; accent: number; dark: number; glass: number; light: number; tail: number;
+  chrome: number; tire: number; helmet: number; suit: number;
+}
 
-/** Bake one livery into 16 view sprites; view k shows the kart from angle 2*pi*k/16 behind. */
-export function bakeKart(l: KartLivery): Sprite[] {
-  const boxes = kartBoxes(l);
-  const vox = new Map<string, number>();
-  const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
-  for (const [x0, x1, y0, y1, z0, z1, c] of boxes) {
-    for (let x = x0; x < x1; x++) for (let y = y0; y < y1; y++) for (let z = z0; z < z1; z++) vox.set(key(x, y, z), c);
-  }
-  const voxels = [...vox.entries()].map(([k, c]) => {
-    const [x, y, z] = k.split(",").map(Number);
-    // normal: sum of directions toward empty neighbours
-    let nx = 0, ny = 0, nz = 0;
-    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
-      if (!vox.has(key(x + dx, y + dy, z + dz))) { nx += dx; ny += dy; nz += dz; }
+/** Where a body takes its spoiler and exhaust, and where its driver sits. */
+interface Mount { rear: number; deck: number; pipeZ: number; seat: number }
+
+type BodyFn = (m: Model, c: Pal) => Mount;
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.max(0, Math.min(1, t));
+
+const BODY_SHAPES: Record<string, BodyFn> = {
+  // the original go-kart: an open frame, a nose cone, side pods and the engine out back
+  classic: (m, c) => {
+    m.box(0, 25, -7, 7, 2, 4, c.paint);
+    m.box(17, 25, -5, 5, 3, 6, c.paint);
+    m.box(23, 26, -7, 7, 1, 3, c.dark);
+    m.box(6, 18, -9, -5, 3, 6, c.accent);
+    m.box(6, 18, 5, 9, 3, 6, c.accent);
+    m.box(-2, 4, -6, 6, 3, 7, c.dark);
+    return { rear: -2, deck: 7, pipeZ: 4, seat: 0 };
+  },
+  // mid-engine Italian V8: a rounded nose, an engine hump behind the driver, side intakes
+  corsa: (m, c) => {
+    m.shell(-2, 26, (x) => (x > 21 ? 8 - (x - 21) * 0.5 : 8), (x) => (x < 2 ? 6 : x < 6 ? 7 : lerp(6.4, 4.6, (x - 13) / 12)),
+            () => c.paint);
+    m.carve(6, 14, 4, 5);
+    m.sides(8, 1, 6, 3, 5, c.dark);
+    for (const y of [-6, -5, 4, 5]) m.put(-3, y, 4, c.tail);
+    for (const y of [-5, -4, 3, 4]) m.put(25, y, 4, c.light);
+    m.sides(8, 9, 20, 2, 3, c.accent);
+    return { rear: -2, deck: 6, pipeZ: 3, seat: 0 };
+  },
+  // the raging-bull wedge: wide, flat and sharp, falling to a blade of a nose
+  toro: (m, c) => {
+    m.shell(-2, 27, (x) => (x > 23 ? 9 - (x - 23) : 9), (x) => lerp(8.4, 3.2, (x + 2) / 29), () => c.paint);
+    m.carve(6, 13, 4, 5);
+    m.sides(9, 0, 6, 3, 6, c.dark); // hexagon intakes
+    for (let x = -1; x < 4; x += 2) for (let y = -6; y < 6; y++) m.put(x, y, 8, c.dark); // engine louvres
+    for (const y of [-7, -6, -5, 4, 5, 6]) m.put(24, y, 4, c.light);
+    for (let y = -8; y < 8; y++) m.put(-3, y, 5, y % 3 === 0 ? c.tail : c.dark);
+    m.sides(9, 3, 24, 2, 3, c.accent);
+    return { rear: -2, deck: 8, pipeZ: 3, seat: 0 };
+  },
+  // British carbon-tub supercar: a teardrop cabin and deep scooped intakes
+  papaya: (m, c) => {
+    m.shell(-1, 26, (x) => (x > 22 ? 8 - (x - 22) * 0.6 : 8), (x) => (x < 5 ? 6.5 : lerp(6.5, 4.4, (x - 12) / 13)),
+            () => c.paint);
+    m.carve(5, 13, 4, 5);
+    for (const s of [-8, 7]) for (let x = 3; x < 10; x++) for (let z = 3; z < 6 - Math.abs(x - 6) / 3; z++) m.put(x, s, z, c.dark);
+    m.sides(8, 2, 11, 2, 3, c.accent);
+    for (const y of [-6, -5, -4, 3, 4, 5]) m.put(25, y, 3, c.light);
+    for (let y = -7; y < 7; y++) m.put(-2, y, 5, c.tail);
+    return { rear: -1, deck: 7, pipeZ: 3, seat: 0 };
+  },
+  // rear-engine flat-six: a round fastback, frog-eye headlights, a light bar across the tail
+  boxer: (m, c) => {
+    m.shell(-1, 25, (x) => (x > 21 ? 7.5 - (x - 21) * 0.5 : 7.5), (x) => (x < 5 ? 8 - (5 - x) * 0.35 : lerp(7, 4.5, (x - 9) / 15)),
+            () => c.paint);
+    m.carve(6, 13, 4, 6);
+    for (const s of [-1, 1]) for (let x = 18; x < 23; x++) m.put(x, s < 0 ? -7 : 6, 5, c.paint); // front wings
+    for (const y of [-6, 5]) { m.put(24, y, 4, c.light); m.put(24, y, 5, c.light); }
+    for (let y = -7; y < 7; y++) m.put(-2, y, 5, c.tail);
+    m.sides(8, 4, 18, 2, 3, c.accent);
+    return { rear: -1, deck: 7, pipeZ: 3, seat: 0 };
+  },
+  // quad-turbo W16: long, heavy, two-tone, a horseshoe grille and a chrome curve down each side
+  hyper: (m, c) => {
+    m.shell(-2, 27, (x) => (x > 23 ? 8.5 - (x - 23) * 0.6 : 8.5), (x) => (x < 4 ? 7 : lerp(6.6, 4.4, (x - 12) / 14)),
+            (x) => (x < 11 ? c.accent : c.paint));
+    m.carve(6, 13, 4, 5);
+    for (let z = 2; z < 6; z++) for (let x = 7; x < 12; x++) {
+      if (Math.abs(x - 9.5 - (z - 4) * 0.8) < 0.8) { m.put(x, -9, z, c.chrome); m.put(x, 8, z, c.chrome); }
     }
-    return { x: x - 11.5, y, z, c, nx, ny, nz };
-  });
-  const pitch = 0.42, cp = Math.cos(pitch), sp = Math.sin(pitch);
-  const scale = 1.55;
-  const sprites: Sprite[] = [];
-  for (let v = 0; v < KART_VIEWS; v++) {
-    const th = (v / KART_VIEWS) * Math.PI * 2;
-    const dx = Math.cos(th), dy = Math.sin(th); // view direction (camera -> kart) in kart frame
-    const rx = dy, ry = -dx; // screen right
-    const s = makeSprite(KW, KH);
-    const depth = new Float32Array(KW * KH).fill(Infinity);
-    for (const p of voxels) {
-      const along = p.x * dx + p.y * dy;
-      const sx = (p.x * rx + p.y * ry) * scale + KW / 2;
-      const sy = KH - 6 - (p.z * cp + along * sp) * scale * 0.9;
-      const d = along * cp - p.z * sp;
-      // lighting in view space: light from the upper left, slightly behind the viewer
-      const n = Math.hypot(p.nx, p.ny, p.nz) || 1;
-      const vx = (p.nx * rx + p.ny * ry) / n, vz = p.nz / n, vd = (p.nx * dx + p.ny * dy) / n;
-      const lit = 0.68 + 0.32 * Math.max(0, -0.45 * vx + 0.75 * vz - 0.45 * vd);
-      const col = shade(p.c, lit);
-      for (let oy = 0; oy < 2; oy++) {
-        for (let ox = 0; ox < 2; ox++) {
-          const px = Math.floor(sx + ox), py = Math.floor(sy + oy);
-          if (px < 0 || py < 0 || px >= KW || py >= KH) continue;
-          const i = py * KW + px;
-          if (d < depth[i]) { depth[i] = d; s.data[i] = col; }
+    for (const [y, z] of [[-2, 2], [-2, 3], [-2, 4], [1, 2], [1, 3], [1, 4], [-1, 4], [0, 4]]) m.put(26, y, z, c.chrome);
+    for (const y of [-6, -5, 4, 5]) m.put(25, y, 4, c.light);
+    for (let y = -7; y < 7; y++) m.put(-3, y, 5, c.tail);
+    return { rear: -2, deck: 7, pipeZ: 3, seat: 0 };
+  },
+  // Swedish megacar: low and wide with a dark wraparound screen and a stripe nose to tail
+  ghost: (m, c) => {
+    m.shell(-1, 26, (x) => (x > 22 ? 8 - (x - 22) * 0.6 : 8), (x) => (x < 4 ? 6 : lerp(6, 4.2, (x - 12) / 14)),
+            (_x, y) => (y === -1 || y === 0 ? c.accent : c.paint));
+    m.carve(5, 12, 4, 5);
+    m.box(12, 14, -4, 4, 5, 8, c.glass);
+    for (const y of [-6, -5, 4, 5]) m.put(25, y, 3, c.light);
+    for (const y of [-7, -6, 5, 6]) m.put(-2, y, 4, c.tail);
+    return { rear: -1, deck: 6, pipeZ: 3, seat: -1 };
+  },
+  // JDM twin-turbo legend: boxy, broad hips, four round tail lights and a vented hood
+  tsukuba: (m, c) => {
+    m.shell(-1, 26, (x) => (x > 23 ? 8.5 - (x - 23) * 0.5 : 8.5), (x) => (x < 5 ? 8 : x < 15 ? 7 : 6.5), () => c.paint);
+    m.carve(6, 14, 4, 6);
+    for (const y of [-6, -4, 3, 5]) { m.put(-2, y, 5, c.tail); m.put(-2, y, 6, c.tail); }
+    for (let x = 16; x < 22; x += 2) for (let y = -3; y < 3; y++) m.put(x, y, 6, c.dark); // hood vents
+    m.sides(9, 1, 24, 4, 5, c.accent);
+    m.box(24, 26, -8, 8, 2, 3, c.dark); // front lip
+    for (const y of [-7, -6, 5, 6]) m.put(25, y, 4, c.light);
+    return { rear: -1, deck: 8, pipeZ: 3, seat: 0 };
+  },
+  // American muscle: a long hood with a scoop, a boxy tail and twin stripes over the top
+  pony: (m, c) => {
+    m.shell(-2, 27, () => 8.5, (x) => (x < 4 ? 7.5 : x < 14 ? 7 : 7), (_x, y) => (y === -3 || y === -2 || y === 1 || y === 2 ? c.accent : c.paint));
+    m.carve(5, 13, 4, 6);
+    m.box(17, 22, -2, 2, 7, 8, c.dark); // hood scoop
+    for (const y of [-7, -6, -5, 4, 5, 6]) m.put(-3, y, 5, c.tail);
+    m.box(26, 27, -8, 8, 3, 5, c.dark); // grille
+    for (const y of [-7, 6]) m.put(26, y, 5, c.light);
+    return { rear: -2, deck: 8, pipeZ: 3, seat: 0 };
+  },
+  // tiny city car: short, tall and square, with a roll hoop over the driver
+  kei: (m, c) => {
+    m.shell(1, 23, () => 7, (x) => (x < 5 ? 9 : x > 17 ? 7 : 8), () => c.paint);
+    m.carve(5, 14, 4, 6);
+    m.box(4, 5, -6, 6, 9, 14, c.accent); // roll hoop
+    m.box(4, 5, -6, -5, 6, 14, c.accent);
+    m.box(4, 5, 5, 6, 6, 14, c.accent);
+    for (const y of [-6, 5]) { m.put(23, y, 5, c.light); m.put(23, y, 6, c.light); }
+    for (const y of [-6, 5]) m.put(0, y, 6, c.tail);
+    return { rear: 1, deck: 9, pipeZ: 3, seat: 1 };
+  },
+  // gravel-spec hatch: a high roof at the back, mud flaps, a light pod and livery slashes
+  rally: (m, c) => {
+    m.shell(0, 25, () => 8, (x) => (x < 7 ? 10 : x < 14 ? 7 : 6.5), (x, _y, z) => ((x + z) % 6 < 2 && z < 7 ? c.accent : c.paint));
+    m.carve(7, 14, 4, 6);
+    m.box(6, 7, -7, 7, 6, 10, c.glass); // rear window
+    for (const y of [-6, -3, 2, 5]) m.put(25, y, 5, c.light); // light pod
+    for (const s of [-9, 8]) m.box(-1, 0, s, s + 1, 1, 5, c.dark); // mud flaps
+    for (const y of [-7, 6]) m.put(-1, y, 7, c.tail);
+    return { rear: 0, deck: 10, pipeZ: 3, seat: 1 };
+  },
+  // endurance prototype: low and long, a narrow tub between bulging wheel arches
+  lmp: (m, c) => {
+    m.shell(-4, 28, (x) => (x > 15 && x < 23 ? 9 : x < 8 && x > -2 ? 9 : 5), (x) => (x > 15 && x < 23 ? 6 : x < 8 && x > -2 ? 6 : 5),
+            (x) => (x > 24 ? c.accent : c.paint));
+    m.carve(7, 14, 3, 4);
+    m.box(9, 13, -3, 3, 4, 7, c.glass); // canopy
+    for (const y of [-7, -6, 5, 6]) m.put(27, y, 3, c.light);
+    for (let y = -8; y < 8; y++) m.put(-5, y, 4, c.tail);
+    return { rear: -4, deck: 6, pipeZ: 3, seat: 1 };
+  },
+  // electric hypercar: smooth and flush, light bars nose and tail, a gloss canopy band
+  volt: (m, c) => {
+    m.shell(-1, 26, (x) => (x > 22 ? 8 - (x - 22) * 0.5 : 8), (x) => (x < 5 ? 6.5 : lerp(6.5, 4.5, (x - 12) / 13)),
+            (x, _y, z) => (z >= 5 && x > 2 && x < 18 ? c.accent : c.paint));
+    m.carve(6, 13, 4, 5);
+    for (let y = -7; y < 7; y++) { m.put(25, y, 3, hex("#bff6ff")); m.put(-2, y, 5, c.tail); }
+    return { rear: -1, deck: 7, pipeZ: 3, seat: 0 };
+  },
+};
+
+function addDriver(m: Model, c: Pal, sx: number): void {
+  m.box(5 + sx, 11 + sx, -3, 3, 4, 11, c.suit); // torso
+  m.box(11 + sx, 14 + sx, -4, -2, 7, 9, c.suit); // arms
+  m.box(11 + sx, 14 + sx, 2, 4, 7, 9, c.suit);
+  m.box(13 + sx, 14 + sx, -2, 2, 7, 10, c.dark); // steering wheel
+  m.box(5 + sx, 11 + sx, -3, 3, 11, 16, c.helmet);
+  m.box(10 + sx, 11 + sx, -2, 2, 12, 15, hex("#20232b")); // visor
+  m.box(5 + sx, 11 + sx, -3, 3, 15, 16, shade(c.helmet, 0.85));
+}
+
+/** Rim colours and patterns, drawn on each wheel's outer face. */
+const RIMS: Record<string, (x: number, z: number, u: number, v: number, c: Pal) => number> = {
+  standard: (_x, _z, _u, _v, _c) => hex("#9aa0aa"),
+  slicks: (_x, _z, u, v) => (u === 0 || v === 0 ? hex("#ffd23f") : hex("#c3c9d2")),
+  semi: () => hex("#b9bfca"),
+  offroad: () => hex("#5a5e68"),
+  drag: (_x, _z, u, v) => (u === 0 || v === 0 ? hex("#1c1c22") : hex("#d6dbe4")),
+  deepdish: (_x, _z, u, v, c) => (u === 0 || v === 0 ? hex("#e6ebf2") : c.accent),
+  monoblock: () => hex("#4a4f5a"),
+  carbon: (x, z) => ((x + z) & 1 ? hex("#2b2d33") : hex("#3e414a")),
+  turbofan: (x, z) => ((x + z) % 3 === 0 ? hex("#9aa0aa") : hex("#ecedf0")),
+  mesh: (x, z) => ((x + z) & 1 ? hex("#c3c9d2") : hex("#5a5e68")),
+  steelies: (_x, _z, u, v) => (u > 0 && v > 0 ? hex("#d6dbe4") : hex("#26262c")),
+  whitewall: (_x, _z, u, v) => (u === 0 || v === 0 ? hex("#f4f4f4") : hex("#d6dbe4")),
+  gold: (x, z) => ((x + z) % 3 === 0 ? hex("#a8801f") : hex("#e8b93c")),
+};
+
+function addWheels(m: Model, style: string, c: Pal): void {
+  const big = style === "offroad" ? 1 : 0;
+  const wide = style === "drag" ? 1 : 0;
+  const skinny = style === "drag" ? 1 : 0;
+  const rim = RIMS[style] ?? RIMS.standard;
+  const wheels = [
+    { x0: 17 - big, x1: 22 + big, z1: 5 + big, yin: 7, yout: 10 + big - skinny }, // front
+    { x0: 0 - big, x1: 7 + big, z1: 6 + big, yin: 7, yout: 11 + big + wide }, // rear
+  ];
+  for (const w of wheels) {
+    for (const side of [-1, 1]) {
+      for (let x = w.x0; x < w.x1; x++) {
+        for (let z = 0; z < w.z1; z++) {
+          const cornerX = x === w.x0 || x === w.x1 - 1, cornerZ = z === 0 || z === w.z1 - 1;
+          if (cornerX && cornerZ) continue; // rounded
+          const tread = style === "offroad" && (cornerX || cornerZ) && (x + z) % 2 === 0;
+          for (let y = w.yin; y < w.yout; y++) m.put(x, side < 0 ? -y - 1 : y, z, tread ? hex("#2e2e36") : c.tire);
+          // the rim on the outer face, inside a ring of tire
+          if (!cornerX && !cornerZ) {
+            const u = Math.min(x - w.x0 - 1, w.x1 - 2 - x), v = Math.min(z - 1, w.z1 - 2 - z);
+            m.put(x, side < 0 ? -w.yout : w.yout - 1, z, rim(x, z, u, v, c));
+          }
         }
       }
     }
+  }
+}
+
+function addSpoiler(m: Model, id: string, c: Pal, at: Mount): void {
+  const r = at.rear, d = at.deck;
+  switch (id) {
+    case "lip": m.box(r, r + 2, -6, 6, d, d + 1, c.accent); break;
+    case "ducktail":
+      m.box(r, r + 3, -7, 7, d, d + 1, c.paint);
+      m.box(r - 1, r + 1, -7, 7, d + 1, d + 2, c.paint);
+      break;
+    case "whale":
+      m.box(r - 2, r + 3, -8, 8, d + 1, d + 2, c.accent);
+      m.box(r - 2, r - 1, -8, 8, d + 2, d + 3, c.accent);
+      m.box(r, r + 2, -5, -4, d, d + 1, c.dark);
+      m.box(r, r + 2, 4, 5, d, d + 1, c.dark);
+      break;
+    case "gtwing":
+      m.box(r - 3, r + 1, -9, 9, d + 3, d + 4, c.accent);
+      for (const y of [-5, 4]) m.box(r - 1, r, y, y + 1, d, d + 3, c.dark);
+      for (const y of [-9, 8]) m.box(r - 3, r + 1, y, y + 1, d + 2, d + 5, c.dark);
+      break;
+    case "swan":
+      m.box(r - 3, r + 1, -9, 9, d + 4, d + 5, c.accent);
+      for (const y of [-5, 4]) {
+        m.box(r, r + 1, y, y + 1, d, d + 6, c.dark);
+        m.box(r - 2, r + 1, y, y + 1, d + 5, d + 6, c.dark);
+      }
+      break;
+    case "chassis":
+      m.box(r - 4, r, -9, 9, d + 5, d + 6, c.accent);
+      for (const y of [-6, 5]) m.box(r - 3, r - 2, y, y + 1, 2, d + 5, c.dark);
+      for (const y of [-9, 8]) m.box(r - 4, r, y, y + 1, d + 4, d + 7, c.dark);
+      break;
+    case "double":
+      m.box(r - 3, r + 1, -9, 9, d + 2, d + 3, c.accent);
+      m.box(r - 3, r, -9, 9, d + 5, d + 6, c.accent);
+      for (const y of [-9, 8]) m.box(r - 3, r + 1, y, y + 1, d + 1, d + 7, c.dark);
+      break;
+    case "active":
+      for (let k = 0; k < 4; k++) m.box(r - 3 + k, r - 2 + k, -8, 8, d + 4 - (k >> 1), d + 5 - (k >> 1), c.accent);
+      m.box(r - 1, r, -1, 1, d, d + 4, c.chrome);
+      break;
+    case "sharkfin":
+      for (let x = r - 1; x < r + 10; x++) {
+        const hgt = Math.max(0, Math.round(6 - (x - r) * 0.55));
+        for (let z = d; z < d + hgt; z++) m.put(x, 0, z, c.accent);
+      }
+      break;
+    default: break; // none
+  }
+}
+
+function addExhaust(m: Model, id: string, c: Pal, at: Mount): void {
+  const r = at.rear - 1, z = at.pipeZ;
+  /** A pipe ``w`` wide and ``h`` tall sticking ``len`` voxels out of the tail, with a tip colour
+   * and (for the bigger bores) a dark opening in the middle of the tip. */
+  const pipe = (y: number, len: number, col: number, w = 2, h = 2, tip = col) => {
+    for (let k = 0; k < len; k++) {
+      const end = k === len - 1;
+      for (let yy = y; yy < y + w; yy++) {
+        for (let zz = z; zz < z + h; zz++) {
+          const hole = end && w >= 3 && yy === y + (w >> 1) && zz === z + (h >> 1);
+          m.put(r - k, yy, zz, hole ? hex("#14141a") : end ? tip : col);
+        }
+      }
+    }
+  };
+  const chrome = c.chrome, ti = hex("#6a72d8"), burnt = hex("#c46ad8"), black = hex("#26262e");
+  switch (id) {
+    case "catback": pipe(-5, 2, chrome); pipe(3, 2, chrome); break;
+    case "straight": pipe(-4, 4, chrome, 2, 2, hex("#fff6d6")); pipe(2, 4, chrome, 2, 2, hex("#fff6d6")); break;
+    case "titanium": pipe(-5, 2, ti, 2, 2, burnt); pipe(3, 2, ti, 2, 2, burnt); break;
+    case "quad": for (const y of [-6, -4, 2, 4]) pipe(y, 2, chrome, 2, 1); break;
+    case "side": for (const y of [-10, 9]) { m.box(8, 12, y, y + 1, 3, 5, chrome); m.box(8, 9, y, y + 1, 3, 5, black); } break;
+    case "center": pipe(-2, 2, chrome, 3, 3); break;
+    case "valved": pipe(-6, 2, chrome, 3, 2); pipe(3, 2, chrome, 3, 2); break;
+    case "turboback": pipe(2, 3, chrome, 3, 3); break;
+    case "flame": pipe(-4, 2, black, 2, 2, hex("#ff8a1f")); pipe(2, 2, black, 2, 2, hex("#ff8a1f")); break;
+    case "delete": pipe(-4, 1, black, 3, 2); pipe(1, 1, black, 3, 2); break;
+    default: pipe(-4, 2, hex("#9aa0aa"), 2, 1); pipe(2, 2, hex("#9aa0aa"), 2, 1); break; // stock
+  }
+}
+
+function palette(build: Build, livery: KartLivery): Pal {
+  return {
+    paint: hex(paintOf(build).color), accent: hex(accentOf(build).color), dark: hex("#3a3d46"), glass: hex("#2c3d5c"),
+    light: hex("#fff3c4"), tail: hex("#ff3b4f"), chrome: hex("#d6dbe4"), tire: hex("#1c1c22"),
+    helmet: livery.helmet, suit: livery.suit,
+  };
+}
+
+/** The voxels of a kart built from ``build``, with the driver in ``livery``'s colours. */
+export function kartModel(build: Build, livery: KartLivery): Map<number, number> {
+  const m = new Model();
+  const c = palette(build, livery);
+  const at = (BODY_SHAPES[build.body] ?? BODY_SHAPES.classic)(m, c);
+  addWheels(m, build.wheels, c);
+  addSpoiler(m, build.spoiler, c, at);
+  addExhaust(m, build.exhaust, c, at);
+  addDriver(m, c, at.seat);
+  return m.vox;
+}
+
+/** A rocket, the kart's paint on its stripes and fins, with the driver's helmet in the window. */
+export function rocketModel(build: Build, livery: KartLivery): Map<number, number> {
+  const m = new Model();
+  const paint = hex(paintOf(build).color), white = hex("#eef0f6"), nose = hex("#ff3b4f");
+  // a round body along x (centre y = -0.5, z = 7.5), a long nose cone, three tail fins
+  for (let x = -4; x < 26; x++) {
+    const r = x > 16 ? 6 - (x - 16) * 0.64 : 6;
+    for (let y = -7; y < 7; y++) {
+      for (let z = 1; z < 15; z++) {
+        if (Math.hypot(y + 0.5, z - 7.5) > r) continue;
+        m.put(x, y, z, x > 21 ? nose : x === 3 || x === 4 || x === 12 || x === 13 ? paint : white);
+      }
+    }
+  }
+  for (let x = -4; x < 3; x++) {
+    const ext = Math.round(4 - (x + 4) * 0.5); // fins: deep at the tail, tapering forward
+    for (let k = 1; k <= ext; k++) {
+      m.put(x, -6 - k, 7, paint);
+      m.put(x, 5 + k, 7, paint);
+      m.put(x, -1, 13 + k, paint);
+      m.put(x, 0, 13 + k, paint);
+    }
+  }
+  m.box(10, 15, -3, 2, 11, 14, hex("#2c3d5c")); // window, with the driver in it
+  m.box(11, 14, -2, 1, 12, 14, livery.helmet);
+  m.box(-6, -4, -4, 3, 4, 11, hex("#30323c")); // nozzle
+  return m.vox;
+}
+
+export const KART_VIEWS = 16;
+const KW = 64, KH = 56, BASE = KH - 10; // a little room below the ground line for the near corners
+/** Fraction of a kart sprite's height above its ground contact. */
+export const KART_ANCHOR = BASE / KH;
+/** A kart sprite this many pixels tall is 1.75 m of kart. */
+export const KART_PX = 44;
+
+interface Lit { x: number; y: number; z: number; c: number; nx: number; ny: number; nz: number }
+
+/** Each voxel with an outward normal (toward its empty neighbours), centred along the kart. */
+function litVoxels(vox: Map<number, number>, cx = 11.5): Lit[] {
+  const out: Lit[] = [];
+  const has = (x: number, y: number, z: number) => vox.has(Model.key(x, y, z));
+  for (const [k, c] of vox) {
+    const x = (k >> 14) - 64, y = ((k >> 7) & 127) - 64, z = (k & 127) - 64;
+    let nx = 0, ny = 0, nz = 0;
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+      if (!has(x + dx, y + dy, z + dz)) { nx += dx; ny += dy; nz += dz; }
+    }
+    if (nx === 0 && ny === 0 && nz === 0) continue; // buried: never seen
+    out.push({ x: x - cx, y, z, c, nx, ny, nz });
+  }
+  return out;
+}
+
+const PITCH = 0.42;
+
+/** Project lit voxels seen from angle ``th`` into a buffer of ``bw`` x ``bh`` pixels around
+ * (ox, oy), ``scale`` pixels per voxel, keeping the nearest. */
+function splat(vs: Lit[], th: number, scale: number, put: (px: number, py: number, d: number, c: number) => void,
+               ox: number, oy: number, pitch = PITCH): void {
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const dx = Math.cos(th), dy = Math.sin(th); // view direction (camera -> kart) in kart frame
+  const rx = dy, ry = -dx; // screen right
+  const size = Math.max(2, Math.ceil(scale) + 1);
+  for (const p of vs) {
+    const along = p.x * dx + p.y * dy;
+    const sx = (p.x * rx + p.y * ry) * scale + ox;
+    const sy = oy - (p.z * cp + along * sp) * scale * 0.9;
+    const d = along * cp - p.z * sp;
+    // lighting in view space: light from the upper left, slightly behind the viewer
+    const n = Math.hypot(p.nx, p.ny, p.nz) || 1;
+    const vx = (p.nx * rx + p.ny * ry) / n, vz = p.nz / n, vd = (p.nx * dx + p.ny * dy) / n;
+    const lit = 0.68 + 0.32 * Math.max(0, -0.45 * vx + 0.75 * vz - 0.45 * vd);
+    const col = shade(p.c, lit);
+    for (let oy2 = 0; oy2 < size; oy2++) {
+      for (let ox2 = 0; ox2 < size; ox2++) put(Math.floor(sx + ox2), Math.floor(sy + oy2), d, col);
+    }
+  }
+}
+
+/** Bake a voxel model into 16 view sprites; view k shows it from angle 2*pi*k/16 behind. */
+export function bakeVoxels(vox: Map<number, number>, cx = 11.5): Sprite[] {
+  const vs = litVoxels(vox, cx);
+  const sprites: Sprite[] = [];
+  for (let v = 0; v < KART_VIEWS; v++) {
+    const s = makeSprite(KW, KH);
+    const depth = new Float32Array(KW * KH).fill(Infinity);
+    splat(vs, (v / KART_VIEWS) * Math.PI * 2, 1.55, (px, py, d, c) => {
+      if (px < 0 || py < 0 || px >= KW || py >= KH) return;
+      const i = py * KW + px;
+      if (d < depth[i]) { depth[i] = d; s.data[i] = c; }
+    }, KW / 2, BASE);
     outline(s, hex("#101018"));
     sprites.push(s);
   }
   return sprites;
+}
+
+const baked = new Map<string, Sprite[]>();
+
+/** A kart's 16 views, baked once per build and driver. */
+export function kartSprites(build: Build, livery: KartLivery, rocket = false): Sprite[] {
+  const key = `${rocket ? "R" : "K"}|${build.body}|${build.wheels}|${build.spoiler}|${build.exhaust}|${build.paint}|${build.accent}|${livery.helmet}|${livery.suit}`;
+  let s = baked.get(key);
+  if (!s) {
+    if (baked.size > 80) baked.clear();
+    s = rocket ? bakeVoxels(rocketModel(build, livery), 10) : bakeVoxels(kartModel(build, livery));
+    baked.set(key, s);
+  }
+  return s;
+}
+
+/** The garage turntable: draw a model straight into the screen at any angle and size. */
+export class Turntable {
+  private depth = new Float32Array(0);
+  private lit: Lit[] = [];
+  private key = "";
+
+  draw(scr: Screen, vox: Map<number, number>, key: string, cx: number, cy: number, angle: number, scale: number,
+       clipTop = 0): void {
+    if (key !== this.key) {
+      this.lit = litVoxels(vox);
+      this.key = key;
+    }
+    if (this.depth.length !== W * H) this.depth = new Float32Array(W * H);
+    this.depth.fill(Infinity);
+    const buf = scr.buf, depth = this.depth;
+    const drawn: number[] = [];
+    splat(this.lit, angle, scale, (px, py, d, c) => {
+      if (px < 0 || py < clipTop || px >= W || py >= H) return;
+      const i = py * W + px;
+      if (d < depth[i]) {
+        if (depth[i] === Infinity) drawn.push(i);
+        depth[i] = d;
+        buf[i] = c;
+      }
+    }, cx, cy, 0.34);
+    // a dark outline around the silhouette, as on the baked sprites
+    for (const i of drawn) {
+      const x = i % W;
+      for (const j of [i - 1, i + 1, i - W, i + W]) {
+        if (j < 0 || j >= W * H || depth[j] !== Infinity || (j === i - 1 && x === 0) || (j === i + 1 && x === W - 1)) continue;
+        buf[j] = hex("#101018");
+        depth[j] = -Infinity;
+      }
+    }
+  }
 }
 
 function outline(s: Sprite, color: number): void {
@@ -403,22 +824,209 @@ export function orbArt(): SceneryArt {
   return { sprite: s, height: 0.9, solid: false };
 }
 
-/** 16x16 icons for the HUD's item slot. */
-export function itemIcons(): Record<"turbo" | "oil" | "orb", Sprite> {
-  const turbo = makeSprite(16, 16);
+/** Fill a polygon (even-odd) in sprite pixel coordinates. */
+function poly(s: Sprite, pts: number[][], color: (x: number, y: number) => number): void {
+  let y0 = Infinity, y1 = -Infinity;
+  for (const p of pts) { y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+  for (let y = Math.floor(y0); y <= Math.ceil(y1); y++) {
+    const yc = y + 0.5;
+    const xs: number[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if ((a[1] <= yc && b[1] > yc) || (b[1] <= yc && a[1] > yc)) xs.push(a[0] + ((yc - a[1]) / (b[1] - a[1])) * (b[0] - a[0]));
+    }
+    xs.sort((p, q) => p - q);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      for (let x = Math.ceil(xs[k] - 0.5); x <= Math.floor(xs[k + 1] - 0.5); x++) px(s, x, y, color(x, y));
+    }
+  }
+}
+
+/** A thick line between two sprite points. */
+function stroke(s: Sprite, x0: number, y0: number, x1: number, y1: number, r: number, c: number): void {
+  const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2) + 1;
+  for (let k = 0; k <= n; k++) disc(s, x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n, r, () => c);
+}
+
+function turboIcon(): Sprite {
+  const s = makeSprite(16, 16);
   for (let k = 0; k < 2; k++) {
     for (let y = 0; y < 12; y++) {
       const x = 3 + k * 6 + (y < 6 ? y : 11 - y) / 1.5;
-      rect(turbo, Math.round(x), 2 + y, Math.round(x) + 3, 3 + y, k ? hex("#ffd23f") : hex("#ff7a1a"));
+      rect(s, Math.round(x), 2 + y, Math.round(x) + 3, 3 + y, k ? hex("#ffd23f") : hex("#ff7a1a"));
     }
   }
-  outline(turbo, hex("#2a1408"));
-  const oil = makeSprite(16, 16);
-  disc(oil, 7.5, 9.5, 5, () => hex("#14121c"));
-  for (let y = 2; y < 7; y++) rect(oil, 8 - Math.floor((y - 1) / 2), y, 8 + Math.ceil((y - 1) / 2), y + 1, hex("#14121c"));
-  [hex("#ff5fa2"), hex("#ffd23f"), hex("#63c8ff")].forEach((c, k) => px(oil, 5 + k, 8, c));
-  outline(oil, hex("#d9e1ea"));
-  return { turbo, oil, orb: orbArt().sprite };
+  outline(s, hex("#2a1408"));
+  return s;
+}
+
+/** A turbo cell: an orange capsule with a white chevron (what a kart carries for a turbo). */
+function turboCell(): Sprite {
+  const s = makeSprite(12, 15);
+  for (let y = 0; y < 15; y++) {
+    for (let x = 0; x < 12; x++) {
+      const corner = (x < 2 || x > 9) && (y < 2 || y > 12);
+      if (!corner) px(s, x, y, x < 4 ? hex("#ffa24a") : x > 8 ? hex("#d9580a") : hex("#ff7a1a"));
+    }
+  }
+  for (let k = 0; k < 2; k++) {
+    for (let y = 0; y < 6; y++) {
+      const x = 3 + (y < 3 ? y : 5 - y) + k * 3;
+      px(s, x, 4 + y, 0xffffffff);
+      px(s, x + 1, 4 + y, 0xffffffff);
+    }
+  }
+  outline(s, hex("#3a1606"));
+  return s;
+}
+
+/** Three little turbo cells. */
+function tripleIcon(): Sprite {
+  const s = makeSprite(16, 16);
+  for (const [ox, oy] of [[5, 1], [1, 7], [9, 7]]) {
+    rect(s, ox, oy, ox + 6, oy + 8, hex("#ff7a1a"));
+    rect(s, ox, oy, ox + 2, oy + 8, hex("#ffa24a"));
+    px(s, ox + 2, oy + 2, 0xffffffff);
+    px(s, ox + 3, oy + 3, 0xffffffff);
+    px(s, ox + 2, oy + 4, 0xffffffff);
+  }
+  outline(s, hex("#3a1606"));
+  return s;
+}
+
+function oilIcon(): Sprite {
+  const s = makeSprite(16, 16);
+  disc(s, 7.5, 9.5, 5, () => hex("#14121c"));
+  for (let y = 2; y < 7; y++) rect(s, 8 - Math.floor((y - 1) / 2), y, 8 + Math.ceil((y - 1) / 2), y + 1, hex("#14121c"));
+  [hex("#ff5fa2"), hex("#ffd23f"), hex("#63c8ff")].forEach((c, k) => px(s, 5 + k, 8, c));
+  outline(s, hex("#d9e1ea"));
+  return s;
+}
+
+/** An oil barrel: what a kart holds out behind it before the slick is poured. */
+function oilBarrel(): Sprite {
+  const s = makeSprite(12, 15);
+  for (let y = 1; y < 15; y++) {
+    for (let x = 1; x < 11; x++) {
+      const ring = y === 4 || y === 10;
+      px(s, x, y, ring ? hex("#8b93a8") : x < 4 ? hex("#2f3a66") : x > 8 ? hex("#141a33") : hex("#202a52"));
+    }
+  }
+  rect(s, 2, 0, 10, 1, hex("#5a6288"));
+  [hex("#ff5fa2"), hex("#ffd23f"), hex("#63c8ff")].forEach((c, k) => px(s, 5 + k, 7, c));
+  outline(s, hex("#0a0d1c"));
+  return s;
+}
+
+/** A boomerang, spinning: four frames a quarter turn apart. */
+export function boomerangFrames(): SceneryArt[] {
+  return [0, 1, 2, 3].map((f) => {
+    const s = makeSprite(18, 18);
+    const a = (f / 4) * Math.PI * 2;
+    const arm = (ang: number, c: number) => stroke(s, 9, 9, 9 + Math.cos(ang) * 7, 9 + Math.sin(ang) * 7, 1.6, c);
+    arm(a, hex("#1fb5a8"));
+    arm(a + 1.75, hex("#1fb5a8"));
+    stroke(s, 9, 9, 9 + Math.cos(a) * 6, 9 + Math.sin(a) * 6, 0.6, hex("#a8fff4"));
+    stroke(s, 9, 9, 9 + Math.cos(a + 1.75) * 6, 9 + Math.sin(a + 1.75) * 6, 0.6, hex("#ffd23f"));
+    outline(s, hex("#083b37"));
+    return { sprite: s, height: 0.9, solid: false };
+  });
+}
+
+/** A round bomb with a lit fuse (two frames: the spark flickers). */
+export function bombFrames(): SceneryArt[] {
+  return [0, 1].map((f) => {
+    const s = makeSprite(16, 18);
+    disc(s, 7.5, 10.5, 6.5, (x, y) => (Math.hypot(x - 5.5, y - 8) < 2 ? hex("#6b6b80") : hex("#23232c")));
+    rect(s, 5, 2, 10, 4, hex("#8a8d99"));
+    for (let k = 0; k < 4; k++) px(s, 10 + k, 1 - (k > 1 ? 1 : 0) + 2, hex("#c9a46b"));
+    disc(s, 13.5, 1.5, f ? 1.6 : 1.1, () => (f ? 0xffffffff : hex("#ffd23f")));
+    if (f) { px(s, 15, 0, hex("#ff8a1f")); px(s, 12, 0, hex("#ff8a1f")); }
+    outline(s, hex("#0b0b10"));
+    return { sprite: s, height: 1.0, solid: false };
+  });
+}
+
+/** An explosion: a white flash that blooms into fire and drifts off as smoke. */
+export function blastFrames(): SceneryArt[] {
+  return [0, 1, 2, 3, 4, 5].map((f) => {
+    const s = makeSprite(40, 36);
+    const rng = new Rand(17 + f);
+    const r = 5 + f * 3;
+    const t = f / 5;
+    disc(s, 20, 20, r, (x, y) => {
+      const d = Math.hypot(x - 20, y - 20) / r;
+      if (t > 0.55 && rng.next() < (t - 0.5) * 0.9) return 0; // breaking up
+      return t < 0.25
+        ? (d < 0.6 ? 0xffffffff : hex("#ffe27a"))
+        : t < 0.7
+          ? (d < 0.4 ? hex("#ffe27a") : d < 0.75 ? hex("#ff8a1f") : hex("#d9381e"))
+          : (d < 0.5 ? hex("#8f8a90") : hex("#5d5862"));
+    });
+    return { sprite: s, height: 3.2, solid: false };
+  });
+}
+
+/** The prism: a five-point star in shifting rainbow bands. */
+function prismIcon(): Sprite {
+  const s = makeSprite(16, 16);
+  const pts: number[][] = [];
+  for (let k = 0; k < 10; k++) {
+    const a = -Math.PI / 2 + (k * Math.PI) / 5, r = k % 2 ? 3.2 : 7.4;
+    pts.push([8 + Math.cos(a) * r, 8.6 + Math.sin(a) * r]);
+  }
+  const bands = [hex("#ff5fa2"), hex("#ffd23f"), hex("#5dff7a"), hex("#63c8ff"), hex("#c79bff")];
+  poly(s, pts, (x, y) => (Math.hypot(x - 7.5, y - 8) < 2 ? 0xffffffff : bands[Math.floor((x + y) / 3) % bands.length]));
+  outline(s, hex("#2b0f5c"));
+  return s;
+}
+
+/** The shock: a lightning bolt. */
+function shockIcon(): Sprite {
+  const s = makeSprite(16, 16);
+  poly(s, [[9, 0], [3, 9], [7, 9], [5, 16], [13, 6], [9, 6], [12, 0]], (x) => (x < 7 ? hex("#fff6b0") : hex("#ffd23f")));
+  outline(s, hex("#3d2a00"));
+  return s;
+}
+
+/** The rocket, nose up and to the right, flame trailing. */
+function rocketIcon(): Sprite {
+  const s = makeSprite(16, 16);
+  stroke(s, 4, 12, 11, 5, 2.4, hex("#eef0f6"));
+  stroke(s, 10, 6, 12.5, 3.5, 1.6, hex("#ff3b4f"));
+  disc(s, 8, 8, 1.2, () => hex("#2c3d5c"));
+  poly(s, [[2, 9], [5, 9], [3, 6]], () => hex("#ff7a1a"));
+  poly(s, [[7, 14], [7, 11], [10, 13]], () => hex("#ff7a1a"));
+  disc(s, 2.5, 13.5, 1.6, () => hex("#ffd23f"));
+  px(s, 1, 15, hex("#ff8a1f"));
+  outline(s, hex("#1d1f2a"));
+  return s;
+}
+
+/** 16x16 icons for the HUD's item slot. */
+export function itemIcons(): Record<"turbo" | "triple" | "oil" | "orb" | "boomerang" | "bomb" | "prism" | "shock" | "rocket", Sprite> {
+  const boom = boomerangFrames()[0].sprite, bomb = bombFrames()[0].sprite;
+  const fit = (src: Sprite): Sprite => { // a 16x16 copy
+    const s = makeSprite(16, 16);
+    const ox = Math.floor((16 - src.w) / 2), oy = Math.floor((16 - src.h) / 2);
+    for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) { const c = src.data[y * src.w + x]; if (c) px(s, x + ox, y + oy, c); }
+    return s;
+  };
+  return {
+    turbo: turboIcon(), triple: tripleIcon(), oil: oilIcon(), orb: orbArt().sprite, boomerang: fit(boom),
+    bomb: fit(bomb), prism: prismIcon(), shock: shockIcon(), rocket: rocketIcon(),
+  };
+}
+
+/** What a kart carries out behind it, by item (drawn small, trailing the kart). */
+export function heldArt(): Record<"turbo" | "triple" | "oil" | "orb" | "boomerang" | "bomb" | "prism" | "shock" | "rocket", SceneryArt> {
+  const icons = itemIcons();
+  const art = (sprite: Sprite, height = 0.85): SceneryArt => ({ sprite, height, solid: false });
+  return {
+    turbo: art(turboCell()), triple: art(turboCell()), oil: art(oilBarrel(), 0.95), orb: orbArt(),
+    boomerang: boomerangFrames()[0], bomb: bombFrames()[0], prism: art(icons.prism), shock: art(icons.shock),
+    rocket: art(icons.rocket, 0.95),
+  };
 }
 
 /** A concrete bridge pillar ``height`` meters tall. */
