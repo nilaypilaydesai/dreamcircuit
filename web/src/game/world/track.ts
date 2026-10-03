@@ -364,7 +364,8 @@ export function loopCrossings(loop: number[][]): LapCrossing[] {
   return out;
 }
 
-function loopCurvature(loop: number[][], i: number, k: number): number {
+/** Unsigned curvature (1/m) of a preview loop at ``i``, from the points ``k`` either side. */
+export function loopCurvature(loop: number[][], i: number, k: number): number {
   const n = loop.length;
   const a = loop[(i - k + n) % n], b = loop[i], c = loop[(i + k) % n];
   const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);

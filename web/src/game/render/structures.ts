@@ -46,12 +46,12 @@ export function bridgeFaces(p: Painter, track: Track, theme: Theme): void {
       // deck top: kerbed edges, asphalt, a dashed center line
       const kerb = Math.floor(s / 3) & 1 ? theme.kerb[0] : theme.kerb[1];
       const road = shade(theme.road, 1.04);
-      face(p, [P(i, -hw, hi), P(j, -hw, hj), P(j, -hw + 0.8, hj), P(i, -hw + 0.8, hi)], kerb, up, -0.2);
-      face(p, [P(i, hw - 0.8, hi), P(j, hw - 0.8, hj), P(j, hw, hj), P(i, hw, hi)], kerb, up, -0.2);
-      face(p, [P(i, -hw + 0.8, hi), P(j, -hw + 0.8, hj), P(j, hw - 0.8, hj), P(i, hw - 0.8, hi)], road, up, -0.2);
+      face(p, [P(i, -hw, hi), P(j, -hw, hj), P(j, -hw + 0.8, hj), P(i, -hw + 0.8, hi)], kerb, up, -0.2, 1, true);
+      face(p, [P(i, hw - 0.8, hi), P(j, hw - 0.8, hj), P(j, hw, hj), P(i, hw, hi)], kerb, up, -0.2, 1, true);
+      face(p, [P(i, -hw + 0.8, hi), P(j, -hw + 0.8, hj), P(j, hw - 0.8, hj), P(i, hw - 0.8, hi)], road, up, -0.2, 1, true);
       if (Math.floor(s / 4) % 2 === 0) {
         face(p, [P(i, -0.18, hi + 0.01), P(j, -0.18, hj + 0.01), P(j, 0.18, hj + 0.01), P(i, 0.18, hi + 0.01)],
-             theme.edge, up, -0.25);
+             theme.edge, up, -0.25, 1, true);
       }
       if (Math.max(hi, hj) < 0.15) continue;
       // girder sides and underside
@@ -103,12 +103,12 @@ export function hillFaces(p: Painter, track: Track, theme: Theme): void {
       const up: P3 = [0, 0, 1];
       const P = (k: number, off: number, z: number) => edgePoint(track, k, off, z);
       const kerb = Math.floor(s / 3) & 1 ? theme.kerb[0] : theme.kerb[1];
-      face(p, [P(i, -hw, hi), P(j, -hw, hj), P(j, -hw + 0.8, hj), P(i, -hw + 0.8, hi)], kerb, up, -0.2);
-      face(p, [P(i, hw - 0.8, hi), P(j, hw - 0.8, hj), P(j, hw, hj), P(i, hw, hi)], kerb, up, -0.2);
-      face(p, [P(i, -hw + 0.8, hi), P(j, -hw + 0.8, hj), P(j, hw - 0.8, hj), P(i, hw - 0.8, hi)], shade(theme.road, 1.04), up, -0.2);
+      face(p, [P(i, -hw, hi), P(j, -hw, hj), P(j, -hw + 0.8, hj), P(i, -hw + 0.8, hi)], kerb, up, -0.2, 1, true);
+      face(p, [P(i, hw - 0.8, hi), P(j, hw - 0.8, hj), P(j, hw, hj), P(i, hw, hi)], kerb, up, -0.2, 1, true);
+      face(p, [P(i, -hw + 0.8, hi), P(j, -hw + 0.8, hj), P(j, hw - 0.8, hj), P(i, hw - 0.8, hi)], shade(theme.road, 1.04), up, -0.2, 1, true);
       if (Math.floor(s / 4) % 2 === 0) {
         face(p, [P(i, -0.18, hi + 0.01), P(j, -0.18, hj + 0.01), P(j, 0.18, hj + 0.01), P(i, 0.18, hi + 0.01)],
-             theme.edge, up, -0.25);
+             theme.edge, up, -0.25, 1, true);
       }
       // the embankment: from the road's edge down and out to the ground
       const fi = hi * 1.2 + 0.4, fj = hj * 1.2 + 0.4;
@@ -175,7 +175,7 @@ export function rampFaces(p: Painter, track: Track, f: Features, theme: Theme): 
       const P = (q: number, off: number, z: number) => edgePoint(track, q, off, z);
       const [tx, ty] = track.tangent(i);
       const color = STRIPE[Math.floor((k * SPACING) / 1.6) & 1];
-      face(p, [P(i, -hw, hi), P(j, -hw, hj), P(j, hw, hj), P(i, hw, hi)], color, [0, 0, 1], -0.3);
+      face(p, [P(i, -hw, hi), P(j, -hw, hj), P(j, hw, hj), P(i, hw, hi)], color, [0, 0, 1], -0.3, 1, true);
       // the sides wear the circuit's kerb colours, so a ramp reads from across the infield
       const side = shade(theme.kerb[(k / step) & 1], 0.82);
       face(p, [P(i, hw, 0), P(j, hw, 0), P(j, hw, hj), P(i, hw, hi)], side, [-ty, tx, 0], -0.2);
@@ -223,14 +223,14 @@ export function padFaces(p: Painter, track: Track, f: Features, time: number): v
     const ox = track.xs[i] + nx * pad.offset, oy = track.ys[i] + ny * pad.offset;
     const L = (u: number, v: number): P3 => [ox + tx * u + nx * v, oy + ty * u + ny * v, z];
     face(p, [L(0, -PAD_HALF), L(PAD_LEN, -PAD_HALF), L(PAD_LEN, PAD_HALF), L(0, PAD_HALF)],
-         hex("#7a2e12"), [0, 0, 1], -0.3);
+         hex("#7a2e12"), [0, 0, 1], -0.3, 1, true);
     for (let c = 0; c < 3; c++) {
       const u0 = 1 + c * 2;
       const glow = 0.5 + 0.5 * Math.sin(time * 9 - c * 1.6);
       const col = mix(hex("#ff8a1f"), hex("#fff2a8"), glow);
       // a chevron pointing along the road: two arms meeting at the tip
-      face(p, [L(u0, -PAD_HALF + 0.4), L(u0 + 1.4, 0), L(u0 + 2.0, 0), L(u0 + 0.6, -PAD_HALF + 0.4)], col, [0, 0, 1], -0.35);
-      face(p, [L(u0 + 0.6, PAD_HALF - 0.4), L(u0 + 2.0, 0), L(u0 + 1.4, 0), L(u0, PAD_HALF - 0.4)], col, [0, 0, 1], -0.35);
+      face(p, [L(u0, -PAD_HALF + 0.4), L(u0 + 1.4, 0), L(u0 + 2.0, 0), L(u0 + 0.6, -PAD_HALF + 0.4)], col, [0, 0, 1], -0.35, 1, true);
+      face(p, [L(u0 + 0.6, PAD_HALF - 0.4), L(u0 + 2.0, 0), L(u0 + 1.4, 0), L(u0, PAD_HALF - 0.4)], col, [0, 0, 1], -0.35, 1, true);
     }
   }
 }

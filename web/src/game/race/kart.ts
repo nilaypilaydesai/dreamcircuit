@@ -40,7 +40,9 @@ const TRICK_LATE = 0.18; // s after leaving the lip
 const PERFECT = 0.085; // s either side of the lip for a perfect trick
 export const SPIN_TIME = 1.0; // s
 export const PRISM_SPEED = 1.15; // top speed while invincible
-export const ROCKET_SPEED = 1.7; // the rocket's speed, relative to the class top speed
+export const ROCKET_SPEED = 1.5; // the rocket's speed, relative to the class top speed
+export const REVERSE_SPEED = 7; // m/s backing up (on the road; less on the grass)
+const REVERSE_ACCEL = 9; // m/s^2
 const SHRUNK_SPEED = 0.72; // top speed while shrunk by a shock
 
 export type TrickGrade = 0 | 1 | 2; // none, good, perfect
@@ -75,6 +77,7 @@ export class Kart {
   spinAngle = 0; // the sprite's extra rotation while spinning
   prism = 0; // s left invincible (a prism)
   rocket = 0; // s left as a rocket (it drives itself)
+  rocketFrom = 0; // the place it was fired from (it burns out after passing a couple of karts)
   private rocketCarry = 0; // m travelled as a rocket that has not yet reached the next road point
   shrink = 0; // s left shrunk by a shock
   // the kart's build (garage parts) and what it does to the class's numbers
@@ -235,18 +238,20 @@ export class Kart {
     const vmax = this.topSpeed(cls) * surfaceSpeed * (this.boostTime > 0 ? 1.28 : 1);
     const accel = cls.accel * P.accel * (this.shrink > 0 ? 0.8 : 1);
 
-    // longitudinal
-    if (c.throttle > 0 && this.v >= -0.5) {
-      if (this.v < vmax) this.v += accel * c.throttle * (1 - this.v / vmax) * dt * 1.6;
-    } else if (c.brake > 0) {
-      this.v -= (this.v > 0 ? 22 : 6) * c.brake * dt;
-      this.v = Math.max(this.v, -6);
+    // longitudinal: the brake wins over the gas, and held at a standstill it backs the kart up
+    // (slower on the grass, but always: reversing is how a kart gets out of trouble)
+    if (c.brake > 0) {
+      this.v -= (this.v > 0 ? 22 : REVERSE_ACCEL) * c.brake * dt;
+      this.v = Math.max(this.v, -REVERSE_SPEED * Math.max(0.6, surfaceSpeed));
+    } else if (c.throttle > 0) {
+      if (this.v < 0) this.v = Math.min(0, this.v + 22 * c.throttle * dt); // out of reverse first
+      else if (this.v < vmax) this.v += accel * c.throttle * (1 - this.v / vmax) * dt * 1.6;
     } else {
       this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), 3.2 * dt);
     }
     if (this.v > vmax && !this.air) this.v -= (this.v - vmax) * 2.2 * dt; // over the limit: bleed it off
-    if (this.surface === "grass" && this.prism <= 0) {
-      this.v -= Math.sign(this.v) * Math.min(Math.abs(this.v), (5 / P.offroad) * dt);
+    if (this.surface === "grass" && this.prism <= 0 && this.v > 0) {
+      this.v -= Math.min(this.v, (5 / P.offroad) * dt); // the grass drags (going forward)
     }
     if (this.boostTime > 0) {
       this.boostTime -= dt;

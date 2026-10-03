@@ -1,9 +1,9 @@
 // Billboards: scenery and karts projected into the Mode-7 view, scaled with nearest-neighbor
 // (the SNES look), with soft shadows under the karts on whatever surface they are over. They are
 // depth sorted together with the 3D faces of bridges, ramps and pads (render/poly.ts).
-// Karts show what they carry: the item rides out behind them (low and close while it is held as
-// a shield), boosts and rockets breathe fire, a prism shimmers through the rainbow and a shocked
-// kart is drawn small.
+// Karts show what they carry: the item they will use next floats over the driver's head, spare
+// shots circle the kart, and one held as a shield drags on the road behind it; boosts and rockets
+// breathe fire, a prism shimmers through the rainbow and a shocked kart is drawn small.
 
 import { H, W, hex, mix, type Screen } from "../core/gfx";
 import type { Kart } from "../race/kart";
@@ -140,16 +140,16 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     if (art && k.rocket <= 0) {
       const small = k.shrink > 0 ? 0.62 : 1;
       if (k.trailing) {
-        billboard(art, k.x - c * 1.45, k.y - sn * 1.45, k.elev, 0.03, bias - 0.02, false, 0.5 * small);
+        billboard(art, k.x - c * 1.6, k.y - sn * 1.6, k.elev, 0.03, bias - 0.02, false, 0.66 * small);
       } else {
         // (a kart is about 0.8 m tall to the top of the helmet)
-        billboard(art, k.x, k.y, k.elev, (0.98 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.46 * small);
+        billboard(art, k.x, k.y, k.elev, (0.98 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.62 * small);
       }
       const spare = Math.max(0, k.uses - 1);
       for (let n = 0; n < spare; n++) {
         const ang = now * 1.3 + k.id + (n / spare) * Math.PI * 2;
-        const ox = Math.cos(ang) * 1.55 * small, oy = Math.sin(ang) * 1.55 * small;
-        billboard(art, k.x + ox, k.y + oy, k.elev, 0.65 * small, bias - 0.01, false, 0.4 * small);
+        const ox = Math.cos(ang) * 1.7 * small, oy = Math.sin(ang) * 1.7 * small;
+        billboard(art, k.x + ox, k.y + oy, k.elev, 0.6 * small, bias - 0.01, false, 0.52 * small);
       }
     }
   }

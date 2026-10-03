@@ -76,9 +76,12 @@ export interface Painter {
 
 /** Queue a flat polygon (world space). ``normal`` faces away from the solid; faces seen from
  * behind are skipped (pass null for two-sided faces such as rails). ``bias`` nudges its place in
- * the sort (negative: drawn later, over things at the same depth). */
+ * the sort (negative: drawn later, over things at the same depth). ``surface``: road that karts
+ * stand on, sorted by its far edge instead of its middle, so anything standing anywhere on it is
+ * drawn over it (sorted by its middle, the far half of the piece under a kart was drawn over the
+ * kart: its wheels on a bridge, half of it on a steep climb). */
 export function face(p: Painter, pts: P3[], color: number, normal: P3 | null, bias = 0,
-                     alpha = 1): void {
+                     alpha = 1, surface = false): void {
   const { cam } = p;
   if (normal) {
     const q = pts[0];
@@ -87,10 +90,11 @@ export function face(p: Painter, pts: P3[], color: number, normal: P3 | null, bi
   }
   const cs = pts.map((q) => toCamera(cam, q[0], q[1], q[2]));
   let far = true;
-  let depth = 0;
+  let depth = 0, farthest = 0;
   for (const c of cs) {
     if (c[0] >= NEAR) far = false;
     depth += c[0];
+    farthest = Math.max(farthest, c[0]);
   }
   if (far) return;
   depth /= cs.length;
@@ -106,5 +110,5 @@ export function face(p: Painter, pts: P3[], color: number, normal: P3 | null, bi
   if (maxx < 0 || minx > W || maxy < 0 || miny > H) return;
   const fogT = depth > cam.far * 0.45 ? Math.min(1, (depth - cam.far * 0.45) / (cam.far * 0.55)) ** 1.5 : 0;
   const c = fogT > 0 ? mix(color, p.fog, fogT) : color;
-  p.faces.push({ z: depth + bias, draw: () => fillConvex(p.scr, proj, c, alpha) });
+  p.faces.push({ z: (surface ? farthest : depth) + bias, draw: () => fillConvex(p.scr, proj, c, alpha) });
 }

@@ -14,6 +14,7 @@ import { AIMED, type ItemKind, BLAST_TIME } from "./race/items";
 import { CLASSES, type Controls, type Difficulty, type Kart } from "./race/kart";
 import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild, rivalBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
+import { TRACK_TYPES, type TrackTypeId, surpriseType, trackType } from "./race/tracktypes";
 import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
 import type { Face } from "./render/poly";
@@ -41,9 +42,17 @@ const DREAM = hex("#c79bff");
 const DIM = hex("#8f87b8");
 const LOGO_ROWS = ["#ffe66d", "#ffd23f", "#ffb347", "#ff8c42", "#ff6b6b", "#f25f9c", "#c77dff", "#9d6bff"].map(hex);
 const DIFFS: Difficulty[] = ["rookie", "pro", "legend"];
-const LAYOUTS: { id: Layout; label: string }[] = [
-  { id: "any", label: "SURPRISE ME" }, { id: "loop", label: "LOOP" }, { id: "figure8", label: "FIGURE 8" },
+/** The TRACK row: a random type, or one of the track types (race/tracktypes.ts). */
+const TRACKS: { id: TrackTypeId | "surprise"; name: string }[] = [
+  { id: "surprise", name: "SURPRISE ME" }, ...TRACK_TYPES.map((t) => ({ id: t.id, name: t.name })),
 ];
+/** What the TRACK row's hint says for a choice. */
+function trackHint(i: number): string {
+  const c = TRACKS[i];
+  if (c.id === "surprise") return "A RANDOM TRACK TYPE, REVEALED AS THE DREAM BEGINS";
+  const t = trackType(c.id);
+  return t.id === "classic" ? t.promise : `CONFIRMED: ${t.promise}`;
+}
 const BASE_HEIGHT = 2.9; // m, camera over the player's kart
 const BASE_FOCAL = 250;
 const ENGINE_LEVELS = [{ label: "LOW", level: 0.18 }, { label: "OFF", level: 0 }];
@@ -93,11 +102,13 @@ class Game {
   private autoPaused = false; // paused because the tab was hidden
   private raceError = "";
   private lastCircuit: Float64Array | null = null;
+  private lastCircuitType: TrackTypeId = "classic"; // re-raced with its own type's rules
+  private surprised = false; // the race's track type was a SURPRISE ME pick (the dream says so)
   private seed = (Math.random() * 1e9) | 0;
   private shake = 0;
   private flash = 0; // s of white flash left (a shock)
   private time = 0;
-  private settings = { rivals: 5, diff: 1, theme: 0, circuit: 0, layout: 0, engine: 0 };
+  private settings = { rivals: 5, diff: 1, theme: 0, circuit: 0, track: 0, engine: 0 };
   private build: Build = DEFAULT_BUILD;
   private garage!: Garage;
   private garageReturn: Mode = "main";
@@ -200,8 +211,8 @@ class Game {
         { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(0, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "HOW MANY AI KARTS RACE YOU (0-7)" },
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); } },
-        { label: "LAYOUT", value: () => LAYOUTS[s.layout].label, left: () => { s.layout = (s.layout + LAYOUTS.length - 1) % LAYOUTS.length; }, right: () => { s.layout = (s.layout + 1) % LAYOUTS.length; }, hint: "LOOP, OR A FIGURE 8 THAT CROSSES ITSELF ON A BRIDGE" },
-        { label: "CIRCUIT", value: () => (s.circuit === 0 || !this.lastCircuit ? "NEW DREAM" : "LAST ONE"), left: () => { s.circuit = s.circuit ? 0 : 1; }, right: () => { s.circuit = s.circuit ? 0 : 1; }, hint: "A FRESH DREAM, OR RE-RACE YOUR LAST LOCKED CIRCUIT" },
+        { label: "TRACK", value: () => TRACKS[s.track].name, left: () => { s.track = (s.track + TRACKS.length - 1) % TRACKS.length; }, right: () => { s.track = (s.track + 1) % TRACKS.length; }, hint: () => trackHint(s.track) },
+        { label: "CIRCUIT", value: () => (s.circuit === 0 || !this.lastCircuit ? "NEW DREAM" : "LAST ONE"), left: () => { s.circuit = s.circuit ? 0 : 1; }, right: () => { s.circuit = s.circuit ? 0 : 1; }, hint: () => (s.circuit === 1 && this.lastCircuit ? `RE-RACE YOUR LAST LOCKED CIRCUIT (${trackType(this.lastCircuitType).name})` : "A FRESH DREAM, OR RE-RACE YOUR LAST LOCKED CIRCUIT") },
         { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("setup"), hint: "OPEN THE GARAGE" },
         { label: "START RACE", action: () => void this.startRace(s.circuit === 1 && !!this.lastCircuit) },
         { label: "BACK", action: () => this.go("main") },
@@ -209,7 +220,7 @@ class Game {
       cupSetup: new Menu("GRAND PRIX", [
         { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(1, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "THE SAME RIVALS IN THE SAME KARTS ALL THE WAY (1-7)" },
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
-        { label: "LAYOUT", value: () => LAYOUTS[s.layout].label, left: () => { s.layout = (s.layout + LAYOUTS.length - 1) % LAYOUTS.length; }, right: () => { s.layout = (s.layout + 1) % LAYOUTS.length; }, hint: "LOOP, OR A FIGURE 8 THAT CROSSES ITSELF ON A BRIDGE" },
+        { label: "TRACK", value: () => TRACKS[s.track].name, left: () => { s.track = (s.track + TRACKS.length - 1) % TRACKS.length; }, right: () => { s.track = (s.track + 1) % TRACKS.length; }, hint: () => trackHint(s.track) },
         { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("cupSetup"), hint: "OPEN THE GARAGE" },
         { label: "START GRAND PRIX", action: () => void this.startCup(), hint: `${THEMES.length} WORLDS. POINTS: 15 12 10 8 6 4 2 1` },
         { label: "BACK", action: () => this.go("main") },
@@ -339,11 +350,14 @@ class Game {
     }
     const s = this.settings;
     const theme = s.theme === THEMES.length ? THEMES[(Math.random() * THEMES.length) | 0] : THEMES[s.theme];
-    // a live race with the same seed dreams the same circuit again
+    const seed = (Math.random() * 1e9) | 0;
+    const choice = TRACKS[s.track].id, replay = sameCircuit && this.lastCircuit ? this.lastCircuit : null;
+    // a live race with the same seed dreams the same circuit again; a re-raced one keeps its type
     const setup: RaceSetup = again ?? {
-      rivals: s.rivals, difficulty: DIFFS[s.diff], theme, seed: (Math.random() * 1e9) | 0,
-      replay: sameCircuit && this.lastCircuit ? this.lastCircuit : null, layout: LAYOUTS[s.layout].id, build: this.build,
+      rivals: s.rivals, difficulty: DIFFS[s.diff], theme, seed, replay, build: this.build,
+      trackType: replay ? this.lastCircuitType : choice === "surprise" ? surpriseType(new Rand(seed + 5)) : choice,
     };
+    if (!again) this.surprised = !replay && choice === "surprise";
     this.seed = setup.seed;
     const race = new Race(setup, this.designer, (sp) => this.banner(sp));
     this.race = race;
@@ -382,10 +396,14 @@ class Game {
     const cup = this.cup;
     if (!cup) return;
     const s = this.settings;
+    const seed = (cup.seed + 7919 * (cup.index + 1)) | 0, choice = TRACKS[s.track].id;
+    // SURPRISE ME: a different track type for every race of the cup (while there are new ones)
+    const type = choice === "surprise" ? surpriseType(new Rand(seed + 5), cup.types) : choice;
+    cup.types[cup.index] = type;
+    this.surprised = choice === "surprise";
     await this.startRace(false, {
-      rivals: Math.max(1, s.rivals), difficulty: DIFFS[s.diff], theme: cup.world,
-      seed: (cup.seed + 7919 * (cup.index + 1)) | 0, replay: null, layout: LAYOUTS[s.layout].id,
-      build: this.build, rivalSeed: cup.seed,
+      rivals: Math.max(1, s.rivals), difficulty: DIFFS[s.diff], theme: cup.world, seed, replay: null,
+      trackType: type, build: this.build, rivalSeed: cup.seed,
     });
   }
 
@@ -493,6 +511,7 @@ class Game {
           this.hud.banner("CIRCUIT LOCKED", now, HOT, 2.6, "THE DREAM IS NOW YOUR TRACK");
         }
         this.lastCircuit = Float64Array.from(race.track.points);
+        this.lastCircuitType = race.type.id;
       } else if (e.kind === "finish") {
         this.sound.finish(e.place);
         const ord = ["1ST", "2ND", "3RD"][e.place - 1] ?? `${e.place}TH`;
@@ -871,11 +890,12 @@ class Game {
   }
 
   /** Dev only: race a given circuit (game meters, x0 y0 x1 y1 ...) without the designer. */
-  debugRace(points: number[], theme = 0, rivals = 5): void {
+  debugRace(points: number[], theme = 0, rivals = 5, type: TrackTypeId = "classic"): void {
     this.cup = null;
+    this.surprised = false;
     void this.startRace(false, {
       rivals, difficulty: "pro", theme: THEMES[theme], seed: 1234, replay: Float64Array.from(points), layout: "any",
-      build: this.build,
+      trackType: type, build: this.build,
     });
   }
 
@@ -960,7 +980,7 @@ class Game {
     scr.dimRect(x0, 8, right - x0, H - 16, hex("#0c0a1d"), 0.88);
     f.draw(scr, "HOW TO PLAY", W / 2, 14, { color: HOT, outline: INK, align: "center" });
     const rows: [string, string][] = [
-      ["DRIVE", "ARROWS OR W A S D"],
+      ["DRIVE", "ARROWS OR W A S D. HOLD DOWN TO BRAKE, KEEP HOLDING TO BACK UP"],
       ["DRIFT", "HOLD SHIFT OR SPACE IN A TURN, LET GO FOR A MINI-TURBO"],
       ["ITEM", "E: TAP TO USE. HOLD TO KEEP OIL, ORBS OR A BOMB BEHIND YOU AS A SHIELD"],
       ["AIM", "BOOMERANGS AND BOMBS GO WHERE THE SWEEPING ARROW POINTS WHEN YOU PRESS E"],
@@ -981,7 +1001,7 @@ class Game {
       y += 1;
     }
     y += 4;
-    const story = "NOBODY DESIGNED YOUR CIRCUIT: A DIFFUSION MODEL DREAMS THE ROAD AHEAD OF THE PACK ON LAP 1, THEN IT LOCKS. THE GRAND PRIX RACES EVERY WORLD FOR POINTS.";
+    const story = "NOBODY DESIGNED YOUR CIRCUIT: A DIFFUSION MODEL DREAMS THE ROAD AHEAD OF THE PACK ON LAP 1, THEN IT LOCKS. THE TRACK TYPE STEERS THE DREAM AND CONFIRMS WHAT IT WILL HAVE.";
     for (const line of f.wrap(story, right - x0 - 20)) {
       if (y > H - 30) break;
       f.draw(scr, line, W / 2, y, { color: DIM, align: "center" });
@@ -996,9 +1016,16 @@ class Game {
     const r = this.race;
     const pv = r?.live?.preview;
     f.draw(scr, "THE AI IS DREAMING YOUR CIRCUIT", W / 2, 22, { color: DREAM, outline: INK, align: "center" });
+    let top = 46;
     if (r) {
       const where = this.cup ? `GRAND PRIX RACE ${this.cup.index + 1} OF ${this.cup.worlds.length}: ` : "";
       f.draw(scr, where + r.setup.theme.name, W / 2, 34, { color: HOT, outline: INK, align: "center" });
+      // the track type, and what it is sure to have
+      const t = r.type;
+      f.draw(scr, `${this.surprised ? "SURPRISE! " : ""}${t.name}`, W / 2, 46, { color: 0xffffffff, outline: INK, align: "center" });
+      const lines = f.wrap(t.id === "classic" ? t.promise : `CONFIRMED: ${t.promise}`, W - 24).slice(0, 2);
+      lines.forEach((line, i) => f.draw(scr, line, W / 2, 57 + i * 10, { color: DREAM, outline: INK, align: "center" }));
+      top = 57 + lines.length * 10;
     }
     if (pv && r) {
       // the designer's current whole-circuit guess, sharpening with every denoising step
@@ -1006,7 +1033,7 @@ class Game {
       const pts = Array.from({ length: N }, (_, j) => [pv[2 * j], pv[2 * j + 1]]);
       for (const [x, y] of pts) { minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); }
       const span = Math.max(maxx - minx, maxy - miny) || 1;
-      const size = Math.min(130, H - 86), cx = W / 2, cy = Math.round(H / 2) + 4;
+      const size = Math.max(40, Math.min(130, H - top - 50)), cx = W / 2, cy = Math.round(top + 4 + size / 2);
       for (let j = 0; j < N; j++) {
         const [ax, ay] = pts[j], [bx, by] = pts[(j + 1) % N];
         const known = r.track.known[j];
@@ -1043,11 +1070,23 @@ class Game {
       f.draw(scr, (row.estimated ? "~" : "") + formatTime(row.time), c0 + 70, y, { color: c, align: "right", outline: INK });
       f.draw(scr, row.best ? formatTime(row.best) : "--", c0 + 154, y, { color: DIM, align: "right", outline: INK });
     });
+    let y = 41 + rows.length * 10;
     const st = r.live?.stats;
     if (st) {
       const resampled = st.retries === 1 ? "1 ARC RESAMPLED" : `${st.retries} ARCS RESAMPLED`;
-      f.wrap(`CIRCUIT DREAMED LIVE IN ${st.arcs} ARCS, ${resampled}`, W - 16).forEach((line, i) =>
-        f.draw(scr, line, W / 2, 41 + rows.length * 10 + i * 10, { color: DREAM, align: "center", outline: INK }));
+      for (const line of f.wrap(`CIRCUIT DREAMED LIVE IN ${st.arcs} ARCS, ${resampled}`, W - 16)) {
+        f.draw(scr, line, W / 2, y, { color: DREAM, align: "center", outline: INK });
+        y += 10;
+      }
+    }
+    // the track type, and what was built on the circuit
+    const t = r.track, ft = r.features;
+    const built = ([[t.bridges.length, "BRIDGE"], [t.hills.length, "CLIMB"], [ft.tunnels.length, "TUNNEL"],
+                    [ft.ramps.length, "JUMP"], [ft.pads.length, "PAD"]] as [number, string][])
+      .filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}${n > 1 ? "S" : ""}`).join("  ");
+    for (const line of f.wrap(`${r.type.name}: ${built || "A PLAIN CIRCUIT"}`, W - 16).slice(0, 2)) {
+      f.draw(scr, line, W / 2, y, { color: DIM, align: "center", outline: INK });
+      y += 10;
     }
     this.menus.results.draw(scr, f, W / 2, H - this.menus.results.height() - 2, this.time);
   }
@@ -1062,7 +1101,7 @@ if (import.meta.env.DEV) {
     shot: (cam: Partial<Camera>) => game.debugShot(cam),
     game,
     state: () => game.debugState(),
-    race: (points: number[], theme = 0, rivals = 5) => game.debugRace(points, theme, rivals),
+    race: (points: number[], theme = 0, rivals = 5, type: TrackTypeId = "classic") => game.debugRace(points, theme, rivals, type),
     hold: (on = true) => { game.debugHold = on; },
     give: (item: ItemKind) => game.debugGive(item),
     pin: (size: [number, number] | null) => game.debugPin(size),

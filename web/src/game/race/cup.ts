@@ -5,6 +5,7 @@
 
 import type { Theme } from "../themes";
 import type { Build } from "./parts";
+import type { TrackTypeId } from "./tracktypes";
 
 export const POINTS = [15, 12, 10, 8, 6, 4, 2, 1];
 
@@ -28,6 +29,7 @@ export class Cup {
   readonly times = new Map<number, number>();
   entrants: Entrant[] = [];
   last: CupRow[] = [];
+  readonly types: TrackTypeId[] = []; // the track type of each race (SURPRISE ME varies them)
 
   constructor(readonly worlds: Theme[], readonly seed: number) {}
 

@@ -6,7 +6,7 @@ import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
 import type { Kart } from "../race/kart";
 import { LAPS, type Race } from "../race/race";
-import { ITEM_KINDS, ITEM_NAMES, type ItemKind, TRAILS } from "../race/items";
+import { ITEM_KINDS, ITEM_NAMES, type ItemKind, PRISM_TIME, ROCKET_TIME, TRAILS } from "../race/items";
 import { paintOf } from "../race/parts";
 import { itemIcons } from "../render/sprites";
 import { N } from "../world/track";
@@ -122,17 +122,19 @@ export class Hud {
       f.draw(scr, q.text, W / 2, mid + 34 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
     }
     this.itemSlot(scr, p, now);
-    if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / 6, hex("#ff8a1f"));
-    else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / 7, hex("#c79bff"));
+    if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / ROCKET_TIME, hex("#ff8a1f"));
+    else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));
 
-    // banners
+    // banners: only the newest (two at once would print over each other), as big as fits
     this.banners = this.banners.filter((b) => b.until > race.clock || race.phase === "countdown");
-    for (const b of this.banners) {
-      if (b.blink && Math.floor(now * 4) % 2) continue;
+    const b = this.banners[this.banners.length - 1];
+    if (b && !(b.blink && Math.floor(now * 4) % 2)) {
+      const scale = Math.max(1, Math.min(3, Math.floor((W - 12) / f.width(b.text))));
+      const th = 8 * scale;
       // a ribbon behind the big text: it spans the screen, so it lies over the standings
-      scr.dimRect(0, mid - 5, W, b.sub ? 46 : 33, INK, 0.62);
-      f.draw(scr, b.text, W / 2, mid, { scale: 3, color: b.color, outline: INK, align: "center" });
-      if (b.sub) f.draw(scr, b.sub, W / 2, mid + 28, { color: WHITE, outline: INK, align: "center" });
+      scr.dimRect(0, mid - 5, W, th + 9 + (b.sub ? 13 : 0), INK, 0.62);
+      f.draw(scr, b.text, W / 2, mid, { scale, color: b.color, outline: INK, align: "center" });
+      if (b.sub) f.draw(scr, b.sub, W / 2, mid + th + 4, { color: WHITE, outline: INK, align: "center" });
     }
     if (p.wrongWay > 45 && Math.floor(now * 3) % 2 === 0) {
       f.draw(scr, "WRONG WAY!", W / 2, mid + 36, { scale: 2, color: RED, outline: INK, align: "center" });
@@ -183,6 +185,13 @@ export class Hud {
     }
     const label = n > 0 ? String(n) : "GO!";
     this.font.draw(scr, label, W / 2, 76, { scale: 5, color: n > 0 ? WHITE : GREEN, outline: INK, align: "center" });
+    // the track type, and what it is sure to have, on a soft band
+    const t = race.type;
+    const promise = t.id === "classic" ? t.promise : `CONFIRMED: ${t.promise}`;
+    const lines = this.font.wrap(promise, W - 40).slice(0, 2);
+    scr.dimRect(0, 120, W, 16 + lines.length * 10, INK, 0.5);
+    this.font.draw(scr, t.name, W / 2, 124, { color: GOLD, outline: INK, align: "center" });
+    lines.forEach((line, i) => this.font.draw(scr, line, W / 2, 135 + i * 10, { color: WHITE, outline: INK, align: "center" }));
   }
 
   private dreamStatus(scr: Screen, race: Race, now: number): void {

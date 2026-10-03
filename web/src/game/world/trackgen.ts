@@ -8,7 +8,8 @@
 // Mirrors live_generate() in src/dreamcircuit/trackgen/train.py.
 
 import { Rand } from "../core/gfx";
-import { type Layout, N, SCALE, Track, checkLap } from "./track";
+import type { StyleBand } from "../race/tracktypes";
+import { type Layout, N, SCALE, Track, checkLap, loopCurvature, previewLoop } from "./track";
 
 export interface DesignerInfo {
   file: string;
@@ -21,9 +22,12 @@ export interface DesignerInfo {
   sigma_max: number;
   rho: number;
   sigma_data: number;
+  style_scale?: [number, number]; // raw style at the 5th and 95th percentiles of training arcs
 }
 
 export const STEP_SCALE = 2; // model meters per network unit, unless the designer says otherwise
+export const STYLE_SCALE: [number, number] = [0, 0.447]; // the exported designer's, unless it says otherwise
+const CORNER_REF = 15; // m: a corner this tight counts as fully technical (CORNER_REF in train.py)
 
 export const INITIAL: [number, number] = [-24, 40]; // grid + first stretch, before the countdown
 export const CHUNK = 32; // points per arc during lap 1 (about 130 m of game road)
@@ -43,10 +47,33 @@ export interface SampleRequest {
 }
 
 /** What a live circuit needs from a designer (tests use a stand-in). ``sample`` takes and
- * returns steps in network units (x row, then y row); ``scale`` is meters per unit. */
+ * returns steps in network units (x row, then y row); ``scale`` is meters per unit;
+ * ``styleScale`` maps measured raw style to the 0..1 style the designer is asked for. */
 export interface Designer {
   sample(req: SampleRequest): Promise<Float32Array>;
   readonly scale?: number;
+  readonly styleScale?: [number, number];
+}
+
+/** How technical the new road in a whole-lap guess (game meters) is, on the designer's own 0..1
+ * style scale: the mean over the arc's points of min(1, 15 |curvature|), curvature in model
+ * meters as in training, mapped by the scale (the 5th and 95th percentiles of training arcs).
+ * Mirrors raw_style() and StyleScale in src/dreamcircuit/trackgen/train.py. */
+export function arcStyle(pts: ArrayLike<number>, arc: Set<number>, scale: [number, number] = STYLE_SCALE): number {
+  const loop = previewLoop(pts);
+  let sum = 0, n = 0;
+  for (let i = 0; i < loop.length; i++) {
+    if (!arc.has(loop[i][2])) continue;
+    sum += Math.min(1, loopCurvature(loop, i, 3) * SCALE * CORNER_REF);
+    n += 1;
+  }
+  const raw = n ? sum / n : 0;
+  return Math.max(0, Math.min(1, (raw - scale[0]) / Math.max(scale[1] - scale[0], 1e-6)));
+}
+
+/** How far a measured style is outside a band (0 inside it). */
+export function bandMiss(style: number, band: StyleBand): number {
+  return Math.max(0, band.lo - style, style - band.hi);
 }
 
 /** Model meters (x row, y row) -> game meters, interleaved (x0, y0, x1, y1, ...). */
@@ -152,6 +179,10 @@ export class CircuitDesigner implements Designer {
     return this.info.scale;
   }
 
+  get styleScale(): [number, number] {
+    return this.info.style_scale ?? STYLE_SCALE;
+  }
+
   private constructor(private readonly worker: Worker, readonly info: DesignerInfo) {
     worker.onmessage = (ev: MessageEvent) => {
       const m = ev.data;
@@ -207,6 +238,7 @@ export interface LiveStats {
   arcs: number;
   retries: number;
   fallbacks: number;
+  offBand: number; // arcs that never landed in their band (the closest drivable one was kept)
   ms: number;
 }
 
@@ -219,12 +251,16 @@ export class LiveCircuit {
   busy = false;
   /** The style asked of the arc being dreamed (or last dreamed), for the HUD. */
   style: number | null = null;
-  stats: LiveStats = { arcs: 0, retries: 0, fallbacks: 0, ms: 0 };
+  stats: LiveStats = { arcs: 0, retries: 0, fallbacks: 0, offBand: 0, ms: 0 };
+  /** The measured style of each arc as it was committed (0..1). */
+  readonly styles: number[] = [];
   onCommit: ((from: number, to: number) => void) | null = null;
   onRaise: ((from: number, to: number) => void) | null = null;
   onLock: (() => void) | null = null;
-  /** Called before each arc: the style to ask for (null: don't care). */
-  styleSource: (() => number | null) | null = null;
+  /** Called before each arc (0 is the grid and first stretch): the style to ask for (null: don't
+   * care), and the band its measured style must land in (null: anything drivable). */
+  styleSource: ((arc: number) => number | null) | null = null;
+  bandSource: ((arc: number) => StyleBand | null) | null = null;
   /** True if the designer kept failing mid-race and the lap was closed from its last guess. */
   closedWithoutDesigner = false;
   private failures = 0; // arcs in a row that failed to generate
@@ -232,10 +268,12 @@ export class LiveCircuit {
   private readonly mask = new Float32Array(N); // which points are road
   private readonly known = new Float64Array(2 * N); // the road so far, model meters
   private readonly scale: number;
+  private readonly styleScale: [number, number];
 
   constructor(private readonly designer: Designer, private readonly rng: Rand,
               readonly layout: Layout = "any") {
     this.scale = designer.scale ?? STEP_SCALE;
+    this.styleScale = designer.styleScale ?? STYLE_SCALE;
     const [a, b] = INITIAL;
     this.arcs.push(range(a, b));
     for (let p = b; p < N + a; p += CHUNK) this.arcs.push(range(p, Math.min(p + CHUNK, N + a)));
@@ -286,11 +324,15 @@ export class LiveCircuit {
     }
   }
 
-  /** Sample an arc until it passes the checks in context (or the retries run out). */
+  /** Sample an arc until it passes the checks in context and lands in its style band (or the
+   * retries run out: then the drivable sample closest to the band is kept). */
   private async dream(arc: number[], first: boolean): Promise<Float64Array> {
     const arcSet = new Set(arc);
-    this.style = this.styleSource?.() ?? null;
+    const index = this.stats.arcs;
+    this.style = this.styleSource?.(index) ?? null;
+    const band = this.bandSource?.(index) ?? null;
     const mask = stepMask(this.mask), known = toSteps(this.known, this.mask, this.scale);
+    let best: { lap: Float64Array; miss: number; style: number } | null = null;
     for (let attempt = 0; ; attempt++) {
       const sample = await this.designer.sample({
         mask, known, style: this.style, layout: this.layout, seed: this.rng.int(1, 2 ** 31),
@@ -301,14 +343,30 @@ export class LiveCircuit {
       });
       const lap = fromSteps(sample, this.known, this.mask, this.scale);
       const smoothed = smoothArc(lap, arc, ARC_SMOOTH);
-      if (checkLap(toGame(smoothed), arcSet, this.layout, first).ok) return smoothed;
+      const game = toGame(smoothed);
+      if (checkLap(game, arcSet, this.layout, first).ok) {
+        const style = arcStyle(game, arcSet, this.styleScale);
+        const miss = band ? bandMiss(style, band) : 0;
+        if (miss === 0) return this.measured(smoothed, style);
+        if (!best || miss < best.miss) best = { lap: smoothed, miss, style };
+      }
       if (attempt < RETRIES) {
         this.stats.retries += 1;
         continue;
       }
+      if (best) {
+        this.stats.offBand += 1;
+        return this.measured(best.lap, best.style);
+      }
       this.stats.fallbacks += 1;
-      return smoothArc(lap, arc, 2.0); // last resort: iron out the wiggle and keep racing
+      const ironed = smoothArc(lap, arc, 2.0); // last resort: iron out the wiggle and keep racing
+      return this.measured(ironed, arcStyle(toGame(ironed), arcSet, this.styleScale));
     }
+  }
+
+  private measured(lap: Float64Array, style: number): Float64Array {
+    this.styles.push(style);
+    return lap;
   }
 
   /** Write an arc's points (model meters) into the known lap and turn them into road. */

@@ -1,18 +1,20 @@
 // The race director: grid, countdown (with rocket starts), live circuit generation during lap 1
-// (steered by how the player drives), laps, positions, finish and results. Owns the karts, the
-// circuit, its bridges, ramps and boost pads, the ground texture and the scenery.
+// (steered by the track type and by how the player drives), laps, positions, finish and results.
+// Owns the karts, the circuit, its bridges, climbs, ramps and boost pads, the ground texture and
+// the scenery, and makes good what the track type confirms when the lap locks.
 
 import { Rand, type Sprite } from "../core/gfx";
 import type { Theme } from "../themes";
 import { Scenery } from "../world/scenery";
 import { WorldTexture } from "../world/texture";
-import { HALF_WIDTH, type Layout, N, Track } from "../world/track";
+import { FIRST_SEG, HALF_WIDTH, type Layout, N, Track } from "../world/track";
 import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
-import { Features, TUNNEL_LEN } from "./features";
-import { AIMED, AIM_MAX, AIM_RATE, type ItemKind, Items } from "./items";
+import { Features, RAMP_LEN, TUNNEL_LEN } from "./features";
+import { AIMED, AIM_MAX, AIM_RATE, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
 import { CLASSES, type Controls, type Difficulty, Kart, collideKarts } from "./kart";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
+import { DEFAULT_PADS, DEFAULT_RAMPS, type HillRule, MOUNTAIN_HILLS, type TrackType, type TrackTypeId, trackType } from "./tracktypes";
 import { LIVERIES } from "../render/sprites";
 
 export const LAPS = 3;
@@ -48,7 +50,8 @@ export interface RaceSetup {
   theme: Theme;
   seed: number;
   replay: Float64Array | null; // points of a locked circuit to race again (game meters)
-  layout?: Layout; // what the designer is asked for (default: anything)
+  layout?: Layout; // what the designer is asked for (default: the track type's)
+  trackType?: TrackTypeId; // what the circuit is sure to have (default: the classic)
   build?: Build; // the player's kart from the garage (default: the classic kart)
   rivalSeed?: number; // the rivals' karts (a Grand Prix keeps them for every race)
 }
@@ -82,8 +85,10 @@ export class Race {
   private readonly rng: Rand;
   private doneTimer = 0;
   private throttleHeld = 0; // s the player has held the throttle during the countdown
-  private nextHill = 170; // m of road before the next climb may start (the mountains)
+  private nextHill: number; // m of road before the next climb may start
   private readonly hillRng: Rand;
+  readonly type: TrackType;
+  private readonly hillRule: HillRule | null; // climbs: the track type's, or the mountains'
   private aimPhase = 0; // where the player's aiming arrow is in its sweep
   private bridgesSeen = 0;
   /** How the player is driving lap 1 (smoothed), which sets the style of the road ahead. */
@@ -92,7 +97,12 @@ export class Race {
   constructor(readonly setup: RaceSetup, designer: Designer | null, banner: (s: Sprite) => void) {
     this.rng = new Rand(setup.seed);
     this.hillRng = new Rand(setup.seed + 21);
-    this.features = new Features(!!setup.theme.mountain);
+    this.type = trackType(setup.trackType);
+    this.hillRule = this.type.hills ?? (setup.theme.mountain ? MOUNTAIN_HILLS : null);
+    this.nextHill = this.hillRule ? Math.max(60, this.hillRule.gap[1]) : Infinity;
+    this.features = new Features({
+      tunnels: !!setup.theme.mountain, ramps: this.type.ramps ?? DEFAULT_RAMPS, pads: this.type.pads ?? DEFAULT_PADS,
+    });
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
@@ -105,12 +115,13 @@ export class Race {
       this.onLock();
     } else {
       if (!designer) throw new Error("the circuit designer is not loaded");
-      this.live = new LiveCircuit(designer, new Rand(setup.seed + 2), setup.layout ?? "any");
+      this.live = new LiveCircuit(designer, new Rand(setup.seed + 2), setup.layout ?? this.type.layout);
       this.track = this.live.track;
       this.live.onCommit = (a, b) => this.onCommit(a, b);
       this.live.onRaise = (a, b) => this.onRaise(a, b);
       this.live.onLock = () => this.onLock();
-      this.live.styleSource = () => this.styleWanted();
+      this.live.styleSource = (arc) => this.styleFor(arc);
+      this.live.bandSource = (arc) => this.type.band?.(arc) ?? null;
     }
     const n = setup.rivals + 1;
     const order = Array.from({ length: n }, (_, i) => i);
@@ -129,17 +140,31 @@ export class Race {
     this.standings = [...this.karts];
   }
 
-  private onCommit(from: number, to: number): void {
+  /** Whether arc lengths [s, s + len) are taken: item rows (unless ``rows`` is false: a climb
+   * can carry a row of boxes), bridges, or the run to the line. */
+  private blocked(s: number, len: number, rows = true): boolean {
     const t = this.track;
-    const blocked = (s: number, len: number) =>
-      this.items.rowS.some((r) => r > s - 12 && r < s + len + 12) ||
+    return rows && this.items.rowS.some((r) => r > s - 12 && r < s + len + 12) ||
       // keep clear of bridges: the deck and its approach ramps span about 61 m either side of the
       // crossing, and a jump needs room to land; and around the road that passes under it
       t.bridges.some((b) => Math.abs(b.centerS - s - len / 2) < BRIDGE_CLEAR ||
         Math.abs(t.s[b.lower] - s - len / 2) < UNDER_CLEAR) ||
       t.locked && (s + len > t.length - 80);
-    // in the mountains the road climbs: lift it before it is painted (raised road leaves a shadow)
-    if (this.setup.theme.mountain) this.placeHills(from, to, blocked);
+  }
+
+  /** Whether any kart is on, or coming up to, arc lengths [s, s + len) (what is built at the lock
+   * must not appear under a kart or right in front of it). */
+  private kartsNear(s: number, len: number): boolean {
+    const t = this.track, L = t.length || 1;
+    return this.karts.some((k) => ((((t.s[k.idx] - (s - 70)) % L) + L) % L) < len + 90);
+  }
+
+  private onCommit(from: number, to: number): void {
+    const t = this.track;
+    const blocked = (s: number, len: number) => this.blocked(s, len);
+    // climbs (the mountains, a roller coaster): lift the road before it is painted (raised road
+    // leaves a shadow)
+    this.placeHills(from, to);
     this.tex.paintRoad(t, from, to);
     this.scenery.onCommit(t, from, to);
     this.items.onCommit(t, from, to);
@@ -164,29 +189,90 @@ export class Race {
     }
   }
 
-  /** Set climbs along newly committed road: 110-170 m long, 3.5-6.2 m high, in the middle of the
-   * lap (clear of the grid and the line), away from bridges, item rows and tunnels. */
-  private placeHills(from: number, to: number, blocked: (s: number, len: number) => boolean): void {
-    const t = this.track;
+  /** Set climbs along newly committed road, by the hill rule (the mountains': 110-170 m long and
+   * 3.5-6.2 m high), in the middle of the lap (clear of the grid and the line), away from
+   * bridges, item rows and tunnels. */
+  private placeHills(from: number, to: number): void {
+    const t = this.track, rule = this.hillRule;
+    if (!rule) return;
     for (let i = Math.max(1, from); i < to; i++) {
       const s = t.s[i];
       if (s < this.nextHill) continue;
       const seg = t.segOf[i];
-      if (seg < 24 || seg > 180) continue;
-      const len = this.hillRng.range(110, 170), h = this.hillRng.range(3.5, 6.2);
+      if (seg < rule.segs[0] || seg > rule.segs[1]) continue;
+      const len = this.hillRng.range(rule.len[0], rule.len[1]), h = this.hillRng.range(rule.h[0], rule.h[1]);
       const tunnel = this.features.tunnels.some((tn) => tn.s0 < s + len + 20 && tn.s0 + TUNNEL_LEN > s - 20);
-      if (tunnel || blocked(s - 10, len + 20)) {
+      // the lap is not closed yet: from the road per segment so far, keep the climb well short of
+      // the line (segments after FIRST_SEG lead back to the grid)
+      const perSeg = s / Math.max(1, (seg - FIRST_SEG + N) % N);
+      const intoLine = seg + (len + 80) / Math.max(perSeg, 1) > N;
+      if (tunnel || intoLine || this.blocked(s - 10, len + 20, false)) {
         this.nextHill = s + 15;
         continue;
       }
       t.addHill({ s0: s, len, h });
-      this.nextHill = s + len + this.hillRng.range(90, 180);
+      this.nextHill = s + len + this.hillRng.range(rule.gap[0], rule.gap[1]);
     }
+  }
+
+  /** The lap has locked: make good the counts the track type confirms (jumps, pads, climbs) on
+   * free road that no kart is on or coming up to. */
+  private confirm(): void {
+    const min = this.type.min;
+    if (!min) return;
+    const t = this.track, f = this.features;
+    const free = (s: number, len: number) => !this.blocked(s, len) && !this.kartsNear(s, len);
+    const nearRows = (s: number, len: number) => !this.blocked(s, len, false) && !this.kartsNear(s, len);
+    if (min.hills && t.hills.length < min.hills) {
+      this.topUpHills(min.hills - t.hills.length, nearRows);
+      this.items.relift(t);
+    }
+    // jumps want long straights clear of the item rows; failing that, next to a row, then on a
+    // gentler bend (a 20 m flight there drifts 3 m: still on the road)
+    for (const [where, bend] of [[free, 1 / 90], [nearRows, 1 / 90], [nearRows, 1 / 60]] as const) {
+      if (min.ramps && f.ramps.length < min.ramps) f.topUpRamps(t, min.ramps - f.ramps.length, where, bend);
+    }
+    for (const where of [free, nearRows]) {
+      if (min.pads && f.pads.length < min.pads) f.topUpPads(t, min.pads - f.pads.length, where, () => this.rng.next());
+    }
+  }
+
+  /** Climbs for a locked lap that has too few: mid-sized ones, then the shortest the rule allows,
+   * wherever the road is free and well clear of other climbs, tunnels and jumps. */
+  private topUpHills(want: number, free: (s: number, len: number) => boolean): void {
+    const rule = this.hillRule;
+    if (!rule) return;
+    want -= this.addHills(want, (rule.len[0] + rule.len[1]) / 2, (rule.h[0] + rule.h[1]) / 2, free);
+    if (want > 0) this.addHills(want, rule.len[0], rule.h[0], free);
+  }
+
+  private addHills(want: number, len: number, h: number, free: (s: number, len: number) => boolean): number {
+    const t = this.track;
+    let added = 0;
+    for (let i = 8; i < t.count && added < want; i += 8) {
+      const from = t.fromStart(i);
+      if (from < 60 || from + len > t.length - 120) continue;
+      const s = t.s[i];
+      if (t.hills.some((hl) => hl.s0 < s + len + 40 && hl.s0 + hl.len + 40 > s) ||
+          t.bridges.some((b) => Math.abs(b.centerS - s - len / 2) < len / 2 + BRIDGE_CLEAR) ||
+          this.features.tunnels.some((tn) => tn.s0 < s + len + 20 && tn.s0 + TUNNEL_LEN > s - 20) ||
+          this.features.ramps.some((r) => r.s0 < s + len + 30 && r.s0 + RAMP_LEN + 45 > s - 30) ||
+          !free(s - 10, len + 20)) continue;
+      const r = t.addHill({ s0: s, len, h });
+      if (r) this.tex.repaint(t, r[0], r[1]);
+      added += 1;
+    }
+    return added;
   }
 
   /** A bridge's approach ramp was lifted after it had been painted as ground road. */
   private onRaise(from: number, to: number): void {
     this.tex.repaint(this.track, from, to);
+  }
+
+  /** The style asked of arc ``arc``: the track type's program, given what the driving asks for. */
+  styleFor(arc: number): number {
+    return Math.max(0.02, Math.min(0.98, this.type.style(arc, this.styleWanted())));
   }
 
   /** The style the next stretch should have, from how the player is driving (0 calm .. 1 wild):
@@ -211,6 +297,7 @@ export class Race {
 
   private onLock(): void {
     this.scenery.onLock(this.track);
+    this.confirm();
     this.lockedAt = this.clock;
     this.events.push({ kind: "locked" });
   }
@@ -307,6 +394,10 @@ export class Race {
       return b.dist - a.dist;
     });
     this.standings.forEach((k, i) => { k.place = i + 1; });
+    // a rocket burns out once it has carried its kart past a couple of karts (never into the lead)
+    for (const k of this.karts) {
+      if (k.rocket > ROCKET_TAIL && k.rocketFrom - k.place >= rocketPasses(k.rocketFrom)) k.rocket = ROCKET_TAIL;
+    }
     if (this.player.finished) {
       this.doneTimer += dt;
       const allIn = this.karts.every((k) => k.finished);

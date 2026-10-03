@@ -28,14 +28,15 @@ const DRIFT_OFF = 0.72; // and keeps drifting until it comes back inside this
 
 /** Joystick deflection (in stick radii, +x right, +y down) to driving controls. Steering has a
  * dead zone and a gentle curve for small corrections; a stick pushed all the way to the side
- * drifts (with hysteresis, so a drift does not flicker off mid-corner); pulled back, it brakes. */
+ * drifts (with hysteresis, so a drift does not flicker off mid-corner); pulled back, straight or
+ * on a diagonal, it brakes and then reverses (steering while it backs up). */
 export function stickControls(dx: number, dy: number, drifting: boolean):
   { steer: number; brake: number; drift: boolean } {
   const x = Math.max(-1, Math.min(1, dx)), ax = Math.abs(x);
   const mag = ax < DEAD ? 0 : Math.min(1, ((ax - DEAD) / (1 - DEAD)) ** 1.25);
   return {
     steer: mag === 0 ? 0 : -Math.sign(x) * mag, // the game's steer is + = left
-    brake: dy > 0.6 && dy > ax ? 1 : 0,
+    brake: dy > 0.55 && dy > ax * 0.75 ? 1 : 0,
     drift: drifting ? ax > DRIFT_OFF : ax > DRIFT_ON,
   };
 }

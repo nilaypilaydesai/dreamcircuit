@@ -983,7 +983,7 @@ export function itemBoxFrames(): SceneryArt[] {
       }
     });
     outline(s, hex("#1a1030"));
-    return { sprite: s, height: 1.15, solid: false };
+    return { sprite: s, height: 1.3, solid: false };
   });
 }
 
@@ -998,7 +998,7 @@ export function slickArt(): SceneryArt {
   }
   const sheen = [hex("#ff5fa2"), hex("#ffd23f"), hex("#5dff7a"), hex("#63c8ff")];
   for (let k = 0; k < 12; k++) px(s, 8 + k, 3 + (k > 5 ? 1 : 0), sheen[k % 4]);
-  return { sprite: s, height: 0.32, solid: false };
+  return { sprite: s, height: 0.42, solid: false };
 }
 
 /** A dream orb: a glowing violet sphere with a bright core. */
@@ -1006,7 +1006,7 @@ export function orbArt(): SceneryArt {
   const s = makeSprite(14, 14);
   disc(s, 6.5, 6.5, 6.4, (x, y) => mix(hex("#ffffff"), hex("#7b3cff"), Math.min(1, Math.hypot(x - 5, y - 5) / 7)));
   outline(s, hex("#2b0f5c"));
-  return { sprite: s, height: 0.9, solid: false };
+  return { sprite: s, height: 1.15, solid: false };
 }
 
 /** Fill a polygon (even-odd) in sprite pixel coordinates. */
@@ -1114,7 +1114,7 @@ export function boomerangFrames(): SceneryArt[] {
     stroke(s, 9, 9, 9 + Math.cos(a) * 6, 9 + Math.sin(a) * 6, 0.6, hex("#a8fff4"));
     stroke(s, 9, 9, 9 + Math.cos(a + 1.75) * 6, 9 + Math.sin(a + 1.75) * 6, 0.6, hex("#ffd23f"));
     outline(s, hex("#083b37"));
-    return { sprite: s, height: 0.9, solid: false };
+    return { sprite: s, height: 1.15, solid: false };
   });
 }
 
@@ -1128,7 +1128,7 @@ export function bombFrames(): SceneryArt[] {
     disc(s, 13.5, 1.5, f ? 1.6 : 1.1, () => (f ? 0xffffffff : hex("#ffd23f")));
     if (f) { px(s, 15, 0, hex("#ff8a1f")); px(s, 12, 0, hex("#ff8a1f")); }
     outline(s, hex("#0b0b10"));
-    return { sprite: s, height: 1.0, solid: false };
+    return { sprite: s, height: 1.25, solid: false };
   });
 }
 
@@ -1208,8 +1208,9 @@ export function heldArt(): Record<"turbo" | "triple" | "oil" | "orb" | "boomeran
   const icons = itemIcons();
   const art = (sprite: Sprite, height = 0.85): SceneryArt => ({ sprite, height, solid: false });
   return {
-    turbo: art(turboCell()), triple: art(turboCell()), oil: art(oilBarrel(), 0.95), orb: orbArt(),
-    boomerang: boomerangFrames()[0], bomb: bombFrames()[0], prism: art(icons.prism), shock: art(icons.shock),
+    turbo: art(turboCell()), triple: art(turboCell()), oil: art(oilBarrel(), 0.95), orb: art(orbArt().sprite, 0.9),
+    boomerang: art(boomerangFrames()[0].sprite, 0.9), bomb: art(bombFrames()[0].sprite, 0.95), prism: art(icons.prism),
+    shock: art(icons.shock),
     rocket: art(icons.rocket, 0.95),
   };
 }

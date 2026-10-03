@@ -92,7 +92,8 @@ The game runs the procedure that `live_generate()` mirrors in Python:
    lap. The 24 points *behind* the line exist so the start grid has road under it.
 2. **During lap 1:** whenever the race leader is within 72 points (28% of a lap) of the end of
    the road, the next 32 points (about 130 m at the game's scale) are dreamed, conditioned on
-   everything known, the layout and the style the race asks for.
+   everything known, the layout and the style the race asks for (the track type's program, or
+   the player's driving).
 3. **The closing arc** is conditioned on both ends at once, the road so far and the grid, and its
    steps are corrected to land on the grid.
 
@@ -110,6 +111,34 @@ road (grass or shoulder), and in a spin or a bump. Before each arc it asks for
 `0.5 + 1.25 (speed - 0.72) + 0.6 drift - 1.1 offroad - 0.25 (1 - clean)`, shifted by +0.1 on
 Legend and -0.1 on Rookie, clamped to 0.05..0.95. It is a hand-written heuristic, not learned
 from players.
+
+**Track types.** The setup screens offer seven (`race/tracktypes.ts`), and every one still
+dreams its circuit live; a type sets the layout the designer is asked for, a style program, and
+what gets built on the road. Classic and Figure 8 ask for whatever the driving asks for (above);
+Speedway asks every arc for calm road (0.04) and Technical for wild road (0.96); Grand Tour
+alternates the two arc by arc; Stunt Park alternates calm and middling arcs on a figure-eight;
+Roller Coaster leans a little calmer than the driving. A program comes with a band each arc's
+*measured* style must land in (calm: at most 0.45; wild: at least 0.6; asked for calm or wild,
+the designer's arcs measure 0.32 and 0.87 on average). The game measures the new arc, in the
+context of the designer's guess for the rest of the lap, exactly as training did (`arcStyle`: the
+mean of min(1, 15 |curvature|) in model meters, mapped by the training percentiles), and agrees
+with the Python to within 0.06 on every reference arc. An arc outside its band is dreamed again
+with the same retries the drivability check has, and if every try misses, the drivable one
+closest to the band is kept, so the race never waits on a style. On the exported designer (10
+live laps each), 77% of Speedway arcs, 90% of Technical arcs and 62% of Grand Tour arcs land in
+their band at the first try, so with four tries an arc misses it about 0.3%, 0.01% and 2% of the
+time. The type also sets the feature
+rules: how long a straight earns a jump (85 m by default, 70 m on a Speedway, 50 m in a Stunt
+Park), pads along the straights on a Speedway and out of every tight corner (60 m apart) on a
+Technical track, and climbs in any world on a Roller Coaster (95-150 m long and 4-6.5 m high,
+kept well short of the line by an estimate of the road per segment so far, since the lap's
+length is not known until it closes). The counts a type confirms (2 jumps and 3 pads on a
+Speedway, 4 pads on a Technical track, 3 jumps in a Stunt Park, 4 climbs on a Roller Coaster)
+are made good when the lap locks if the dream left too few: on the straightest free stretches,
+never on a bridge and never under or just ahead of a kart. Jumps look away from the item rows
+first, then beside them, then on a gentler bend (1/60 m: a 20 m flight drifts 3 m, still on the
+road); climbs may carry a row of boxes, which rides up with the road. The countdown shows the
+type and what it confirms, and the results list what was built.
 
 The game turns known points into road one Catmull-Rom segment at a time, in driving order, as
 soon as the four points a segment needs are known. Committed road is appended to the dense
@@ -201,8 +230,11 @@ ramps and boost pads are drawn as flat-shaded convex polygons by a small softwar
 (`render/poly.ts`): transform to camera space, clip against the near plane, cull faces that look
 away, fog by distance, fill scanline by scanline. Polygons and sprites share one painter's sort,
 with a small depth bias per kind so a kart on a deck draws over the deck and a kart underneath
-draws under it. The camera rides up onto bridges with the kart it follows and rises partway on a
-jump, for a sense of air.
+draws under it. Road surfaces that karts stand on (decks, climbs, ramps, pads) sort by their far
+edge rather than their middle: sorted by the middle, the piece of road under a kart was often
+drawn after it, and its far half covered the kart's wheels on a flat deck and half the kart on a
+steep climb (a Roller Coaster screenshot showed it). The camera rides up onto bridges with the
+kart it follows and rises partway on a jump, for a sense of air.
 
 **Bridges.** When the dreamed road crosses itself (a figure-eight), the later stretch becomes a
 bridge: it is lifted 6 m over the road below, on 44 m smoothstep ramps either side of a 34 m
@@ -286,8 +318,8 @@ driver's helmet is projected into each of the 16 views, and a translucent dome w
 and a glint is drawn there over the sprite. In the mountains (Mountain Pass) the road climbs.
 Hills are a second kind of raised road next to bridges: as road is committed, climbs 110-170 m
 long and 3.5-6.2 m high (a sin^2 rise and fall, never steeper than about 15%) are set along the
-middle of the lap, clear of the grid, the start, item rows and tunnels, and lift the road before
-it is painted. The renderer builds them like bridge decks, on earth embankments that fall away
+middle of the lap, clear of the grid, the start and tunnels (a row of item boxes may ride on
+one), and lift the road before it is painted; a Roller Coaster track sets them in any world. The renderer builds them like bridge decks, on earth embankments that fall away
 to the ground, with low stone walls the karts cannot leave by. If the dream later crosses itself,
 the climbs near the new bridge and the road under it are flattened (the bridge needs the
 headroom) and the ground is repainted. Tunnels are bored on long, gently curving straights: walls
@@ -312,9 +344,13 @@ and gold confetti.
 half of the screen is a floating joystick: it appears under the thumb, its base follows a thumb
 that slides past the rim, it has a dead zone and a gentle curve for small corrections, pushed all
 the way to the side it drifts (with hysteresis, so a drift does not flicker off mid-corner), and
-pulled back it brakes. The gas is automatic once the race is on, so steering and drifting take
-one thumb; before GO the engine revs only while the thumb is on the stick, which keeps the rocket
-start a matter of timing. DRIFT (hops and tricks too) and ITEM sit under the right thumb.
+pulled back, straight or on a diagonal, it brakes and then reverses, steering as it backs up. The
+gas is automatic once the race is on, so steering and drifting take one thumb; before GO the
+engine revs only while the thumb is on the stick, which keeps the rocket start a matter of
+timing. DRIFT (hops and tricks too) and ITEM sit under the right thumb. On every device the brake
+wins over the gas, and held at a standstill it backs the kart up at up to 7 m/s; the grass slows
+a reversing kart's top speed but no longer drags it to a halt (it once cancelled all but 1 m/s^2
+of the reverse thrust, and reversing is how a kart gets out of the grass).
 
 **Items.** A row of four boxes spans the road every 210 m of committed road (the first one
 shortly after the start, none in the last 70 m before the line), so boxes appear as the road is
@@ -334,12 +370,14 @@ who has nobody to chase, it lands where it was aimed and waits on the track for 
 armed (0.6 s after landing) it goes off when any kart comes within 2.6 m, its thrower included,
 spinning everyone within 5.5 m. A prism makes a kart invincible and 15% faster for 7 s, keeps its
 speed off the road, and spins out whoever it touches. A shock spins, shrinks (top speed down 28%
-for 3.5 s) and disarms everyone else. A rocket drives the kart itself for 6 s: it rides the
-road's own points at 1.7 times the class top speed, easing to the middle, so it can neither cut a
-corner nor fall off a deck, and barges through the pack. Odds are interpolated by position
-between four tables (the leader gets defensive items and no big ones; the back of the pack gets
-triple turbos, prisms, shocks and the odd rocket), and dead last gets the rocket nine times in
-ten. A spin-out takes control away for a second while the kart slides on, slowing. Items act on
+for 3.5 s) and disarms everyone else. A rocket drives the kart itself for up to 4.5 s: it rides
+the road's own points at 1.5 times the class top speed, easing to the middle, so it can neither
+cut a corner nor fall off a deck, and barges through whoever is in the way; 0.35 s after it has
+carried its kart past two karts it burns out, and it can never carry it into the lead. Odds are
+interpolated by position between four tables (the leader gets defensive items and no big ones;
+the back of the pack gets triple turbos, prisms and shocks). The rocket is a catch-up, not a win:
+only the kart in last place gets one, only in a field of three or more, and only when it is at
+least 60 m behind the kart one place ahead (then four times in five). A spin-out takes control away for a second while the kart slides on, slowing. Items act on
 the press of the button, never on the hold: most fire at once, while oil, orbs and bombs come out
 behind the kart while the button is down (where they block one orb or boomerang from behind) and
 are dropped or fired on the release. Every kart shows what it carries: the item it will use next

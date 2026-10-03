@@ -11,11 +11,14 @@
 // press of the button locks the direction for that throw.
 //   PRISM         invincible for a while: faster, nothing spins you, you spin whoever you touch.
 //   SHOCK         a jolt to everyone else: they spin, shrink, slow down and drop their items.
-//   ROCKET        the kart becomes a rocket and flies itself up the road, scattering the pack.
+//   ROCKET        the kart becomes a rocket and flies itself up the road, scattering whoever is in
+//                 the way; it burns out once it has passed a couple of karts. A catch-up, not a
+//                 win: only the kart in last place gets one, and only when it has fallen well
+//                 behind the kart ahead.
 // Oil, orbs and bombs can be held out behind the kart (hold the button): held there, they block
 // one hit from behind; let go and they are dropped or fired. The odds depend on position: the
-// leader mostly gets defensive items, the back of the pack the big ones, and last place gets
-// the rocket nine times in ten. Pure logic (no rendering), so it is unit-tested headlessly.
+// leader mostly gets defensive items and the back of the pack the big ones. Pure logic (no
+// rendering), so it is unit-tested headlessly.
 
 import type { Rand } from "../core/gfx";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
@@ -58,10 +61,12 @@ export const AIM_MAX = 0.75; // rad
 export const AIM_RATE = 3.1; // rad/s of sweep phase: one sweep across and back in about 2 s
 export const BLAST_TIME = 0.6; // s the explosion is drawn for
 export const PRISM_TIME = 7; // s
-export const ROCKET_TIME = 6; // s
+export const ROCKET_TIME = 4.5; // s at most
+export const ROCKET_PASSES = 2; // karts a rocket carries its kart past before it burns out
+export const ROCKET_TAIL = 0.35; // s it flies on after the last pass (clear of the kart it passed)
 export const SHOCK_SHRINK = 3.5; // s
 
-export interface ItemBox { x: number; y: number; elev: number; respawn: number }
+export interface ItemBox { x: number; y: number; elev: number; respawn: number; idx: number }
 export interface Slick { x: number; y: number; elev: number; ttl: number; owner: Kart; armed: number }
 export interface Orb {
   idx: number; carry: number; x: number; y: number; offset: number; v: number; ttl: number;
@@ -98,29 +103,33 @@ const ODDS: Record<ItemKind, [number, number, number, number]> = {
   triple: [6, 12, 22, 30],
   prism: [0, 4, 12, 22],
   shock: [0, 0, 6, 12],
-  rocket: [0, 0, 4, 8],
+  rocket: [0, 0, 0, 0], // only ever by the rule below
 };
-/** Last place gets the rocket this often. */
-export const LAST_ROCKET = 0.9;
+/** The kart in last place gets the rocket (this often) only when it is at least ROCKET_GAP m
+ * behind the kart one place ahead, and only in a field of three or more: the rocket can carry it
+ * past at most ``rocketPasses`` karts, never into the lead. */
+export const ROCKET_GAP = 60; // m
+export const ROCKET_CHANCE = 0.8;
 
-/** Position-weighted odds of each item (summing to 1). */
-export function itemOdds(place: number, field: number): Record<ItemKind, number> {
+/** How many karts a rocket fired from ``place`` may pass: up to ROCKET_PASSES, and never into
+ * first place. */
+export function rocketPasses(place: number): number {
+  return Math.max(0, Math.min(ROCKET_PASSES, place - 2));
+}
+
+/** Position-weighted odds of each item (summing to 1). ``gap``: m to the kart one place ahead. */
+export function itemOdds(place: number, field: number, gap = 0): Record<ItemKind, number> {
   const f = field > 1 ? Math.max(0, Math.min(1, (place - 1) / (field - 1))) : 0.5;
   const b = Math.min(2, Math.floor(f * 3)), t = f * 3 - b;
   const w = Object.fromEntries(ITEM_KINDS.map((k) => [k, ODDS[k][b] * (1 - t) + ODDS[k][b + 1] * t])) as Record<ItemKind, number>;
-  if (field > 1 && place >= field) {
-    // dead last: the rocket, nine times in ten
-    const rest = ITEM_KINDS.filter((k) => k !== "rocket").reduce((s, k) => s + w[k], 0);
-    for (const k of ITEM_KINDS) w[k] = k === "rocket" ? LAST_ROCKET : (w[k] / rest) * (1 - LAST_ROCKET);
-    return w;
-  }
   const sum = ITEM_KINDS.reduce((s, k) => s + w[k], 0);
-  for (const k of ITEM_KINDS) w[k] /= sum;
+  const rocket = field >= 3 && place >= field && gap >= ROCKET_GAP ? ROCKET_CHANCE : 0;
+  for (const k of ITEM_KINDS) w[k] = k === "rocket" ? rocket : (w[k] / sum) * (1 - rocket);
   return w;
 }
 
-export function rollItem(place: number, field: number, rng: Rand): ItemKind {
-  const p = itemOdds(place, field);
+export function rollItem(place: number, field: number, rng: Rand, gap = 0): ItemKind {
+  const p = itemOdds(place, field, gap);
   let u = rng.next();
   for (const k of ITEM_KINDS) {
     u -= p[k];
@@ -154,13 +163,18 @@ export class Items {
       if (s < this.nextRow) continue;
       if (track.locked && s > track.length - 70) break; // keep the run to the line clear
       this.nextRow += BOX_SPACING;
-      if (track.elev[i] > 0) continue; // never on a bridge's ramps
+      if (track.bridgeAt(i) > 0) continue; // never on a bridge's ramps (a climb is fine)
       this.rowS.push(track.s[i]);
       const [tx, ty] = track.tangent(i);
       for (const lane of BOX_LANES) {
-        this.boxes.push({ x: track.xs[i] - ty * lane, y: track.ys[i] + tx * lane, elev: track.elev[i], respawn: 0 });
+        this.boxes.push({ x: track.xs[i] - ty * lane, y: track.ys[i] + tx * lane, elev: track.elev[i], respawn: 0, idx: i });
       }
     }
+  }
+
+  /** The road under some boxes was lifted (a climb added when the lap locked): they ride on it. */
+  relift(track: Track): void {
+    for (const b of this.boxes) b.elev = track.elev[b.idx] ?? b.elev;
   }
 
   /** Give ``k`` an item (a box, or a test). */
@@ -243,6 +257,7 @@ export class Items {
         break;
       case "rocket":
         k.rocket = ROCKET_TIME;
+        k.rocketFrom = k.place || karts.length;
         k.spin = k.shrink = 0;
         k.drifting = false;
         break;
@@ -323,7 +338,8 @@ export class Items {
         if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > PICKUP_R * PICKUP_R) continue;
         b.respawn = BOX_RESPAWN;
         if (!k.item && k.roulette <= 0) {
-          this.grant(k, rollItem(places(k), karts.length, this.rng));
+          const ahead = karts.find((o) => places(o) === places(k) - 1);
+          this.grant(k, rollItem(places(k), karts.length, this.rng, ahead ? ahead.dist - k.dist : 0));
           if (k.isPlayer) {
             k.roulette = ROULETTE;
             this.events.push({ kind: "roll", kart: k });

@@ -5,9 +5,13 @@ import { describe, expect, it } from "vitest";
 import { Rand } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
-import { AIM_MAX, BOMB_BLAST, BOX_SPACING, ITEM_KINDS, Items, LAST_ROCKET, ROULETTE, itemOdds, rollItem } from "../src/game/race/items";
+import {
+  AIM_MAX, BOMB_BLAST, BOX_SPACING, ITEM_KINDS, Items, ROCKET_CHANCE, ROCKET_GAP, ROCKET_TIME, ROULETTE, itemOdds, rocketPasses,
+  rollItem,
+} from "../src/game/race/items";
 import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
-import { CLASSES, Kart, collideKarts } from "../src/game/race/kart";
+import { CLASSES, Kart, REVERSE_SPEED, collideKarts } from "../src/game/race/kart";
+import { CALM_BAND, TRACK_TYPES, type TrackTypeId, WILD_BAND, surpriseType, trackType } from "../src/game/race/tracktypes";
 import {
   ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
   cleanBuild, perfOf, rivalBuild, statsOf,
@@ -20,7 +24,7 @@ import {
   BRIDGE_DECK, BRIDGE_HEIGHT, BRIDGE_RAMP, HALF_WIDTH, N, SPACING, Track, bridgeLift, checkLap, crSegment,
 } from "../src/game/world/track";
 import {
-  CHUNK, type Designer, INITIAL, LiveCircuit, STEP_SCALE, fromSteps, smoothArc, stepMask, toModel, toSteps,
+  CHUNK, type Designer, INITIAL, LiveCircuit, STEP_SCALE, arcStyle, bandMiss, fromSteps, smoothArc, stepMask, toModel, toSteps,
 } from "../src/game/world/trackgen";
 import circuits from "./circuits.json";
 
@@ -315,17 +319,35 @@ describe("items", () => {
     }
     expect(lead.oil).toBeGreaterThan(lead.turbo);
     expect(lead.rocket + lead.prism + lead.shock).toBe(0); // no big items for the leader
-    expect(mid.rocket).toBeLessThan(0.05);
-    expect(last.rocket).toBeCloseTo(LAST_ROCKET, 9); // dead last: the rocket, nine times in ten
-    expect(itemOdds(1, 1).rocket).toBeLessThan(0.05); // racing alone is not being last
+    expect(last.triple + last.prism + last.shock).toBeGreaterThan(0.5); // the big ones at the back
+    expect(itemOdds(1, 1).rocket).toBe(0); // racing alone is not being last
   });
 
-  it("really do hand the last kart a rocket nine times in ten", () => {
+  it("only hand the rocket to the last kart, and only when it has fallen well behind", () => {
+    expect(itemOdds(8, 8, ROCKET_GAP - 1).rocket).toBe(0); // last, but close behind the kart ahead
+    expect(itemOdds(8, 8, ROCKET_GAP + 30).rocket).toBeCloseTo(ROCKET_CHANCE, 9);
+    expect(itemOdds(7, 8, 500).rocket).toBe(0); // far behind, but not last
+    expect(itemOdds(4, 8, 500).rocket).toBe(0);
+    expect(itemOdds(2, 2, 500).rocket).toBe(0); // second of two: a rocket could only win it
+    expect(itemOdds(3, 3, ROCKET_GAP).rocket).toBeCloseTo(ROCKET_CHANCE, 9);
+    const p = itemOdds(8, 8, 200);
+    expect(ITEM_KINDS.reduce((sum, k) => sum + p[k], 0)).toBeCloseTo(1, 9);
     const rng = new Rand(11);
-    let rockets = 0;
-    for (let i = 0; i < 4000; i++) if (rollItem(6, 6, rng) === "rocket") rockets++;
-    expect(rockets / 4000).toBeGreaterThan(0.87);
-    expect(rockets / 4000).toBeLessThan(0.93);
+    let far = 0, near = 0;
+    for (let i = 0; i < 4000; i++) {
+      if (rollItem(6, 6, rng, 150) === "rocket") far++;
+      if (rollItem(6, 6, rng, 20) === "rocket") near++;
+    }
+    expect(far / 4000).toBeGreaterThan(ROCKET_CHANCE - 0.03);
+    expect(far / 4000).toBeLessThan(ROCKET_CHANCE + 0.03);
+    expect(near).toBe(0);
+  });
+
+  it("let a rocket pass two karts at most, and never into the lead", () => {
+    expect(rocketPasses(8)).toBe(2);
+    expect(rocketPasses(4)).toBe(2);
+    expect(rocketPasses(3)).toBe(1);
+    expect(rocketPasses(2)).toBe(0);
   });
 
   it("come in rows of boxes along the road, clear of the run to the line", () => {
@@ -746,27 +768,37 @@ describe("the new items", () => {
     expect(items.events.some((e) => e.kind === "blocked" && e.kart === b)).toBe(true);
   });
 
-  it("turn the player into a rocket that flies itself up the road and past the pack", async () => {
-    const race = new Race({ rivals: 5, difficulty: "pro", theme: THEMES[0], seed: 5, replay: twisty() }, null, () => {});
+  it("turn the last kart into a rocket that flies itself up the road, past two karts at most", async () => {
+    const race = new Race({ rivals: 7, difficulty: "pro", theme: THEMES[0], seed: 5, replay: twisty() }, null, () => {});
     await race.prepare();
     const coast = { steer: 0, throttle: 1, brake: 0, drift: false };
-    for (let i = 0; i < 60 * 5; i++) race.update(1 / 60, coast); // through the countdown and away
-    race.items.grant(race.player, "rocket");
-    const start = race.player.dist;
-    race.update(1 / 60, { ...coast, item: true });
-    expect(race.player.rocket).toBeGreaterThan(0);
-    let over = false, worst = 0;
+    const stay = { steer: 0, throttle: 0, brake: 0, drift: false };
+    for (let i = 0; i < 60 * 9; i++) race.update(1 / 60, i < 60 * 3 ? coast : stay); // the pack drives off
+    const p = race.player;
+    expect(p.place).toBe(8);
+    race.items.grant(p, "rocket");
+    const start = p.dist, from = p.place;
+    race.update(1 / 60, { ...stay, item: true });
+    expect(p.rocket).toBeGreaterThan(0);
+    let over = false, worst = 0, best = from, flown = 0;
     for (let i = 0; i < 60 * 7; i++) {
-      const flying = race.player.rocket > 0;
+      const flying = p.rocket > 0;
       race.update(1 / 60, { steer: flying ? 1 : 0, throttle: 1, brake: 0, drift: false }); // the wheel is ignored
-      if (flying) worst = Math.max(worst, Math.abs(race.player.offset));
+      if (flying) {
+        worst = Math.max(worst, Math.abs(p.offset));
+        best = Math.min(best, p.place);
+        flown += 1 / 60;
+      }
       over ||= race.events.some((e) => e.kind === "rocketOver");
       race.events = [];
     }
     expect(over).toBe(true);
-    expect(race.player.spin).toBe(0);
+    expect(p.spin).toBe(0);
     expect(worst).toBeLessThan(HALF_WIDTH); // it stays on the road
-    expect(race.player.dist - start).toBeGreaterThan(CLASSES.pro.vmax * 6 * 1.3); // much faster than driving
+    expect(flown).toBeLessThanOrEqual(ROCKET_TIME + 0.05);
+    expect(from - best).toBeLessThanOrEqual(2); // two karts passed at most
+    expect(best).toBeGreaterThan(1); // never into the lead
+    expect(p.dist - start).toBeGreaterThan(CLASSES.pro.vmax * flown * 1.1); // faster than driving while it lasts
   });
 });
 
@@ -860,6 +892,10 @@ describe("the touch joystick", () => {
     expect(stickControls(0.8, 0, false).drift).toBe(false); // not far enough to start one
     expect(stickControls(0.8, 0, true).drift).toBe(true); // but enough to keep one going
     expect(stickControls(0.1, 0.9, false).brake).toBe(1);
+    const back = stickControls(-0.6, 0.62, false); // pulled back on a diagonal: reverse, steering
+    expect(back.brake).toBe(1);
+    expect(back.steer).toBeGreaterThan(0.3);
+    expect(stickControls(0.92, 0.5, false).brake).toBe(0); // a hard turn with the thumb low is not a brake
   });
 });
 
@@ -980,5 +1016,175 @@ describe("the soundtrack", () => {
     expect(chord("Am")).toEqual([57, 60, 64]);
     expect(chord("Bb")).toEqual([58, 62, 65]);
     expect(chord("Fmaj7")).toEqual([53, 57, 60, 64]);
+  });
+});
+
+describe("reversing", () => {
+  const still = (lateral = 0) => {
+    const t = Track.fromPoints(calm());
+    const k = new Kart(0, "P", 0, true);
+    k.placeOn(t, t.startIndex + 60, lateral);
+    return { t, k };
+  };
+
+  it("backs the kart up while the brake is held, even with the gas down too", () => {
+    const { t, k } = still();
+    for (let i = 0; i < 90; i++) k.update(1 / 60, { steer: 0, throttle: 1, brake: 1, drift: false }, t, CLASSES.pro);
+    expect(k.v).toBeLessThan(-REVERSE_SPEED * 0.9);
+    expect(k.v).toBeGreaterThanOrEqual(-REVERSE_SPEED - 1e-9);
+    for (let i = 0; i < 30; i++) k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false }, t, CLASSES.pro);
+    expect(k.v).toBeGreaterThan(0); // and the gas takes it straight out of reverse
+  });
+
+  it("backs out of the grass too", () => {
+    const { t, k } = still(HALF_WIDTH + 6);
+    const x0 = k.x, y0 = k.y;
+    for (let i = 0; i < 120; i++) k.update(1 / 60, { steer: 0, throttle: 0, brake: 1, drift: false }, t, CLASSES.pro);
+    expect(k.surface).toBe("grass");
+    expect(k.v).toBeLessThan(-3);
+    expect(Math.hypot(k.x - x0, k.y - y0)).toBeGreaterThan(4);
+  });
+});
+
+describe("track types", () => {
+  it("each have their own id, a short name, and a promise that fits the setup screens", () => {
+    expect(new Set(TRACK_TYPES.map((t) => t.id)).size).toBe(TRACK_TYPES.length);
+    for (const t of TRACK_TYPES) {
+      expect(t.name.length).toBeLessThanOrEqual(14);
+      expect(t.promise.length).toBeLessThanOrEqual(64);
+      for (let arc = 0; arc < 8; arc++) {
+        const s = t.style(arc, 0.5);
+        expect(s >= 0 && s <= 1).toBe(true);
+      }
+    }
+    expect(trackType("figure8").layout).toBe("figure8");
+    expect(trackType("stunt").layout).toBe("figure8");
+    expect(trackType(undefined).id).toBe("classic");
+  });
+
+  it("are all raced once in a grand prix of surprises before any comes back", () => {
+    const rng = new Rand(9);
+    const seen: TrackTypeId[] = [];
+    for (let i = 0; i < TRACK_TYPES.length; i++) seen.push(surpriseType(rng, seen));
+    expect(new Set(seen).size).toBe(TRACK_TYPES.length);
+  });
+
+  it("measure the style of new road the way the designer was trained to read it", () => {
+    // each arc of the reference circuits, as src/dreamcircuit/trackgen/train.py measures it
+    const python: Record<string, number[]> = {
+      twisty: [0.62, 0.45, 0.75, 1.0, 0.15, 0.8], calm: [0.31, 0.27, 0.45, 0.21, 0.48, 0.14],
+      figure8: [0.53, 0.33, 0.6, 0, 0, 1],
+    };
+    for (const [name, pts] of [["twisty", twisty()], ["calm", calm()], ["figure8", figure8()]] as const) {
+      liveArcs().slice(1).forEach((arc, i) => {
+        expect(Math.abs(arcStyle(pts, new Set(arc)) - python[name][i])).toBeLessThan(0.06);
+      });
+    }
+    expect(bandMiss(0.3, CALM_BAND)).toBe(0);
+    expect(bandMiss(0.5, WILD_BAND)).toBeCloseTo(0.1, 9);
+  });
+
+  it("dream an arc again when it misses its style band, then keep the closest drivable one", async () => {
+    let calls = 0;
+    const d = fakeDesigner(() => false); // always the calm circuit, which is never wild
+    const spy: Designer = { sample: (req) => { calls++; return d.sample(req); } };
+    const live = new LiveCircuit(spy, new Rand(7));
+    live.bandSource = (arc) => (arc === 0 ? null : WILD_BAND);
+    await live.start();
+    await driveLap(live);
+    const arcs = liveArcs().length;
+    expect(live.track.locked).toBe(true);
+    expect(live.stats.offBand).toBe(arcs - 1);
+    expect(live.stats.fallbacks).toBe(0);
+    expect(calls).toBe(1 + (arcs - 1) * 4); // every arc after the first dreamed four times
+    expect(live.styles.length).toBe(arcs);
+  });
+
+  it("keep an arc at once when it lands in its band", async () => {
+    let calls = 0;
+    const d = fakeDesigner(() => false);
+    const spy: Designer = { sample: (req) => { calls++; return d.sample(req); } };
+    const live = new LiveCircuit(spy, new Rand(8));
+    live.bandSource = () => ({ lo: 0, hi: 0.6 });
+    await live.start();
+    await driveLap(live);
+    expect(calls).toBe(liveArcs().length);
+    expect(live.stats.offBand).toBe(0);
+  });
+});
+
+describe("what a track type confirms", () => {
+  const raced = (type: TrackTypeId, pts: Float64Array, seed = 3, theme = THEMES[0]) =>
+    new Race({ rivals: 3, difficulty: "pro", theme, seed, replay: pts, trackType: type }, null, () => {});
+
+  it("climbs and drops on a roller coaster, in any world, clear of the grid and the line", () => {
+    for (const [pts, seed] of [[calm(), 1], [twisty(), 2], [figure8(), 3]] as const) {
+      const r = raced("coaster", pts, seed);
+      const t = r.track;
+      expect(t.hills.length).toBeGreaterThanOrEqual(4);
+      const s0 = t.s[t.startIndex];
+      for (const h of t.hills) {
+        expect(h.s0 - s0).toBeGreaterThan(40);
+        expect(h.s0 + h.len - s0).toBeLessThan(t.length - 80);
+      }
+      const sorted = [...t.hills].sort((a, b) => a.s0 - b.s0);
+      for (let i = 1; i < sorted.length; i++) expect(sorted[i].s0).toBeGreaterThanOrEqual(sorted[i - 1].s0 + sorted[i - 1].len);
+    }
+    expect(raced("classic", calm()).track.hills.length).toBe(0); // the valley has none of its own
+  });
+
+  it("jumps and pads on the straights of a speedway", () => {
+    for (const [pts, seed] of [[calm(), 4], [twisty(), 5]] as const) {
+      const r = raced("speedway", pts, seed);
+      expect(r.features.ramps.length).toBeGreaterThanOrEqual(2);
+      expect(r.features.pads.length).toBeGreaterThanOrEqual(3);
+      for (const ramp of r.features.ramps) {
+        // a jump's flight bends gently and never starts under a bridge or on raised road
+        for (let j = ramp.start; j < ramp.start + Math.round(45 / SPACING); j += 3) {
+          expect(Math.abs(r.track.curvature(j))).toBeLessThan(1 / 85);
+          expect(r.track.elev[j]).toBe(0);
+        }
+      }
+    }
+  });
+
+  it("a bridge and three jumps in a stunt park, kept away from the bridge", () => {
+    const r = raced("stunt", figure8(), 6);
+    expect(r.track.bridges.length).toBe(1);
+    expect(r.features.ramps.length).toBeGreaterThanOrEqual(3);
+    const b = r.track.bridges[0];
+    for (const ramp of r.features.ramps) {
+      expect(Math.abs(ramp.s0 - b.centerS)).toBeGreaterThan(60);
+      expect(Math.abs(ramp.s0 - r.track.s[b.lower])).toBeGreaterThan(60);
+    }
+  });
+
+  it("pads out of the corners of a technical track", () => {
+    const r = raced("technical", twisty(), 7);
+    expect(r.features.pads.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("builds what it confirms when the lap locks only where no kart is", async () => {
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: THEMES[0], seed: 9, replay: null, trackType: "coaster" },
+                          fakeDesigner(() => false), () => {});
+    await race.prepare();
+    const pilot = new RivalDriver(new Rand(3), race.player, 0);
+    let hills = 0;
+    for (let i = 0; i < 60 * 120 && !race.track.locked; i++) {
+      hills = race.track.hills.length;
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
+      race.events = [];
+      for (let k = 0; k < 4; k++) await Promise.resolve();
+    }
+    expect(race.track.locked).toBe(true);
+    const t = race.track;
+    expect(t.hills.length).toBeGreaterThanOrEqual(4);
+    // the climbs added at the lock: none under a kart or just ahead of one
+    for (const h of t.hills.slice(hills)) {
+      for (const k of race.karts) {
+        const d = (((t.s[k.idx] - h.s0) % t.length) + t.length) % t.length; // m the kart is past the foot
+        expect(d > h.len + 20 && d < t.length - 60).toBe(true);
+      }
+    }
   });
 });
