@@ -1447,7 +1447,12 @@ describe("what a track type confirms", () => {
       const sorted = [...t.hills].sort((a, b) => a.s0 - b.s0);
       for (let i = 1; i < sorted.length; i++) expect(sorted[i].s0).toBeGreaterThanOrEqual(sorted[i - 1].s0 + sorted[i - 1].len);
     }
-    expect(raced("classic", calm()).track.hills.length).toBe(0); // the valley has none of its own
+    // elsewhere a circuit climbs only as its world does: the valley rolls over its meadows, and a
+    // world without climbs of its own stays flat
+    const valley = raced("classic", calm()).track.hills;
+    expect(valley.length).toBeGreaterThan(0);
+    expect(valley.every((h) => h.style === "meadow")).toBe(true);
+    expect(raced("classic", calm(), 3, { ...THEMES[0], hills: undefined }).track.hills.length).toBe(0);
   });
 
   it("jumps and pads on the straights of a speedway", () => {
@@ -1503,6 +1508,56 @@ describe("what a track type confirms", () => {
         expect(d > h.len + 20 && d < t.length - 60).toBe(true);
       }
     }
+  });
+});
+
+describe("the lie of the land", () => {
+  it("gives every world climbs of its own: meadows, a neon skyway, mesas and dunes, coral, basalt", { timeout: 60000 }, async () => {
+    const want: Record<string, string[]> = {
+      valley: ["meadow"], neon: ["skyway", "wave"], mesa: ["dune", "mesa"], reef: ["coral"], volcano: ["basalt"],
+    };
+    for (const [id, styles] of Object.entries(want)) {
+      const seen = new Set<string>();
+      for (const seed of [3, 4]) {
+        const race = new Race({ rivals: 0, difficulty: "pro", theme: THEMES.find((t) => t.id === id)!, seed, replay: calm() },
+                              null, () => {});
+        await race.prepare();
+        for (const h of race.track.hills) seen.add(h.style!);
+      }
+      expect([...seen].sort(), id).toEqual(styles);
+    }
+  });
+
+  it("sets out landforms beyond the fence, with nothing growing inside them", { timeout: 60000 }, async () => {
+    const { LANDFORM_CLEAR, onLandform, reach } = await import("../src/game/world/landforms");
+    for (const theme of THEMES) {
+      const race = new Race({ rivals: 0, difficulty: "pro", theme, seed: 5, replay: twisty() }, null, () => {});
+      await race.prepare();
+      const t = race.track, forms = race.scenery.landforms;
+      expect(forms.length, theme.id).toBeGreaterThan(5);
+      for (const l of forms) {
+        expect(theme.landforms).toContain(l.kind);
+        let near = Infinity;
+        for (let i = 0; i < t.count; i += 3) near = Math.min(near, Math.hypot(t.xs[i] - l.x, t.ys[i] - l.y));
+        expect(near - reach(l), theme.id).toBeGreaterThanOrEqual(LANDFORM_CLEAR - 0.5);
+        expect(race.scenery.items.some((it) => onLandform(l, it.x, it.y))).toBe(false);
+      }
+    }
+  });
+
+  it("shades the ground as if it rose and fell, where the world says so", async () => {
+    const { WorldTexture } = await import("../src/game/world/texture");
+    const valley = THEMES[0];
+    const rolling = new WorldTexture(valley, 3).levels[0], flat = new WorldTexture({ ...valley, relief: 0 }, 3).levels[0];
+    let lighter = 0, darker = 0;
+    const { channels } = await import("../src/game/core/gfx");
+    for (let i = 0; i < rolling.length; i += 997) {
+      const a = channels(rolling[i])[1], b = channels(flat[i])[1];
+      if (a > b * 1.12) lighter++;
+      if (a < b * 0.88) darker++;
+    }
+    expect(lighter).toBeGreaterThan(200); // slopes to the sun
+    expect(darker).toBeGreaterThan(200); // and away from it
   });
 });
 
@@ -1639,9 +1694,10 @@ describe("drawing the worlds", () => {
 
   it("builds every style of climb out of faces, and draws them", async () => {
     const { hillFaces } = await import("../src/game/render/structures");
-    for (const style of ["earth", "rock", "cliff", "foundation", "girder", "scaffold", "crater"] as const) {
+    for (const style of ["earth", "rock", "cliff", "foundation", "girder", "scaffold", "crater", "meadow", "skyway", "wave",
+                         "mesa", "dune", "coral", "basalt"] as const) {
       const t = Track.fromPoints(calm());
-      const plateau = ["cliff", "foundation", "girder", "scaffold"].includes(style);
+      const plateau = ["cliff", "foundation", "girder", "scaffold", "skyway", "mesa", "basalt"].includes(style);
       t.addHill({ s0: 200, len: 160, h: 6, shape: plateau ? "plateau" : "sine", style, side: 1 });
       const { cam, scr, faces, painter } = await scene();
       look(cam, t, t.s.findIndex((s) => s >= 215));
@@ -1649,6 +1705,24 @@ describe("drawing the worlds", () => {
       expect(faces.length, style).toBeGreaterThan(40);
       for (const f of faces) f.draw();
       expect(scr.buf.some((c) => c !== 0), style).toBe(true);
+    }
+  });
+
+  it("builds every kind of landform out of lit faces", async () => {
+    const { landformFaces } = await import("../src/game/render/landforms");
+    const { LANDFORM_SIZE } = await import("../src/game/world/landforms");
+    for (const kind of Object.keys(LANDFORM_SIZE) as (keyof typeof LANDFORM_SIZE)[]) {
+      const { cam, scr, faces, painter } = await scene();
+      cam.x = 0; cam.y = -80; cam.heading = Math.PI / 2; // looking north at it
+      const theme = THEMES.find((t) => t.landforms?.includes(kind))!;
+      landformFaces(painter, [{ kind, x: 0, y: 0, r: 20, stretch: 1.3, rot: 0.4, h: 12, seed: 7 }], theme);
+      expect(faces.length, kind).toBeGreaterThan(4);
+      for (const f of faces) f.draw();
+      expect(scr.buf.some((c) => c !== 0), kind).toBe(true);
+      const { faces: behind, painter: back } = await scene();
+      back.cam.x = 0; back.cam.y = -80; back.cam.heading = -Math.PI / 2; // looking away: nothing
+      landformFaces(back, [{ kind, x: 0, y: 0, r: 20, stretch: 1.3, rot: 0.4, h: 12, seed: 7 }], theme);
+      expect(behind.length, kind).toBe(0);
     }
   });
 

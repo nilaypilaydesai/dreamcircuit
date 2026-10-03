@@ -1,11 +1,13 @@
 // Landscape around a circuit that is still being dreamed. Decorations appear beside each new
 // stretch of road as it is committed (and anything the new road would run over is cleared);
-// when the circuit locks, the rest of the world fills in: forests, rock fields, mesas, the start
-// gantry and a grandstand.
+// when the circuit locks, the rest of the world fills in: the lie of the land (knolls, buttes,
+// dunes, peaks: world/landforms.ts), forests, rock fields, mesas, the start gantry and a
+// grandstand.
 
 import { Rand, type Sprite } from "../core/gfx";
 import { type SceneryArt, chevron, gantry, grandstand, makeScenery, pillar } from "../render/sprites";
 import type { Theme } from "../themes";
+import { LANDFORM_CLEAR, LANDFORM_SIZE, type Landform, onLandform, reach } from "./landforms";
 import { type Bridge, HALF_WIDTH, SPACING, type Track } from "./track";
 import { HALF } from "./texture";
 
@@ -17,9 +19,11 @@ export interface Placed {
 }
 
 const CELL = 12;
+const LANDFORMS = 18; // the most a world gets
 
 export class Scenery {
   items: Placed[] = [];
+  landforms: Landform[] = [];
   private readonly road = new Map<number, number[]>(); // spatial hash of committed road points
   private readonly cache = new Map<string, SceneryArt[]>(); // a few variants per kind
   private readonly rng: Rand;
@@ -116,6 +120,7 @@ export class Scenery {
   /** The circuit locked: fill in the landscape and the start/finish furniture. */
   onLock(track: Track): void {
     const t = this.theme;
+    this.placeLandforms(track);
     for (let k = 0; k < 900 && this.items.length < 700; k++) {
       const x = this.rng.range(-HALF + 12, HALF - 12), y = this.rng.range(-HALF + 12, HALF - 12);
       const kind = this.rng.pick(t.far);
@@ -142,8 +147,30 @@ export class Scenery {
              HALF_WIDTH + 4);
   }
 
+  /** The lie of the land: up to LANDFORMS of the world's kinds, wherever there is room for one
+   * well clear of the road (and of each other); nothing grows inside them. */
+  private placeLandforms(track: Track): void {
+    const kinds = this.theme.landforms;
+    if (!kinds?.length) return;
+    for (let k = 0; k < 500 && this.landforms.length < LANDFORMS; k++) {
+      const kind = this.rng.pick(kinds), size = LANDFORM_SIZE[kind];
+      const l: Landform = {
+        kind, x: 0, y: 0, r: this.rng.range(size.r[0], size.r[1]), stretch: this.rng.range(size.stretch[0], size.stretch[1]),
+        rot: this.rng.range(0, Math.PI), h: this.rng.range(size.h[0], size.h[1]), seed: this.rng.int(0, 1 << 20),
+      };
+      const far = reach(l);
+      l.x = this.rng.range(-HALF + far + 8, HALF - far - 8);
+      l.y = this.rng.range(-HALF + far + 8, HALF - far - 8);
+      if (this.roadDistance(track, l.x, l.y, LANDFORM_CLEAR + far + 2) < LANDFORM_CLEAR + far) continue;
+      if (this.landforms.some((o) => Math.hypot(o.x - l.x, o.y - l.y) < reach(o) + far + 6)) continue;
+      this.landforms.push(l);
+    }
+    this.items = this.items.filter((it) => !this.landforms.some((l) => onLandform(l, it.x, it.y, 2)));
+  }
+
   private add(track: Track, x: number, y: number, art: SceneryArt, flip: boolean, clearance: number): void {
     if (Math.abs(x) > HALF - 4 || Math.abs(y) > HALF - 4) return;
+    if (this.landforms.some((l) => onLandform(l, x, y, 2))) return;
     if (this.roadDistance(track, x, y, clearance + 1) <= clearance) return;
     this.items.push({ x, y, art, flip });
   }

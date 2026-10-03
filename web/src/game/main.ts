@@ -19,6 +19,7 @@ import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
 import type { Face } from "./render/poly";
 import { aimArrow, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
+import { landformFaces } from "./render/landforms";
 import { Sky } from "./render/sky";
 import {
   LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, coinFrames, cometArt, droneFrames, flareFrames,
@@ -797,6 +798,7 @@ class Game {
     if (theme.underwater) extras.push(...fishSprites(this.schools(race), now, cam.heading));
     const faces: Face[] = [];
     const painter = { cam, scr: this.scr, fog: race.setup.theme.fog, faces };
+    landformFaces(painter, race.scenery.landforms, theme);
     bridgeFaces(painter, t, race.setup.theme);
     hillFaces(painter, t, theme);
     tunnelFaces(painter, t, race.features, theme);

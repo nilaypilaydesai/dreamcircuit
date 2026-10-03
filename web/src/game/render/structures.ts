@@ -2,7 +2,8 @@
 // bridges (deck with kerbed edges and center dashes, guard rails, girder sides, underside),
 // jump ramps (a striped wedge with kerb-coloured sides), boost pads (chevrons that pulse forward),
 // climbs (the road up on an earth embankment, a rocky mountainside, a ledge on a cliff, a concrete
-// foundation, a steel girder, a scaffold or a crater's rim) and tunnels (through a rock mound, or
+// foundation, a steel girder, a scaffold, a crater's rim, a grassy rise, a neon skyway or roller,
+// a mesa, a dune, a ridge of coral or a causeway of basalt) and tunnels (through a rock mound, or
 // through the steel frame of a building going up).
 
 import { hex, mix, shade } from "../core/gfx";
@@ -317,6 +318,195 @@ function craterClimb(c: Piece): void {
   }
 }
 
+/** A point on the face down one side of a climb whose foot is ``fi`` and ``fj`` m out (at i and
+ * at j): ``u`` of the way along the piece, ``t`` of the way from the road's edge to the foot. */
+function onFlank(c: Piece, side: number, fi: number, fj: number, u: number, t: number): P3 {
+  const f = fi + (fj - fi) * u;
+  return at(c, u, side * (HALF_WIDTH + t * f), zAt(c, u) * (1 - t));
+}
+
+/** A patch of that face (a line ruled on it, a ripple), drawn over it. */
+function flankPatch(c: Piece, side: number, fi: number, fj: number, u0: number, u1: number, t0: number, t1: number,
+                    color: number, bias = 0.09): void {
+  face(c.p, [onFlank(c, side, fi, fj, u0, t0), onFlank(c, side, fi, fj, u1, t0), onFlank(c, side, fi, fj, u1, t1),
+             onFlank(c, side, fi, fj, u0, t1)], color, [-side * c.ty, side * c.tx, 1], bias);
+}
+
+const FENCE = hex("#8a5a32");
+
+/** A rise in the meadows: grass banks down both sides (each piece a facet of its own, lighter
+ * toward the top) and a wooden fence along the top. */
+function meadowClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, i, j, theme } = c;
+  asphalt(c);
+  for (const side of [1, -1]) {
+    const fi = hi * 2 + 1.5 + jag(i, side + 31), fj = hj * 2 + 1.5 + jag(j, side + 31);
+    const lit = (side > 0 ? 1.04 : 0.84) * (0.93 + 0.12 * jag(c.n, side + 33));
+    flank(c, side, [hw, hw], [hi, hj], [hw + 0.4 * fi, hw + 0.4 * fj], [hi * 0.7, hj * 0.7], shade(theme.ground[0], 1.1 * lit));
+    flank(c, side, [hw + 0.4 * fi, hw + 0.4 * fj], [hi * 0.7, hj * 0.7], [hw + fi, hw + fj], [0, 0], shade(theme.ground[1], 0.93 * lit));
+    if (Math.max(hi, hj) > 0.6) {
+      band(c, side * hw, 0.56, 0.7, FENCE);
+      if (c.n % 2 === 0) bar(c, side * hw, 0, hi, 0, hi + 0.88, 0.14, shade(FENCE, 0.8), -0.15);
+    }
+  }
+}
+
+const SKYWAY_UNDER = hex("#1a0b30"), SKYWAY_SIDE = hex("#2a1450"), PYLON = hex("#2c1d4a");
+
+/** A skyway on pylons over the grid: a dark deck edged with glowing lines, neon tubes for rails, a
+ * strip of light along its edge, and every so often a pylon with a ring of light around it. */
+function skywayClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, n, theme } = c;
+  deck(c, -hw, hw, shade(theme.road, 1.05));
+  deck(c, -hw + 0.3, -hw + 0.6, theme.edge, 0, 1, 0.01, -0.22);
+  deck(c, hw - 0.6, hw - 0.3, theme.edge, 0, 1, 0.01, -0.22);
+  if (n % 3 === 0) deck(c, -0.15, 0.15, theme.kerb[0], 0, 0.55, 0.01, -0.25);
+  const P = (k: number, off: number, z: number) => edgePoint(c.track, k, off, z);
+  face(c.p, [P(c.i, -hw, hi - 0.6), P(c.i, hw, hi - 0.6), P(c.j, hw, hj - 0.6), P(c.j, -hw, hj - 0.6)], SKYWAY_UNDER, DOWN, 0.2);
+  for (const side of [1, -1]) {
+    const off = side * hw;
+    band(c, off, -0.6, 0, SKYWAY_SIDE, -0.1);
+    band(c, off, -0.42, -0.3, theme.kerb[0], -0.11);
+    if (Math.max(hi, hj) > 0.6) {
+      band(c, off, 0.45, 0.6, theme.edge);
+      band(c, off, 0.95, 1.08, theme.kerb[0]);
+      if (n % 3 === 0) bar(c, off, 0, hi, 0, hi + 1.08, 0.1, PYLON, -0.14);
+    }
+  }
+  const z = (hi + hj) / 2 - 0.6;
+  if (n % 9 === 4 && z > 1.2) {
+    // a pylon: a cross of two slabs, seen from any side, ringed with light half way up
+    face(c.p, [at(c, 0.5, -0.7, 0), at(c, 0.5, 0.7, 0), at(c, 0.5, 0.7, z), at(c, 0.5, -0.7, z)], PYLON, null, 0.05);
+    bar(c, 0, 0.5, 0, 0.5, z, 1.4, shade(PYLON, 0.85), 0.05);
+    face(c.p, [at(c, 0.5, -0.72, z * 0.5), at(c, 0.5, 0.72, z * 0.5), at(c, 0.5, 0.72, z * 0.5 + 0.22),
+               at(c, 0.5, -0.72, z * 0.5 + 0.22)], theme.edge, null, 0.04);
+    bar(c, 0, 0.5, z * 0.5 + 0.11, 0.5, z * 0.5 + 0.11, 1.44, theme.edge, 0.04);
+  }
+}
+
+/** A low roller of the neon grid: dark banks ruled with glowing lines, as if the grid itself had
+ * been lifted into a wave, a neon tube along the top of each. */
+function waveClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, theme } = c, line = shade(theme.grid || hex("#3d1f6b"), 1.9);
+  asphalt(c);
+  for (const side of [1, -1]) {
+    const fi = hi * 2.6 + 2, fj = hj * 2.6 + 2;
+    flank(c, side, [hw, hw], [hi, hj], [hw + fi, hw + fj], [0, 0], shade(theme.ground[0], side > 0 ? 1.5 : 1.2));
+    for (const t of [0.33, 0.66]) flankPatch(c, side, fi, fj, 0, 1, t, t + 0.035, line);
+    if (c.n % 2 === 0) flankPatch(c, side, fi, fj, 0, 0.07, 0, 1, line);
+    if (Math.max(hi, hj) > 0.4) band(c, side * hw, 0.3, 0.42, theme.edge);
+  }
+}
+
+const STRATA = [hex("#c8693a"), hex("#d98b4f"), hex("#b5532f"), hex("#e2a467"), hex("#a8472a")];
+
+/** Up onto a mesa: walls of sandstone in level bands of red and ochre (level with the ground, not
+ * with the road, as rock is laid down), leaning out a little toward their foot, a strip of sand
+ * along the top and a lip of red rock along the road. */
+function mesaClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, i, j, tx, ty, theme } = c, top = hw + 2.2, lean = 0.18;
+  asphalt(c);
+  deck(c, hw, top, theme.ground[0]);
+  deck(c, -top, -hw, theme.ground[0]);
+  const P = (k: number, off: number, z: number) => edgePoint(c.track, k, off, z);
+  for (const side of [1, -1]) {
+    const lit = side > 0 ? 1.04 : 0.8;
+    for (let b = 0; b * 1.1 < Math.max(hi, hj); b++) {
+      const z0 = b * 1.1, z1 = z0 + 1.1;
+      const bi = Math.min(z0, hi), bj = Math.min(z0, hj), ti = Math.min(z1, hi), tj = Math.min(z1, hj);
+      if (ti <= bi && tj <= bj) continue;
+      const out = (h: number, z: number) => side * (top + (h - z) * lean);
+      face(c.p, [P(i, out(hi, bi), bi), P(j, out(hj, bj), bj), P(j, out(hj, tj), tj), P(i, out(hi, ti), ti)],
+           shade(STRATA[b % STRATA.length], lit), [-side * ty, side * tx, lean], 0.1);
+    }
+    if (Math.max(hi, hj) > 0.6) band(c, side * (hw + 0.1), 0, 0.45, shade(STRATA[2], 0.8));
+  }
+}
+
+/** Over a dune: wide banks of sand, the side to the sun lit and the other in shade, ripples across
+ * them, and sand blown over the road's edges. */
+function duneClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, theme } = c, sand = theme.ground[0];
+  asphalt(c);
+  deck(c, -hw, -hw + 0.7, shade(sand, 0.96), 0, 1, 0.012, -0.23);
+  deck(c, hw - 0.7, hw, shade(sand, 0.96), 0, 1, 0.012, -0.23);
+  for (const side of [1, -1]) {
+    const fi = hi * 3 + 2, fj = hj * 3 + 2, lit = side > 0 ? 1.08 : 0.8;
+    flank(c, side, [hw, hw], [hi, hj], [hw + fi, hw + fj], [0, 0], shade(sand, lit * (c.n & 1 ? 1 : 0.97)));
+    for (const t of [0.3, 0.62]) flankPatch(c, side, fi, fj, 0, 1, t, t + 0.03, shade(sand, lit * 0.86));
+  }
+}
+
+const CORAL_COLORS = [hex("#ff6f91"), hex("#ff9f5a"), hex("#b76cff"), hex("#ffd45a"), hex("#5ad1c4")];
+const REEF_ROCK = hex("#5b6d7a");
+
+/** Over a ridge of the reef: rock along the top and sand below, coral growing out of the banks in
+ * fans of colour. */
+function coralClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, i, j, theme } = c;
+  asphalt(c);
+  for (const side of [1, -1]) {
+    const fi = hi * 1.9 + 1.5 + jag(i, side + 41), fj = hj * 1.9 + 1.5 + jag(j, side + 41);
+    const lit = (side > 0 ? 1.04 : 0.84) * (0.9 + 0.2 * jag(c.n, side + 43));
+    flank(c, side, [hw, hw], [hi, hj], [hw + 0.38 * fi, hw + 0.38 * fj], [hi * 0.66, hj * 0.66], shade(REEF_ROCK, lit));
+    flank(c, side, [hw + 0.38 * fi, hw + 0.38 * fj], [hi * 0.66, hj * 0.66], [hw + fi, hw + fj], [0, 0], shade(theme.ground[0], 0.92 * lit));
+    if (Math.max(hi, hj) < 0.8) continue;
+    for (let k = 0; k < 2; k++) {
+      const key = c.i * 2 + k, u = 0.2 + 0.6 * jag(key, side + 45), t = 0.12 + 0.45 * jag(key, side + 47);
+      if (jag(key, side + 49) < 0.3) continue;
+      const tall = 0.8 + 1.2 * jag(key, side + 51), col = CORAL_COLORS[Math.floor(jag(key, side + 53) * CORAL_COLORS.length)];
+      const base = onFlank(c, side, fi, fj, u, t), yaw = jag(key, side + 55) * Math.PI;
+      if (jag(key, side + 57) < 0.55) coralFan(c.p, base, yaw, tall, col);
+      else coralTubes(c.p, base, yaw, tall, col);
+    }
+  }
+}
+
+/** A sea fan standing on the reef at ``base``, turned ``yaw`` about the upright: narrow at its
+ * foot, spreading to a rounded top, a darker heart in it. */
+function coralFan(p: Painter, base: P3, yaw: number, tall: number, color: number): void {
+  const cx = Math.cos(yaw), cy = Math.sin(yaw);
+  const shape = (w: number, h: number): P3[] =>
+    [[-0.1, 0], [0.1, 0], [0.55, 0.5], [0.45, 0.86], [0, 1], [-0.45, 0.86], [-0.55, 0.5]].map(([x, z]): P3 =>
+      [base[0] + cx * x * w, base[1] + cy * x * w, base[2] + z * h]);
+  face(p, shape(tall * 0.9, tall), color, null, -0.12);
+  face(p, shape(tall * 0.45, tall * 0.7), shade(color, 0.72), null, -0.13);
+}
+
+/** Tube coral: three stubby tubes of different heights side by side, lighter at their mouths. */
+function coralTubes(p: Painter, base: P3, yaw: number, tall: number, color: number): void {
+  const cx = Math.cos(yaw), cy = Math.sin(yaw);
+  [[-0.3, 0.7], [0, 1], [0.32, 0.55]].forEach(([x, f], k) => {
+    const x0 = x - 0.11, x1 = x + 0.11, h = tall * f;
+    const P = (xx: number, z: number): P3 => [base[0] + cx * xx, base[1] + cy * xx, base[2] + z];
+    face(p, [P(x0, 0), P(x1, 0), P(x1, h), P(x0, h)], shade(color, k === 1 ? 1 : 0.85), null, -0.12);
+    face(p, [P(x0, h - 0.12), P(x1, h - 0.12), P(x1, h), P(x0, h)], shade(color, 1.3), null, -0.13);
+  });
+}
+
+const BASALT = [hex("#2b2427"), hex("#3a3034"), hex("#332a2e"), hex("#45393d")];
+
+/** A causeway of basalt over the lava: sheer sides of columns standing shoulder to shoulder, each a
+ * shade of its own, lit red at the foot where the lava laps at them, a low wall of basalt along the
+ * top with an ember-lit edge. */
+function basaltClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { tx, ty } = c;
+  asphalt(c);
+  for (const side of [1, -1]) {
+    const off = side * hw, out: P3 = [-side * ty, side * tx, 0];
+    for (let k = 0; k < 3; k++) {
+      const u0 = k / 3, u1 = (k + 1) / 3, key = c.i * 3 + k;
+      const col = shade(BASALT[Math.floor(jag(key, side + 61) * BASALT.length)], side > 0 ? 1.1 : 0.9);
+      face(c.p, [at(c, u0, off, 0), at(c, u1, off, 0), at(c, u1, off, zAt(c, u1)), at(c, u0, off, zAt(c, u0))], col, out, 0.1);
+    }
+    face(c.p, [at(c, 0, off, 0), at(c, 1, off, 0), at(c, 1, off, 0.35), at(c, 0, off, 0.35)], hex("#c2410c"), out, 0.09);
+    if (Math.max(c.hi, c.hj) > 0.6) {
+      band(c, off, 0, 0.5, hex("#3a2f33"));
+      band(c, off, 0.44, 0.52, hex("#ff7a2a"), -0.16);
+    }
+  }
+}
+
 /** The climbs, each built as its style says (the world's own when the climb does not say). */
 export function hillFaces(p: Painter, track: Track, theme: Theme): void {
   const step = 3;
@@ -337,6 +527,13 @@ export function hillFaces(p: Painter, track: Track, theme: Theme): void {
       else if (style === "girder") girderClimb(c);
       else if (style === "scaffold") scaffoldClimb(c);
       else if (style === "crater") craterClimb(c);
+      else if (style === "meadow") meadowClimb(c);
+      else if (style === "skyway") skywayClimb(c);
+      else if (style === "wave") waveClimb(c);
+      else if (style === "mesa") mesaClimb(c);
+      else if (style === "dune") duneClimb(c);
+      else if (style === "coral") coralClimb(c);
+      else if (style === "basalt") basaltClimb(c);
       else earthClimb(c);
     }
   }

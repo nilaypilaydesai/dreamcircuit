@@ -40,8 +40,11 @@ export function bridgeLift(ds: number): number {
 
 /** What a climb is built as: an earth embankment, a rocky mountainside, a ledge along a cliff
  * (a rock face on one side, a drop on the other), a concrete foundation, a steel girder (a crane's
- * arm), scaffolding, or a crater's rim. */
-export type HillStyle = "earth" | "rock" | "cliff" | "foundation" | "girder" | "scaffold" | "crater";
+ * arm), scaffolding, a crater's rim, a grassy rise in a meadow, a neon skyway on pylons, a low
+ * roller of the neon grid, a mesa, a sand dune, a ridge of coral, or a causeway of basalt. */
+export type HillStyle =
+  | "earth" | "rock" | "cliff" | "foundation" | "girder" | "scaffold" | "crater"
+  | "meadow" | "skyway" | "wave" | "mesa" | "dune" | "coral" | "basalt";
 
 /** A climb: the road rises and falls back over ``len`` m from arc length ``s0``, as a smooth hump
  * ("sine") or up a ramp to a level top and down again ("plateau"). ``side``: which side a cliff's

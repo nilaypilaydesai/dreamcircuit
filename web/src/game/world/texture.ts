@@ -3,7 +3,8 @@
 // the circuit designer commits each new stretch (raised road, on bridges, is painted as the
 // shadow it casts). A mip chain keeps distant ground from shimmering. In the volcano the terrain
 // is a lake of lava (marked texels whose colours cycle, world/lava.ts) and the road runs on a
-// bank of rock with a glowing rim where it meets the lava.
+// bank of rock with a glowing rim where it meets the lava. Elsewhere the ground is shaded as if it
+// rose and fell (a height field lit from the north-west), so the land does not read as flat.
 
 import { hash2, mix, shade, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
@@ -14,6 +15,8 @@ export const TEX = 2560;
 export const RES = 0.3; // meters per texel
 export const HALF = (TEX * RES) / 2; // world spans [-HALF, HALF]
 const LEVELS = 5;
+const RELIEF_STEP = 4; // texels between samples of the ground's relief (its rises are tens of meters across)
+const RG = TEX / RELIEF_STEP + 1;
 const KERB_KAPPA = 1 / 40; // corners tighter than 40 m radius get kerbs
 /** In the volcano: how far from the centerline the rock goes (road, shoulder, then 2.6 m of
  * bank); past it is lava. */
@@ -23,11 +26,49 @@ export class WorldTexture {
   readonly levels: Uint32Array[] = [];
   readonly lava: boolean; // the terrain is lava (the volcano)
   private readonly shaded = new Set<number>(); // raised road whose shadow is already painted
+  private readonly relief: Float32Array | null; // the light on the ground's rises, every RELIEF_STEP texels
   constructor(readonly theme: Theme, readonly seed: number) {
     this.lava = !!theme.volcano;
+    this.relief = WorldTexture.makeRelief(theme, seed);
     for (let k = 0; k < LEVELS; k++) this.levels.push(new Uint32Array((TEX >> k) * (TEX >> k)));
     this.paintTerrain(0, 0, TEX, TEX);
     this.buildMips(0, 0, TEX, TEX);
+  }
+
+  /** The light on the rise and fall of the ground: a height field (two scales of noise, up to
+   * ``theme.relief`` m from its lowest to its highest) lit from the north-west, as a factor on the
+   * ground's colour; null where the ground is flat. */
+  private static makeRelief(theme: Theme, seed: number): Float32Array | null {
+    const amp = theme.relief ?? 0;
+    if (amp <= 0 || theme.volcano) return null;
+    const d = RELIEF_STEP * RES, hgt = new Float32Array(RG * RG), out = new Float32Array(RG * RG);
+    for (let gy = 0; gy < RG; gy++) {
+      const wy = HALF - gy * d;
+      for (let gx = 0; gx < RG; gx++) {
+        const wx = gx * d - HALF;
+        hgt[gy * RG + gx] = amp * (valueNoise(wx, wy, 56, seed + 77) * 0.7 + valueNoise(wx, wy, 21, seed + 78) * 0.3);
+      }
+    }
+    const lx = -0.55, ly = 0.55, lz = 0.63;
+    for (let gy = 0; gy < RG; gy++) {
+      for (let gx = 0; gx < RG; gx++) {
+        const hx = (hgt[gy * RG + Math.min(RG - 1, gx + 1)] - hgt[gy * RG + Math.max(0, gx - 1)]) / (2 * d);
+        const hy = (hgt[Math.max(0, gy - 1) * RG + gx] - hgt[Math.min(RG - 1, gy + 1) * RG + gx]) / (2 * d);
+        const lit = (-hx * lx - hy * ly + lz) / Math.sqrt(hx * hx + hy * hy + 1) / lz;
+        out[gy * RG + gx] = Math.max(0.6, Math.min(1.35, 1 + (lit - 1) * 1.6));
+      }
+    }
+    return out;
+  }
+
+  /** The relief's light at texel (tx, ty), between its samples (1 where the ground is flat). */
+  private lightAt(tx: number, ty: number): number {
+    const r = this.relief;
+    if (!r) return 1;
+    const fx = tx / RELIEF_STEP, fy = ty / RELIEF_STEP;
+    const ix = Math.min(RG - 2, Math.floor(fx)), iy = Math.min(RG - 2, Math.floor(fy));
+    const u = fx - ix, v = fy - iy, k = iy * RG + ix;
+    return (r[k] * (1 - u) + r[k + 1] * u) * (1 - v) + (r[k + RG] * (1 - u) + r[k + RG + 1] * u) * v;
   }
 
   /** World meters -> level-0 texel coordinates. */
@@ -74,7 +115,7 @@ export class WorldTexture {
         const tread = ((wx * 0.6 + wy * 0.8) % 2.6 + 2.6) % 2.6;
         if (n > 0.55 && m < 0.6 && (tread < 0.22 || (tread > 1.1 && tread < 1.32))) c = shade(c, 0.8);
         if (hash2(tx, ty, seed) > 0.982) c = t.groundSpeck;
-        tex[ty * TEX + tx] = c;
+        tex[ty * TEX + tx] = shade(c, this.lightAt(tx, ty));
       }
     }
   }
@@ -88,7 +129,8 @@ export class WorldTexture {
       for (let tx = Math.max(0, x0); tx < Math.min(TEX, x1); tx++) {
         const wx = (tx + 0.5) * RES - HALF;
         const n = valueNoise(wx, wy, 5, seed) * 0.6 + valueNoise(wx, wy, 41, seed + 1) * 0.4;
-        tex[ty * TEX + tx] = hash2(tx, ty, seed) > 0.985 ? t.groundSpeck : shade(t.ground[0], 0.82 + 0.3 * n);
+        const c = hash2(tx, ty, seed) > 0.985 ? t.groundSpeck : shade(t.ground[0], 0.82 + 0.3 * n);
+        tex[ty * TEX + tx] = shade(c, this.lightAt(tx, ty));
       }
     }
     let r = (seed * 2654435761) >>> 0;
@@ -130,13 +172,16 @@ export class WorldTexture {
         let c = t.ground[band];
         const n = valueNoise(wx, wy, 6, this.seed) * 0.6 + valueNoise(wx, wy, 23, this.seed + 1) * 0.4;
         c = shade(c, 0.9 + 0.2 * n);
+        if (t.ripples) { // sand: ripples drawn across it by the current or the wind, wavering
+          c = shade(c, 1 + 0.06 * Math.sin((wx * 0.8 + wy * 0.6) * 2.3 + n * 9));
+        }
         const h = hash2(tx, ty, this.seed);
         if (h > 0.985) c = t.groundSpeck;
         if (t.grid) {
           const gx = Math.abs(((wx % 10) + 10) % 10 - 5), gy = Math.abs(((wy % 10) + 10) % 10 - 5);
           if (gx > 4.85 || gy > 4.85) c = t.grid;
         }
-        tex[ty * TEX + tx] = c;
+        tex[ty * TEX + tx] = shade(c, this.lightAt(tx, ty));
       }
     }
   }
