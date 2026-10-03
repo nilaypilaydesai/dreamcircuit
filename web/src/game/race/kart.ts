@@ -3,6 +3,7 @@
 // ramps, with a trick for a well-timed hop; and in the volcano, falling into the lava, out of
 // which a drone lifts the kart back onto the road. Tuned for fun, not for the research simulator.
 
+import type { FallKind } from "../world/hazards";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import type { ItemKind } from "./odds";
 import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "./parts";
@@ -107,6 +108,7 @@ export class Kart {
   private rocketCarry = 0; // m travelled as a rocket that has not yet reached the next road point
   shrink = 0; // s left shrunk by a shock
   fall = -1; // s since the kart went into the lava (-1: it has not; see FALL_*)
+  fallKind: FallKind = "lava"; // what it went into: the lava, a hazard, or off the edge of raised road
   fallX = 0; // where it went in (the splash)
   fallY = 0;
   fallZ = 0;
@@ -170,12 +172,14 @@ export class Kart {
     return this.invincible || this.phantom > 0 || this.falling;
   }
 
-  /** Into the lava: everything the kart was doing stops. */
-  fallIn(): void {
+  /** Into the lava (or a hazard, or off the edge of raised road: ``kind``): everything the kart was
+   * doing stops. */
+  fallIn(kind: FallKind = "lava"): void {
     this.fall = 0;
+    this.fallKind = kind;
     this.fallX = this.x;
     this.fallY = this.y;
-    this.fallZ = this.ground;
+    this.fallZ = kind === "drop" ? this.elev : this.ground;
     this.v = this.vz = 0;
     this.drifting = false;
     this.boostLevel = this.boostTime = 0;
@@ -392,7 +396,9 @@ export class Kart {
     this.v = this.vz = 0;
     this.surface = "air";
     if (this.fall < FALL_SWAP) {
-      this.elev = this.ground - SINK_DEPTH * Math.min(1, this.fall / FALL_SINK);
+      // into the lava (or water, sand, a hole) it sinks out of sight; off raised road it drops
+      this.elev = this.fallKind === "drop" ? Math.max(-SINK_DEPTH, this.fallZ - 0.5 * this.gravity * this.fall ** 2)
+        : this.ground - SINK_DEPTH * Math.min(1, this.fall / FALL_SINK);
       return true;
     }
     if (this.fall - dt < FALL_SWAP) {

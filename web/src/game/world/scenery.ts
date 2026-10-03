@@ -7,6 +7,7 @@
 import { Rand, type Sprite } from "../core/gfx";
 import { type SceneryArt, chevron, gantry, grandstand, makeScenery, pillar } from "../render/sprites";
 import type { Theme } from "../themes";
+import { type Hazard, inHazard } from "./hazards";
 import { LANDFORM_CLEAR, LANDFORM_SIZE, type Landform, onLandform, reach } from "./landforms";
 import { type Bridge, HALF_WIDTH, SPACING, type Track } from "./track";
 import { HALF } from "./texture";
@@ -180,6 +181,11 @@ export class Scenery {
   onGirder(track: Track, i: number): void {
     const [tx, ty] = track.tangent(i), side = this.rng.next() < 0.5 ? 1 : -1, off = side * (HALF_WIDTH + 5);
     this.items.push({ x: track.xs[i] - ty * off, y: track.ys[i] + tx * off, art: this.art("crane"), flip: side < 0 });
+  }
+
+  /** Nothing stands in a pond, a pit or the like. */
+  clearHazards(hazards: readonly Hazard[]): void {
+    this.items = this.items.filter((it) => !hazards.some((h) => inHazard(h, it.x, it.y, 1.5)));
   }
 
   /** Clear everything within ``r`` m of the road between dense indices [from, to) (a tunnel's rock). */

@@ -10,6 +10,7 @@
 import { H, W, hex, mix, type Screen } from "../core/gfx";
 import { FALL_END, FALL_RELEASE, FALL_SINK, FALL_SWAP, type Kart } from "../race/kart";
 import { ORBITS, type ItemKind } from "../race/items";
+import type { FallKind } from "../world/hazards";
 import type { Placed } from "../world/scenery";
 import type { Camera } from "./mode7";
 import type { Face } from "./poly";
@@ -110,14 +111,16 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   }
   for (const k of karts) {
     if (k === look.hide) continue;
+    const drop = k.fallKind === "drop"; // (falling off raised road: down past the deck, to the ground)
     if (k.fall >= 0) {
       const low = lowAt(k.x, k.y, k.ground);
-      lavaSplash(k, project, (q, z, draw) => items.push({ ...q, z: z + low, draw }), scr, now);
+      if (!drop) splash(k, project, (q, z, draw) => items.push({ ...q, z: z + low, draw }), scr, now);
       if (look.drone) rescueDrone(k, look.drone, project, (q, z, draw) => items.push({ ...q, z, draw }), scr, now, low);
-      if (k.fall >= FALL_SINK && k.fall < FALL_SWAP) continue; // under the lava
+      if (k.fall >= FALL_SINK && k.fall < FALL_SWAP && !drop) continue; // under the surface
     }
+    const falling = drop && k.fall >= 0 && k.fall < FALL_SWAP;
     const p = project(k.x, k.y, k.elev);
-    const ps = project(k.x, k.y, k.ground);
+    const ps = project(k.x, k.y, falling ? 0 : k.ground);
     if (!p || !ps) continue;
     const sprites = look.sprites(k);
     const view = Math.atan2(k.y - cam.y, k.x - cam.x); // camera -> kart, world frame
@@ -134,8 +137,10 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const prism = k.prism > 0;
     // sinking into the lava it glows hot (and the lava hides what is under its surface); hanging
     // under the drone it cools off
-    const sinking = k.fall >= 0 && k.fall < FALL_SINK, carried = k.falling && !sinking;
-    const heat = sinking ? 0.25 + 0.5 * (k.fall / FALL_SINK) : carried ? 0.4 * (1 - (k.fall - FALL_SWAP) / (FALL_RELEASE - FALL_SWAP)) : 0;
+    const sinking = k.fall >= 0 && k.fall < FALL_SINK && !drop, carried = k.falling && k.fall >= FALL_SWAP;
+    const hot = k.fallKind === "lava"; // (only the lava makes it glow)
+    const heat = !hot ? 0 : sinking ? 0.25 + 0.5 * (k.fall / FALL_SINK)
+      : carried ? 0.4 * (1 - (k.fall - FALL_SWAP) / (FALL_RELEASE - FALL_SWAP)) : 0;
     const tint = prism ? RAINBOW[Math.floor(now * 14 + k.id) % RAINBOW.length] : heat > 0 ? LAVA_GLOW : fog;
     const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : heat > 0 ? heat : fogAt(p.z);
     // on raised road (a deck, a climb, a ramp) a kart is drawn over the road it stands on
@@ -144,7 +149,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       ...p,
       z: p.z + bias,
       draw: () => {
-        if (!sinking) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
+        if (!sinking && !falling) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
         const top = p.gy - h * KART_ANCHOR + bounce;
         scr.blitScaled(s, p.sx - w / 2, top, w, h, false, k.phantom > 0 ? hex("#c9b8ff") : tint,
                        k.phantom > 0 ? 0.35 : tintAmount, sinking ? Math.round(ps.gy + 0.2 * ps.ppm) : H, k.phantom > 0);
@@ -244,6 +249,37 @@ function lavaSplash(k: Kart, project: Project, push: Push, scr: Screen, now: num
     push(q, q.z - 0.01, () => puff(scr, q.sx + Math.sin(now * 3 + j) * 0.1 * q.ppm, q.gy, r, a));
   }
 }
+
+/** Drops thrown up as a kart goes in, in the colours of what it went into (lava with smoke over
+ * it; water, sand; a hole throws up dust). */
+function splash(k: Kart, project: Project, push: Push, scr: Screen, now: number): void {
+  if (k.fallKind === "lava") {
+    lavaSplash(k, project, push, scr, now);
+    return;
+  }
+  const colors = SPLASHES[k.fallKind] ?? DUST, u = k.fall;
+  if (u > 1.2) return;
+  for (let j = 0; j < 12; j++) {
+    const t = u - (j % 4) * 0.04;
+    if (t <= 0) continue;
+    const a = j * 2.39996 + k.id, out = 1.4 + (j % 4) * 0.9, vz = 3.5 + (j % 3) * 1.6;
+    const z = k.fallZ + vz * t - 9 * t * t;
+    if (z < k.fallZ) continue;
+    const q = project(k.fallX + Math.cos(a) * out * t, k.fallY + Math.sin(a) * out * t, z);
+    if (!q) continue;
+    const c = colors[Math.min(colors.length - 1, Math.floor(t * 4))];
+    const r = Math.max(1, Math.round(q.ppm * (j % 3 ? 0.1 : 0.15)));
+    push(q, q.z, () => scr.fillRect(Math.round(q.sx - r / 2), Math.round(q.gy - r / 2), r, r, c));
+  }
+}
+
+const WATER = ["#ffffff", "#bfe6ff", "#63a7e6", "#2f6fb0"].map(hex);
+const DUST = ["#e8e2d4", "#b9ad94", "#8a7f6a", "#5a5244"].map(hex);
+const SPLASHES: Partial<Record<FallKind, number[]>> = {
+  pond: WATER, trench: WATER, quicksand: ["#f0cf94", "#d9a35b", "#b07b44", "#7a5430"].map(hex),
+  void: ["#ff2bd6", "#2de2e6", "#7a3fd0", "#3d1f6b"].map(hex), crevasse: ["#ffffff", "#e6f4ff", "#9fd3f0", "#5aa7d8"].map(hex),
+  chasm: ["#e6e7ec", "#b3b4b8", "#8d8e93", "#5a5c66"].map(hex),
+};
 
 /** The rescue drone: comes down with the kart hanging under it on a cable, lets it go just over
  * the road, and flies off. */

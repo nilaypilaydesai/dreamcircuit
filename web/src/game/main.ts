@@ -15,6 +15,7 @@ import { CLASSES, type Controls, type Difficulty, FALL_SWAP, type Kart } from ".
 import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild, rivalBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
 import { TRACK_TYPES, type TrackTypeId, surpriseType, trackType } from "./race/tracktypes";
+import { FALL_TINT } from "./world/hazards";
 import { type GameMap, SHOWCASE } from "./world/maps";
 import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
@@ -596,6 +597,11 @@ class Game {
       else if (e.kind === "burnout") { this.sound.burnout(); this.hud.popup("TOO EARLY!", now, hex("#ff6b6b")); }
       else if (e.kind === "bridge") this.hud.popup("BRIDGE AHEAD!", now, DREAM);
       else if (e.kind === "lava") { this.sound.lava(); this.shake = Math.max(this.shake, 0.3); }
+      else if (e.kind === "fell") {
+        if (e.into === "pond" || e.into === "trench" || e.into === "quicksand") this.sound.splash();
+        else this.sound.fall();
+        this.shake = Math.max(this.shake, 0.25);
+      }
       else if (e.kind === "aimLocked") this.sound.lock();
       else if (e.kind === "coin") this.sound.coin();
       else if (e.kind === "static") { this.sound.staticHit(); this.hud.popup("STATIC!", now, hex("#c9c3ec")); }
@@ -868,7 +874,7 @@ class Game {
       art: (item: ItemKind) => this.held[item],
       grabber: this.grabArt,
       dome: !!(theme.underwater || theme.helmets),
-      drone: theme.volcano ? this.droneArt : undefined,
+      drone: this.droneArt,
       underDeck: (x: number, y: number) => t.bridges.some((b) => (x - t.xs[b.lower]) ** 2 + (y - t.ys[b.lower]) ** 2 < 24 * 24),
       hide: mirror ? race.player : undefined,
     }, theme.fog, extras, faces);
@@ -879,11 +885,12 @@ class Game {
     if (me.staticT > 0 && race === this.race) {
       staticOverlay(this.scr, now, Math.min(1, (STATIC_TIME - me.staticT) / 0.3, me.staticT / 1));
     }
-    // into the lava: the view goes dark red while the drone lifts the kart out
+    // into the lava (dark red), water (dark blue), a hole (black)...: the view goes dark while the
+    // drone lifts the kart out
     const f = me.fall;
     if (f >= 0 && f < FALL_SWAP + 0.3 && race === this.race) {
       const a = Math.max(0, 1 - Math.abs(f - FALL_SWAP) / 0.26);
-      if (a > 0) this.scr.dimRect(0, 0, W, H, hex("#1c0603"), 0.92 * a);
+      if (a > 0) this.scr.dimRect(0, 0, W, H, FALL_TINT[me.fallKind], 0.92 * a);
     }
     // inside a tunnel the light drops
     if (race.features.tunnels.length) {

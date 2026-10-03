@@ -162,6 +162,10 @@ export class Sound {
   blocked(): void { this.tone(1568, 0.08, "square", 0.08); this.noise(0.1, 0.12, 2500); }
   /** Into the lava: a hiss and a deep gulp. */
   lava(): void { this.noise(0.9, 0.2, 2600); this.tone(260, 0.5, "triangle", 0.16, 0.05, 60); }
+  /** Into water or sand: a plop and a spray. */
+  splash(): void { this.tone(420, 0.25, "sine", 0.14, 0, 120); this.noise(0.6, 0.16, 1800); }
+  /** Off an edge, into a hole: a whistle falling away. */
+  fall(): void { this.tone(880, 0.7, "triangle", 0.1, 0, 160); }
   /** The rescue drone: rotors whining up, and a two-note beep. */
   rescue(): void {
     this.tone(180, 0.9, "sawtooth", 0.035, 0, 320);

@@ -1862,6 +1862,92 @@ describe("drawing the worlds", () => {
   });
 });
 
+describe("the rescue drone, in every world", () => {
+  it("sets out each world's hazard beside the road, past the shoulder, with nothing standing in it", async () => {
+    const { HAZARD_CLEAR, inHazard } = await import("../src/game/world/hazards");
+    for (const theme of THEMES.filter((t) => t.hazard)) {
+      const race = new Race({ rivals: 0, difficulty: "pro", theme, seed: 5, replay: twisty() }, null, () => {});
+      const t = race.track;
+      expect(race.hazards.length, theme.id).toBeGreaterThan(2);
+      for (const h of race.hazards) {
+        expect(h.kind).toBe(theme.hazard);
+        for (let i = 0; i < t.count; i += 2) expect(inHazard(h, t.xs[i], t.ys[i], HAZARD_CLEAR - 0.5)).toBe(false);
+        expect(race.scenery.items.some((it) => inHazard(h, it.x, it.y))).toBe(false);
+      }
+    }
+    expect(THEMES.find((t) => t.volcano)!.hazard).toBeUndefined(); // (the volcano has its lava)
+  });
+
+  it("fishes a kart out of a pond and sets it back on the road it left", async () => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: THEMES[0], seed: 5, replay: twisty() }, null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    const p = race.player, h = race.hazards[0];
+    for (let i = 0; i < 60; i++) race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
+    const before = p.idx;
+    [p.x, p.y] = [h.x, h.y]; // driven off into the pond
+    const seen: string[] = [];
+    for (let i = 0; i < 60 * 3 && p.fall < 0; i++) {
+      race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
+      seen.push(...race.events.map((e) => (e.kind === "fell" ? `fell:${e.into}` : e.kind)));
+      race.events = [];
+    }
+    expect(seen).toContain("fell:pond");
+    expect(p.fallKind).toBe("pond");
+    for (let i = 0; i < 60 * 3 && p.fall >= 0; i++) race.update(1 / 60, { steer: 0, throttle: 0, brake: 0, drift: false });
+    expect(Math.abs(p.offset)).toBeLessThan(1);
+    expect(Math.abs(race.track.s[p.idx] - race.track.s[before])).toBeLessThan(40); // where it left the road
+  });
+
+  it("drops a kart that flies off the open edge of a bridge, and lifts it back onto the deck", async () => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: THEMES[1], seed: 3, replay: figure8() }, null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    const t = race.track, b = t.bridges[0], p = race.player;
+    p.placeOn(t, b.center, 0);
+    for (let i = 0; i < 10; i++) race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
+    const deck = t.elev[b.center];
+    expect(p.elev).toBeGreaterThan(5);
+    // flung off the side, in the air a little over the deck
+    const [tx, ty] = t.tangent(p.idx);
+    p.x += -ty * (HALF_WIDTH + 2);
+    p.y += tx * (HALF_WIDTH + 2);
+    p.offset = t.offset(p.x, p.y, p.idx);
+    p.air = true;
+    p.elev = deck + 1;
+    p.vz = 0;
+    let dropped = false;
+    for (let i = 0; i < 60 * 3; i++) {
+      race.update(1 / 60, { steer: 0, throttle: 0, brake: 0, drift: false });
+      if (race.events.some((e) => e.kind === "fell" && e.into === "drop")) dropped = true;
+      race.events = [];
+      if (dropped && p.fall < 0) break;
+    }
+    expect(dropped).toBe(true);
+    expect(p.fallKind).toBe("drop");
+    expect(Math.abs(p.offset)).toBeLessThan(1); // back on the deck
+    expect(p.elev).toBeGreaterThan(deck - 1);
+  });
+
+  it("leaves a kart on an embankment's slope alone (it is no drop)", async () => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: THEMES[0], seed: 3, replay: calm() }, null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    const t = race.track, h = t.hills[0], p = race.player;
+    const i = t.s.findIndex((s) => s >= h.s0 + h.len / 2);
+    p.placeOn(t, i, 0);
+    for (let k = 0; k < 5; k++) race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
+    const [tx, ty] = t.tangent(p.idx);
+    p.x += -ty * (HALF_WIDTH + 2);
+    p.y += tx * (HALF_WIDTH + 2);
+    p.offset = t.offset(p.x, p.y, p.idx);
+    p.air = true;
+    p.elev += 1;
+    for (let k = 0; k < 60; k++) race.update(1 / 60, { steer: 0, throttle: 0, brake: 0, drift: false });
+    expect(p.fall).toBe(-1);
+  });
+});
+
 describe("the volcano", () => {
   const volcano = THEMES.find((t) => t.volcano)!;
   const none = { steer: 0, throttle: 0, brake: 0, drift: false };

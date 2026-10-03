@@ -9,6 +9,7 @@
 import { hash2, mix, shade, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
 import { CRACK, CRUST, MOLTEN, PHASES, SHADOW, isLava, isMark, lavaColor, lavaMark } from "./lava";
+import { type Hazard, hazardColor } from "./hazards";
 import { HALF_WIDTH, type Track } from "./track";
 
 export const TEX = 2560;
@@ -27,6 +28,7 @@ export class WorldTexture {
   readonly lava: boolean; // the terrain is lava (the volcano)
   private readonly shaded = new Set<number>(); // raised road whose shadow is already painted
   private readonly relief: Float32Array | null; // the light on the ground's rises, every RELIEF_STEP texels
+  private hazards: Hazard[] = []; // painted into the ground (world/hazards.ts), and again after any repaint
   constructor(readonly theme: Theme, readonly seed: number) {
     this.lava = !!theme.volcano;
     this.relief = WorldTexture.makeRelief(theme, seed);
@@ -69,6 +71,36 @@ export class WorldTexture {
     const ix = Math.min(RG - 2, Math.floor(fx)), iy = Math.min(RG - 2, Math.floor(fy));
     const u = fx - ix, v = fy - iy, k = iy * RG + ix;
     return (r[k] * (1 - u) + r[k + 1] * u) * (1 - v) + (r[k + RG] * (1 - u) + r[k + RG + 1] * u) * v;
+  }
+
+  /** Hazards set out beside a locked lap: painted into the ground. */
+  addHazards(hazards: Hazard[]): void {
+    this.hazards.push(...hazards);
+    for (const h of hazards) {
+      const r = Math.max(h.rx, h.ry) + 1;
+      const [ax, ay] = WorldTexture.texel(h.x - r, h.y + r), [bx, by] = WorldTexture.texel(h.x + r, h.y - r);
+      const x0 = Math.max(0, Math.floor(ax)), y0 = Math.max(0, Math.floor(ay)), x1 = Math.min(TEX, Math.ceil(bx)), y1 = Math.min(TEX, Math.ceil(by));
+      this.paintHazards(x0, y0, x1, y1);
+      this.buildMips(x0, y0, x1, y1);
+    }
+  }
+
+  /** The hazards over texels [x0, x1) x [y0, y1). */
+  private paintHazards(x0: number, y0: number, x1: number, y1: number): void {
+    if (!this.hazards.length) return;
+    const tex = this.levels[0];
+    for (let ty = Math.max(0, y0); ty < Math.min(TEX, y1); ty++) {
+      const wy = HALF - (ty + 0.5) * RES;
+      for (let tx = Math.max(0, x0); tx < Math.min(TEX, x1); tx++) {
+        const wx = (tx + 0.5) * RES - HALF;
+        for (const h of this.hazards) {
+          const r = Math.max(h.rx, h.ry) + 0.5;
+          if (Math.abs(wx - h.x) > r || Math.abs(wy - h.y) > r) continue;
+          const i = ty * TEX + tx, c = hazardColor(h, wx, wy, tex[i]);
+          if (c !== tex[i]) { tex[i] = c; break; }
+        }
+      }
+    }
   }
 
   /** World meters -> level-0 texel coordinates. */
@@ -295,6 +327,7 @@ export class WorldTexture {
     const [tx0, ty1] = WorldTexture.texel(x0, y0), [tx1, ty0] = WorldTexture.texel(x1, y1);
     const bx0 = Math.floor(tx0), by0 = Math.floor(ty0), bx1 = Math.ceil(tx1), by1 = Math.ceil(ty1);
     this.paintTerrain(bx0, by0, bx1, by1);
+    this.paintHazards(bx0, by0, bx1, by1);
     for (let i = from; i < to; i++) this.shaded.delete(i);
     // every committed stretch that passes through the box (the road underneath, the bridge itself)
     const inside = (i: number) => track.xs[i] > x0 - pad && track.xs[i] < x1 + pad && track.ys[i] > y0 - pad && track.ys[i] < y1 + pad;

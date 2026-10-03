@@ -5,6 +5,7 @@
 
 import { Rand, type Sprite } from "../core/gfx";
 import type { Theme } from "../themes";
+import { type FallKind, type Hazard, inHazard, placeHazards } from "../world/hazards";
 import { Scenery } from "../world/scenery";
 import { WorldTexture } from "../world/texture";
 import { FIRST_SEG, HALF_WIDTH, type Layout, N, SPACING, Track } from "../world/track";
@@ -57,6 +58,7 @@ export type RaceEvent =
   | { kind: "burnout" } // throttle held too early: wheels spin at GO
   | { kind: "bridge" } // the dream crossed itself and built a bridge
   | { kind: "lava" } // the player drove into the lava
+  | { kind: "fell"; into: FallKind } // or into a hazard, or off the edge of raised road
   | { kind: "rescued" }; // and was lifted out at the road (the camera cuts there)
 
 export interface RaceSetup {
@@ -73,6 +75,7 @@ export interface RaceSetup {
 
 /** Whether the player's controls reach the race: while racing, and during the countdown, where
  * the throttle decides a rocket start (pressed just before GO) or a burnout (held too long). */
+const OPEN_EDGES = new Set(["skyway", "girder", "scaffold", "foundation", "basalt"]); // raised road a kart can fall off
 const HILL_LOOK = 100; // m of road past a climb's foot that is known before the climb is decided
 const BRIDGE_CLEAR = 95; // m of road kept free of jumps and pads around a bridge's crossing
 const UNDER_CLEAR = 80; // m around the road that passes under a bridge
@@ -107,6 +110,8 @@ export class Race {
   private hillScan = 1; // the first dense index no climb has been decided for
   private cranes: number[] = []; // m along the lap of girders' middles not yet dreamed (a crane goes up there)
   private readonly hillRng: Rand;
+  /** What a kart can drive into off the road (world/hazards.ts), set out when the lap locks. */
+  hazards: Hazard[] = [];
   readonly type: TrackType;
   private readonly hillRule: HillRule | null; // climbs: the track type's, or the world's
   private aimPhase = 0; // where the player's aiming arrow is in its sweep
@@ -367,6 +372,14 @@ export class Race {
     this.raiseCranes(this.track.count);
     this.scenery.onLock(this.track);
     this.confirm();
+    // the world's hazard, beside the road, on the outside of the bends
+    const kind = this.setup.theme.hazard;
+    if (kind) {
+      const rng = new Rand(this.setup.seed + 31), t = this.track;
+      this.hazards = placeHazards(t, kind, () => rng.next(), (x, y, cap) => this.scenery.roadDistance(t, x, y, cap));
+      this.tex.addHazards(this.hazards);
+      this.scenery.clearHazards(this.hazards);
+    }
     this.lockedAt = this.clock;
     this.events.push({ kind: "locked" });
   }
@@ -424,7 +437,7 @@ export class Race {
     if (landed !== -1) this.events.push({ kind: "land", trick: landed });
     if (wasRocket && this.player.rocket <= 0) this.events.push({ kind: "rocketOver" });
     if (wasSunk && this.player.fall >= FALL_SWAP) this.events.push({ kind: "rescued" });
-    this.lava();
+    this.hazardsUnder();
     if (!this.player.falling && this.features.onPad(this.track, this.player)) {
       if (this.player.boostTime < 0.85) this.events.push({ kind: "pad" });
       this.player.boostTime = Math.max(this.player.boostTime, 1.0);
@@ -503,17 +516,39 @@ export class Race {
     }
   }
 
-  /** The volcano: a kart on the ground that has left the road for the lava goes in (a drone
-   * fishes it out; see Kart.fallIn). Off the road, the ground under the kart decides: the rock
-   * bank is safe, the lava (and the lava beside raised road) is not. */
-  private lava(): void {
-    if (!this.tex.lava) return;
+  /** A kart on the ground that has left the road goes into what is under it: the volcano's lava
+   * (the rock bank is safe; the lava beside raised road is not), or the world's hazard. A drone
+   * fishes it out (Kart.fallIn). */
+  private hazardsUnder(): void {
     for (const k of this.karts) {
       if (k.falling || k.air || k.rocket > 0 || Math.abs(k.offset) <= HALF_WIDTH || k.elev - k.ground > 0.3) continue;
-      if (!this.tex.lavaAt(k.x, k.y)) continue;
-      k.fallIn();
-      if (k.isPlayer) this.events.push({ kind: "lava" });
+      if (this.tex.lavaAt(k.x, k.y)) this.fall(k, "lava");
+      else {
+        const h = this.hazards.find((z) => inHazard(z, k.x, k.y));
+        if (h) this.fall(k, h.kind);
+      }
     }
+  }
+
+  private fall(k: Kart, into: FallKind): void {
+    k.fallIn(into);
+    if (k.isPlayer) this.events.push(into === "lava" ? { kind: "lava" } : { kind: "fell", into });
+  }
+
+  /** Whether the road at kart k's spot is raised road with an open edge on k's side: a bridge, a
+   * skyway, a girder, scaffolding, a foundation, a mesa's wall, a basalt causeway, or the drop side
+   * of a cliff ledge (an embankment's slope it would just land on). And how far past the road's
+   * edge the deck goes there. */
+  private openEdge(k: Kart): number | null {
+    const t = this.track;
+    if (t.bridgeAt(k.idx) > 1) return 0;
+    const s = t.s[k.idx];
+    const h = t.hills.find((hl) => s >= hl.s0 && s <= hl.s0 + hl.len);
+    if (!h) return null;
+    const style = h.style ?? this.setup.theme.hillStyle ?? "earth";
+    if (style === "cliff") return Math.sign(k.offset) === -(h.side ?? 1) ? 0 : null;
+    if (style === "mesa") return 2.2; // (a strip of sand along the top before the wall)
+    return OPEN_EDGES.has(style) ? 0 : null;
   }
 
   /** The road surface under each kart: bridge decks and jump ramps, and how the road climbs and
@@ -522,6 +557,16 @@ export class Race {
     const t = this.track, r = this.features.rampUnder(t, k, t.along(k.x, k.y, k.idx));
     k.rampU = r.u;
     k.ground = t.heightAt(k.x, k.y, k.idx) + r.height;
+    // flying over the open edge of raised road there is nothing under the kart but the ground far
+    // below; once it has dropped well under the deck, the rescue drone comes for it
+    if (k.air && !k.falling && k.rocket <= 0 && k.ground > 1.2) {
+      const lip = this.openEdge(k);
+      if (lip !== null && Math.abs(k.offset) > HALF_WIDTH + 0.5 + lip) {
+        const deck = k.ground;
+        k.ground = 0;
+        if (k.elev < deck - 1.5) this.fall(k, "drop");
+      }
+    }
     k.walled = this.features.inTunnel(t, k);
     const a = t.wrap(k.idx - 4), b = t.wrap(k.idx + 4), h = 4 * SPACING;
     const za = t.elev[a] ?? 0, zi = t.elev[k.idx] ?? 0, zb = t.elev[b] ?? 0;

@@ -4,6 +4,7 @@ import { hex } from "./core/gfx";
 import {
   type HillRule, MESA_HILLS, MOON_HILLS, MOUNTAIN_HILLS, NEON_HILLS, REEF_HILLS, SITE_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
 } from "./race/tracktypes";
+import type { HazardKind } from "./world/hazards";
 import type { LandformKind } from "./world/landforms";
 import type { HillStyle } from "./world/track";
 
@@ -56,6 +57,7 @@ export interface Theme {
   relief?: number; // m: how much the ground rises and falls (shaded into it, lit from the north-west)
   ripples?: boolean; // sand: ripples the wind has drawn across it
   landforms?: LandformKind[]; // the land around the circuit: knolls, buttes, dunes, peaks (3D, off the road)
+  hazard?: HazardKind; // what a kart can drive into off the road (the rescue drone fishes it out)
 }
 
 export const THEMES: Theme[] = [
@@ -69,7 +71,7 @@ export const THEMES: Theme[] = [
     grid: 0,
     near: ["bush", "oak", "pine", "flowers", "rock", "tire", "cone"],
     far: ["oak", "pine", "pine", "bush", "rock", "flowers"],
-    hills: VALLEY_HILLS, hillStyle: "meadow", relief: 7, landforms: ["knoll"],
+    hills: VALLEY_HILLS, hillStyle: "meadow", relief: 7, landforms: ["knoll"], hazard: "pond",
   },
   {
     id: "neon", name: "NEON NIGHT", blurb: "A NEON SKYWAY OVER A SYNTHWAVE GRID OF CRYSTALS",
@@ -81,7 +83,7 @@ export const THEMES: Theme[] = [
     grid: hex("#3d1f6b"),
     near: ["neonpalm", "crystal", "lamp", "cone", "crystal"],
     far: ["crystal", "neonpalm", "crystal", "lamp"],
-    hills: NEON_HILLS, hillStyle: "skyway", relief: 3, landforms: ["gridpeak"],
+    hills: NEON_HILLS, hillStyle: "skyway", relief: 3, landforms: ["gridpeak"], hazard: "void",
   },
   {
     id: "mesa", name: "SUNSET MESA", blurb: "UP ONTO THE MESAS AND OVER THE DUNES AT DUSK",
@@ -93,7 +95,7 @@ export const THEMES: Theme[] = [
     grid: 0,
     near: ["cactus", "rock", "palm", "tire", "cone", "rock"],
     far: ["mesa", "cactus", "rock", "cactus", "palm"],
-    hills: MESA_HILLS, hillStyle: "mesa", relief: 4, ripples: true, landforms: ["butte", "dune", "dune"],
+    hills: MESA_HILLS, hillStyle: "mesa", relief: 4, ripples: true, landforms: ["butte", "dune", "dune"], hazard: "quicksand",
   },
   {
     id: "reef", name: "CORAL REEF", blurb: "OVER CORAL RIDGES UNDER THE SEA, IN BUBBLE HELMETS",
@@ -105,7 +107,7 @@ export const THEMES: Theme[] = [
     grid: 0,
     near: ["kelp", "coral", "anemone", "rock", "shell", "kelp", "coral"],
     far: ["kelp", "coral", "kelp", "rock", "wreck", "coral", "anemone"],
-    underwater: true, hills: REEF_HILLS, hillStyle: "coral", relief: 3, ripples: true, landforms: ["reefrock"],
+    underwater: true, hills: REEF_HILLS, hillStyle: "coral", relief: 3, ripples: true, landforms: ["reefrock"], hazard: "trench",
   },
   {
     id: "mountain", name: "MOUNTAIN PASS", blurb: "UP THE MOUNTAINSIDE, ALONG CLIFF LEDGES, THROUGH THE ROCK",
@@ -118,7 +120,7 @@ export const THEMES: Theme[] = [
     near: ["snowpine", "rock", "snowpine", "snowbank", "cliff", "snowpine", "cone"],
     far: ["snowpine", "snowpine", "peak", "rock", "cliff", "snowpine", "snowbank"],
     mountain: true, snow: hex("#f6f9ff"), farAmp: 46, hills: MOUNTAIN_HILLS, hillStyle: "rock", tunnels: "rock",
-    relief: 8, landforms: ["crag"],
+    relief: 8, landforms: ["crag"], hazard: "crevasse",
   },
   {
     // inside a volcano: the road is a causeway of rock across a lake of lava ("ground" is the
@@ -148,7 +150,7 @@ export const THEMES: Theme[] = [
     near: ["barrier", "drum", "cone", "pipes", "barrier", "drum", "girders"],
     far: ["crane", "skeleton", "mixer", "digger", "pipes", "girders", "skeleton", "crane"],
     hills: SITE_HILLS, hillStyle: "scaffold", tunnels: "frame", terrain: "dirt", skyline: "city",
-    wall: hex("#ff8a1f"), relief: 2.5, landforms: ["spoil"],
+    wall: hex("#ff8a1f"), relief: 2.5, landforms: ["spoil"], hazard: "pit",
   },
   {
     // the moon: low gravity (a fast kart floats over every crater's rim), the Earth up in a
@@ -164,6 +166,6 @@ export const THEMES: Theme[] = [
     near: ["boulder", "boulder", "dish", "habitat", "boulder", "lander"],
     far: ["boulder", "lander", "dish", "habitat", "rover", "boulder", "boulder"],
     gravity: 0.3, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
-    wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"],
+    wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"], hazard: "chasm",
   },
 ];
