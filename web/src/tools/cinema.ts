@@ -521,22 +521,38 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
 
   // ---------------------------------------------------------------- Moon Base
   await start(o.loops[8], THEME.moon, 7);
-  // 19. Floating off a crater's rim in the low gravity, the Earth hanging in the black sky: the
-  // camera follows from behind and below, turned toward the Earth.
+  // 19. Floating off a crater's rim in the low gravity, the Earth hanging in the black sky: at a
+  // rim where the road runs across the line to the Earth, the camera rides alongside the kart,
+  // looking past it at the Earth, as it floats off the top and drifts back down.
   {
+    const at = dc.game.sky?.earthAt ?? -1;
+    const toEarth = at >= 0 ? -((at - FRAME_W / 2) * Math.PI * 2) / PAN : 0;
+    const ex = Math.cos(toEarth), ey = Math.sin(toEarth);
+    const t = race().track;
+    const indexAt = (s: number) => {
+      let lo = 0, hi = t.count - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (t.s[mid] < s) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    };
+    const across = (h: Hill, need: number) => {
+      const [tx, ty] = t.tangent(indexAt(h.s0 + h.len / 2));
+      return Math.abs(ex * ty - ey * tx) > need;
+    };
+    const need = t.hills.some((h) => h.style === "crater" && across(h, 0.8)) ? 0.8 : 0;
     const crest = () => {
       const k = race().player, h = climb(k);
-      if (!h || h.style !== "crater") return Infinity;
-      const s = race().track.s[k.idx], top = h.s0 + h.len / 2;
+      if (!h || h.style !== "crater" || !across(h, need)) return Infinity;
+      const s = t.s[k.idx], top = h.s0 + h.len / 2;
       return s < top ? (top - s) / Math.max(k.v, 1) : Infinity;
     };
-    await until(() => race().phase === "racing" && race().player.v > 22 && crest() < 0.5, 60 * 150);
-    const at = dc.game.sky?.earthAt ?? -1;
-    const toEarth = at >= 0 ? -((at - FRAME_W / 2) * Math.PI * 2) / PAN : race().player.heading;
-    await film("l_float", 3.6, (f, n) => {
-      const k = race().player, d = 13 - 3 * (f / n), a = toEarth - 0.12;
-      dc.shot({ x: k.x - Math.cos(a) * d, y: k.y - Math.sin(a) * d, heading: a, height: k.ground + 1.4,
-                focal: 250, fx: 0, clear: 3 });
+    await until(() => race().phase === "racing" && race().player.v > 22 && crest() < 0.7, 60 * 200);
+    await film("l_float", 3.0, () => {
+      const k = race().player;
+      dc.shot({ x: k.x - ex * 12, y: k.y - ey * 12, heading: toEarth, height: k.ground + 1.7, focal: 250, fx: 0, clear: 3 });
     });
   }
   // 20. A jackpot: eight items circling the kart, filmed alongside on the regolith.

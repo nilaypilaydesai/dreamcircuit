@@ -142,14 +142,14 @@ export function renderTiles(d: Designer | null, s: Summary | null, p: Probes | n
     {
       icon: () => spriteCanvas(kartSprites(DEFAULT_BUILD, LIVERIES[0])[3], 3),
       title: "The race",
-      body: "Mode-7 kart racing in six worlds (one of them inside a volcano, over a lake of lava), one race at a time or a Grand Prix for points: drift through a corner to charge a mini-turbo, hit the gas just before GO for a rocket start, and race up to seven rivals in karts built in the garage.",
+      body: "Mode-7 kart racing in eight worlds, each with its own terrain to race over (meadows, a neon skyway, mesas, coral, cliff ledges, lava, a building site, the moon's low gravity), one race at a time or a Grand Prix for points: drift through a corner to charge a mini-turbo, hit the gas just before GO for a rocket start, and race up to seven rivals in karts built in the garage.",
       fact: "0 to 7 rivals, in ROOKIE, PRO and LEGEND classes",
       href: "index.html",
     },
     {
       icon: () => spriteCanvas(itemBoxFrames()[1].sprite, 3),
       title: "Ramps, pads and items",
-      body: "Jump ramps pay a trick boost if you hop at the lip; boost pads sit at corner exits; item boxes hand out nine items, from turbos and oil to boomerangs, bombs and a rocket for whoever is last.",
+      body: "Jump ramps pay a trick boost if you hop at the lip; boost pads sit at corner exits; item boxes hand out 22 items, from turbos and oil to bombs, comets and a rocket for whoever is last, with the odds of the classics by how far behind the leader you are.",
       fact: "placed by the game on road the designer has just dreamed",
       href: "index.html",
     },

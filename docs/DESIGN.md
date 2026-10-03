@@ -223,13 +223,17 @@ of its start line), painted when road is committed (grass noise, asphalt, kerbs 
 tighter than 40 m, edge lines, the start checkers and grid slots, and the shadow a bridge casts on
 the road below it) and mip-mapped, so each row samples the level that matches its footprint.
 Distance fog blends into each world's horizon color, and the frontier mist is a per-pixel term
-that pulses near the end of the dreamed road. Oil slicks are painted into the ground the same way,
+that pulses near the end of the dreamed road. The ground is flat, but it is not painted flat: a
+height field (two scales of noise, up to 8 m from low to high) is lit from the north-west on a
+grid every 1.2 m and multiplied into the terrain's colours, so meadows, desert and sea floor read
+as rolling land, at about 50 ms per race (the sand's ripples cost more than the relief does). Oil slicks are painted into the ground the same way,
 per pixel as each row is drawn: a dark puddle with a wobbly edge, a slowly turning rainbow film
 and the sky shining on its far side, so it lies flat in perspective under the karts that drive
 over it (on raised road, where the ground under it is hidden, a sprite stands in for it).
 
-**Polygons in a Mode-7 world.** A flat ground texture cannot show a bridge, so bridges, jump
-ramps and boost pads are drawn as flat-shaded convex polygons by a small software rasterizer
+**Polygons in a Mode-7 world.** A flat ground texture cannot show a bridge, so bridges, climbs,
+tunnels, jump ramps, boost pads and the landforms around the circuit are drawn as flat-shaded
+convex polygons by a small software rasterizer
 (`render/poly.ts`): transform to camera space, clip against the near plane, cull faces that look
 away, fog by distance, fill scanline by scanline. Polygons and sprites share one painter's sort,
 with a small depth bias per kind so a kart on a deck draws over the deck and a kart underneath
@@ -295,7 +299,11 @@ start was impossible; filming one found it, and a test now drives the start proc
 
 **Soundtrack.** Each world, and the title screen, has its own chiptune, sequenced in code
 (`core/music.ts`): four channels (pulse lead, pulse arpeggio, triangle bass, noise drums) over a
-chord progression, synthesized with WebAudio. The tempo steps up on the final lap. The music
+chord progression, synthesized with WebAudio. The building site's is a hammering riff on the flat
+seventh with a hat on every sixteenth; the moon's is slow and weightless, long notes on the raised
+fourth of the lydian mode over a glittering arpeggio and hardly any drums. A test checks that
+every world has a song of its own and that every bar of every song is whole. The tempo steps up
+on the final lap. The music
 leads the mix: the engine note (a sawtooth and a square an octave apart, pitched by speed) sits
 under it as a low-passed hum at under a fifth of its first loudness, or not at all (ENGINE on the
 main menu); its buzzy upper harmonics were what made it grate.
@@ -331,18 +339,69 @@ per ground pixel; shafts of light slant down over the view, bubbles rise past th
 schools of fish circle points around the lap, each fish turned to face the way it swims across the
 screen. Every driver wears a clear bubble helmet: when a kart is baked, the centre of its
 driver's helmet is projected into each of the 16 views, and a translucent dome with a bright rim
-and a glint is drawn there over the sprite. In the mountains (Mountain Pass) the road climbs.
-Hills are a second kind of raised road next to bridges: as road is committed, climbs 110-170 m
-long and 3.5-6.2 m high (a sin^2 rise and fall, never steeper than about 15%) are set along the
-middle of the lap, clear of the grid, the start and tunnels (a row of item boxes may ride on
-one), and lift the road before it is painted; a Roller Coaster track sets them in any world. The renderer builds them like bridge decks, on earth embankments that fall away
-to the ground, with low stone walls the karts cannot leave by. If the dream later crosses itself,
-the climbs near the new bridge and the road under it are flattened (the bridge needs the
-headroom) and the ground is repainted. Tunnels are bored on long, gently curving straights: walls
-the karts are kept between, a ceiling and lamps inside, a rock mound over the top and a rock face
-around each mouth outside; the view darkens while the camera is in one. The designer is asked for
-a more winding road there (the style signal leans 0.12 wilder), and the far hills on the horizon
-are tall and snow-capped.
+and a glint is drawn there over the sprite. In the mountains (Mountain Pass) the road bores through tunnels on long, gently curving
+straights: walls the karts are kept between, a ceiling and lamps inside, a rock mound over the top
+and a rock face around each mouth outside; the view darkens while the camera is in one. The
+designer is asked for a more winding road there (the style signal leans 0.12 wilder), and the far
+hills on the horizon are tall and snow-capped.
+
+**Climbs in every world.** Hills are a second kind of raised road next to bridges, and every world
+has them, built its own way (`render/structures.ts`): over rolling meadows behind wooden fences
+(Dream Valley), up onto a neon skyway on pylons with neon tubes for rails and over low rollers
+ruled with the grid's glowing lines (Neon Night), onto mesa tops walled in level bands of sandstone
+(level with the ground, not with the road, as rock is laid down) and over dunes (Sunset Mesa),
+over ridges of rock with fans and tubes of coral standing on them (Coral Reef), over rocky
+shoulders of the mountain in lit facets with snow along the top, and along ledges cut into cliffs,
+the rock face rising over the road on one side and a sheer drop behind a guard rail on the other
+(Mountain Pass), along causeways of basalt columns raised over the lava itself (Volcano Core), up
+onto concrete foundations, along scaffolding of pipes and planks and high along a tower crane's
+girder, a steel deck on a yellow truss with a column to the ground every so often and the crane
+standing beside it (Construction Zone), and over crater rims (Moon Base). A climb is a smooth
+sin^2 hump or a plateau (smoothstep ramps either side of a level top, long enough that a kart at
+full speed stays on the road over the top under normal gravity, and never steeper than about 22%).
+A world's kinds of climb take turns, so a lap has one of each, each waiting a while for room before
+the next has its go: drawn at random, a long girder lost its place to the short kinds on lap after
+lap, and the building site went without one. Climbs are decided once the road 100 m past their
+foot has been dreamed, after the jumps, tunnels and pads on that road are placed: a climb never
+covers a jump or where its karts land, and a straight that may yet earn a jump is left for it.
+Set the other way round, the climbs took the straights first and the worlds lost up to four jumps
+in five; now every world keeps all its jumps and climbs two or three times a lap. The road a climb
+lifts was painted flat, so it is painted again, the boxes and coins on it ride up with it, and the
+scenery beside it is cleared. A Roller Coaster track sets climbs in any world, in that world's
+style. If the dream later crosses itself, the climbs near the new bridge and the road under it are
+flattened (the bridge needs the headroom) and the ground is repainted. Karts stay on a climb as on
+a bridge: guard rails keep a kart on raised road, and the ground under a kart is the road's height
+where it is.
+
+**The land around the circuit.** When the lap locks, up to 18 landforms are set out
+(`world/landforms.ts`): knolls in the meadows, buttes and dunes in the desert, glowing pyramid peaks
+on the neon grid with lines of light up their edges and around them, reef rocks crowned with
+coral, crags with snow on top, cinder cones with lava in their craters, heaps of spoil on the
+building site and old crater rims on the moon. Each is a solid turned about its middle (rings of
+points from its foot up, a little ragged, joined into faces, `render/landforms.ts`), lit by the same
+north-west sun as the ground's relief, culled when it is behind the camera or past the far plane.
+Their feet stay at least 26.5 m from the road's centerline everywhere: past the fence that keeps
+karts within 17 m of the road's edge, so nothing ever drives into one, and nothing grows inside
+them. All the climbs, landforms, bridges and tunnels in view take 0.4 to 0.8 ms a frame on average
+to build and fill, and about 3 ms at worst (measured headlessly, 300 views around a lap in every
+world).
+
+**The building site and the moon.** Construction Zone is raced on the buildings: the climbs above,
+and tunnels through the ground floors of buildings going up (concrete barriers along the road,
+rust-red steel columns, floor slabs overhead with the first as the ceiling, glass going in on some
+bays, the next storey's columns sticking up out of the top, and a striped clearance bar at each
+end; the view darkens less than in a rock tunnel, as the frame is open to the light). The ground is
+churned dirt with the tread of the machines' tracks, the scenery is tower cranes, buildings' steel
+skeletons, mixers, diggers, stacks of pipes and girders, barriers and drums, and the skyline is a
+city of towers with half-built frames and tower cranes in front of it. Moon Base has weak gravity
+(three tenths of the usual), for the karts, their jumps and the items alike, and the game's crest
+rule does the rest: a kart leaves the road where its speed squared times the road's bend over the
+top is more than gravity can hold, which on a crater's rim takes 15 to 20 m/s on the moon and
+27 m/s or more at home, where a Pro kart tops out at 28 (the road's slope and bend are measured over
+2.4 m either side, so the steps between road points do not set karts flying). The ground is regolith pocked with a thousand craters, each a
+bowl lit on one side inside a bright rim of thrown-out dust; the drivers wear helmets; the scenery
+is landers, dishes, habitats, boulders and a rover; and the sky is black, with stars, grey ridges
+and the Earth, its seas, land, ice and clouds lit from one side and its night side faint.
 
 Inside the volcano (Volcano Core) the road is a causeway of rock across a lake of lava
 (`world/lava.ts`). The terrain is not painted in colours there: each lava texel holds a phase (from
@@ -389,43 +448,59 @@ engine revs only while the thumb is on the stick, which keeps the rocket start a
 timing. DRIFT (hops and tricks too) and ITEM sit under the right thumb. On every device the brake
 wins over the gas, and held at a standstill it backs the kart up at up to 7 m/s; the grass slows
 a reversing kart's top speed but no longer drags it to a halt (it once cancelled all but 1 m/s^2
-of the reverse thrust, and reversing is how a kart gets out of the grass).
+of the reverse thrust, and reversing is how a kart gets out of the grass). HOW TO PLAY on the main menu is
+four short pages (keys, pad, touch and tips), each control drawn as a key cap or the stick beside a
+few words; it was one page of small text, too crowded to read.
 
 **Items.** A row of four boxes spans the road every 210 m of committed road (the first one
-shortly after the start, none in the last 70 m before the line), so boxes appear as the road is
-dreamed. Driving through one gives an item; the player's slot spins for 1.2 s first. There are
-nine (`race/items.ts`). Turbo and Triple Turbo (three shots) boost. A slick spins out the first
-kart that drives through it (its owner is spared for a second). An orb travels up the centerline
-at the shooter's speed plus 12 m/s, eases toward its target's lane, homes in directly within 22
-m, and vanishes into the dream mist if it reaches road that does not exist yet. Boomerangs and
-bombs are aimed: an arrow on the road in front of the kart sweeps left and right (up to 43
-degrees either way, across and back in about two seconds), and the press of the button locks the
-direction for that throw; rivals aim straight at the nearest kart in that arc instead. A
-boomerang (three throws) flies out along the arrow for a second, then turns and homes on its
-thrower, spinning every kart it passes through once. A bomb goes after the racer one place ahead
-of its thrower: a short lob along the arrow, then it homes in, skimming over the road at its
-target's height, and goes off on the target alone (it fizzles after 7 s). Thrown by the leader,
-who has nobody to chase, it lands where it was aimed and waits on the track for up to 25 s; once
-armed (0.6 s after landing) it goes off when any kart comes within 2.6 m, its thrower included,
-spinning everyone within 5.5 m. A prism makes a kart invincible and 15% faster for 7 s, keeps its
-speed off the road, and spins out whoever it touches. A shock spins, shrinks (top speed down 28%
-for 3.5 s) and disarms everyone else. A rocket drives the kart itself for up to 4.5 s: it rides
-the road's own points at 1.5 times the class top speed, easing to the middle, so it can neither
-cut a corner nor fall off a deck, and barges through whoever is in the way; 0.35 s after it has
-carried its kart past two karts it burns out, and it can never carry it into the lead. Odds are
-interpolated by position between four tables (the leader gets defensive items and no big ones;
-the back of the pack gets triple turbos, prisms and shocks). The rocket is a catch-up, not a win:
-only the kart in last place gets one, only in a field of three or more, and only when it is at
-least 60 m behind the kart one place ahead (then four times in five). A spin-out takes control away for a second while the kart slides on, slowing. Items act on
-the press of the button, never on the hold: most fire at once, while oil, orbs and bombs come out
-behind the kart while the button is down (where they block one orb or boomerang from behind) and
-are dropped or fired on the release. Every kart shows what it carries: the item it will use next
-floats over the driver's head, spare shots (a triple turbo, boomerangs) circle the kart slowly,
-and an item held out as a shield drags on the road behind it. Rivals save each item for its
-moment (turbos on straights, oil with a kart close behind, orbs with a kart in range ahead,
-boomerangs with a kart inside the aiming arc, bombs whenever someone is ahead to chase, the rest
-at once), hold an item out as a shield when someone is on their tail, and react sooner in the
-faster classes.
+shortly after the start, none in the last 70 m before the line), with lines of coins between, so
+boxes appear as the road is dreamed. Driving through one gives an item; the player's slot spins for
+1.2 s first. There are 22 (`race/items.ts`), as many as Mario Kart 8 Deluxe has, each doing the job
+of one of its items, with original names and art. Turbo, Triple Turbo and Gold Turbo (a boost on
+every press for 7.5 s); Oil Slick and Triple Oil, dropped behind; Puck and Triple Puck, which slide
+along the aimed arrow, bounce off the road's edges up to six times and spin the first kart they
+meet, their thrower too; Dream Orb and Triple Orb, which travel up the centerline at the shooter's
+speed plus 12 m/s, ease toward the target's lane and home in directly within 22 m; Comet, which flies
+up the road at 75 m/s over everyone to whoever leads by then, hangs over them and comes down, its
+blast spinning whoever is within 6.5 m; Bomb, lobbed at the racer one place ahead, which chases them
+down and goes off, its blast spinning everyone within 5.5 m (the karts it catches as well as its
+target; thrown by the leader it lands where it was aimed and waits); Rocket, which drives the kart
+itself up the road's own points, past two karts at most and never into the lead; Static, which fills
+the screens of everyone ahead with drifting snow for 4.5 s (rivals steer worse under it); Shock,
+which spins, shrinks, slows and disarms everyone else, and a full-size kart that drives over a
+shrunk one flattens it; Prism, invincible and 15% faster for 7 s; Flares, a fireball on every
+press for 10 s, bouncing up the road; Boomerang, out along the arrow and back, three times;
+Grabber, a claw in front of the kart for 8 s that snaps at karts and items it can reach, a little
+boost with each bite; Horn, a ring of sound that spins karts within 7 m and knocks every item within
+9 m out of the air, and a comet within 14 m; Jackpot, eight items circling the kart, used one by one;
+Coin, two coins (every coin, up to ten, adds 0.6% to top speed, and a spin costs three); and
+Phantom, see-through and untouchable for 5 s, which steals an item from someone ahead.
+
+Thrown items are aimed with two presses: an arrow on the road in front of the kart sweeps left and
+right (up to 43 degrees either way), the first press locks it (it turns blue, and a bomb or a puck
+rides out behind the kart as a shield meanwhile), and the second throws along it; rivals aim at the
+nearest kart in the arc and press twice, two frames apart. Items meet as they do in the classic:
+two projectiles, or a projectile and a slick, take each other out; a projectile into a waiting bomb
+sets it off; an item held out behind a kart blocks one hit from behind, and every puck or orb of a
+triple circling a kart blocks one; a prism or a rocket shrugs everything off and a phantom lets it
+pass straight through; a blast or a horn clears the items around it. Items act on the press of the
+button, never on the hold.
+
+The odds are the classic's own: Mario Kart 8's Grand Prix item tables (version 4.1, as transcribed
+on the Super Mario Wiki), one for players and one for computer drivers, each in nine tiers of
+distance behind the leader (the classic's units read at 2.5 cm, a kart being about 2 m long in both
+games), with this game's item standing in for each of the classic's, and the later Deluxe edition's
+phantom given 2.5% in the second to fourth tiers (`race/odds.ts`). The leader mostly gets coins,
+oil and pucks; a kart far behind gets triple turbos, prisms, gold turbos and rockets. The rocket
+keeps this game's own rule on top: only the kart in last place, in a field of three or more, and
+only 60 m or more behind the kart one place ahead (it once carried last place straight into the
+lead). One comet may be out at a time, and a shock, a comet or static that has just gone off is out
+of the draw for a while; its share goes to the rest. Every kart shows what it carries: the item it will
+use next floats over the driver's head, spare shots and a jackpot circle the kart, a held item drags
+on the road behind it, and a grabber lunges in front. Rivals save each item for its moment
+(turbos on straights, oil and the horn with a kart close behind, orbs and pucks with a kart in
+range ahead, the rest when it pays), hold an item out as a shield when someone is on their tail,
+and react sooner in the faster classes.
 
 **Bumps, and a bug the item tests found.** Karts change speed only along their heading. The
 first collision model exchanged the closing speed along the contact normal straight into each

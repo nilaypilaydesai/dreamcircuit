@@ -22,6 +22,8 @@ export default defineConfig({
     },
   },
   optimizeDeps: { exclude: ["onnxruntime-web"] },
-  // whole races run headlessly in the tests, several to a test: give a slow machine room
-  test: { testTimeout: 30_000 },
+  // whole races run headlessly in the tests, several to a test: give a slow machine room, and let
+  // the tests collect garbage between them (tests/game.test.ts), so each race's ground texture
+  // (35 MB, outside the JS heap) is freed as it goes instead of piling up into gigabytes
+  test: { testTimeout: 60_000, execArgv: ["--expose-gc"] },
 });

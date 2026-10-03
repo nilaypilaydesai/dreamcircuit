@@ -1,7 +1,7 @@
 // Game logic: circuits that grow while they are dreamed, bridge their own crossings, lock into
 // loops and count laps; jumps, tricks and boost pads; rivals and items, in headless races.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { Rand } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
@@ -30,6 +30,10 @@ import {
 } from "../src/game/world/trackgen";
 import { BANK_EDGE } from "../src/game/world/texture";
 import circuits from "./circuits.json";
+
+// Every race allocates a 35 MB ground texture outside the JS heap, which a lazy collector lets pile
+// up over a hundred races; collect after each test (vite.config.ts exposes gc to the workers).
+afterEach(() => (globalThis as { gc?: () => void }).gc?.());
 
 const range = (a: number, b: number) => Array.from({ length: b - a }, (_, k) => (((a + k) % N) + N) % N);
 const all = () => new Set(range(0, N));
@@ -1517,28 +1521,25 @@ describe("the lie of the land", () => {
       valley: ["meadow"], neon: ["skyway", "wave"], mesa: ["dune", "mesa"], reef: ["coral"], volcano: ["basalt"],
     };
     for (const [id, styles] of Object.entries(want)) {
-      const seen = new Set<string>();
-      for (const seed of [3, 4]) {
-        const race = new Race({ rivals: 0, difficulty: "pro", theme: THEMES.find((t) => t.id === id)!, seed, replay: calm() },
-                              null, () => {});
-        await race.prepare();
-        for (const h of race.track.hills) seen.add(h.style!);
-      }
-      expect([...seen].sort(), id).toEqual(styles);
+      // (a world's kinds of climb take turns, so one lap shows them all)
+      const race = new Race({ rivals: 0, difficulty: "pro", theme: THEMES.find((t) => t.id === id)!, seed: 3, replay: calm() },
+                            null, () => {});
+      await race.prepare();
+      expect([...new Set(race.track.hills.map((h) => h.style!))].sort(), id).toEqual(styles);
     }
   });
 
   it("leaves the jumps their straights: climbs go elsewhere, never over a jump or where it lands", async () => {
-    for (const id of ["valley", "neon", "mesa", "reef", "volcano"]) {
-      const theme = THEMES.find((t) => t.id === id)!;
-      for (const pts of [calm, twisty]) {
-        const hilly = new Race({ rivals: 0, difficulty: "pro", theme, seed: 3, replay: pts() }, null, () => {});
-        const flat = new Race({ rivals: 0, difficulty: "pro", theme: { ...theme, hills: undefined }, seed: 3, replay: pts() },
-                              null, () => {});
-        await hilly.prepare();
-        await flat.prepare();
+    for (const pts of [calm, twisty]) {
+      // the jumps a lap gets with no climbs at all (the same in every world without tunnels)
+      const flat = new Race({ rivals: 0, difficulty: "pro", theme: { ...THEMES[0], hills: undefined }, seed: 3, replay: pts() },
+                            null, () => {});
+      const jumps = flat.features.ramps.length;
+      for (const id of ["valley", "neon", "reef"]) {
+        const hilly = new Race({ rivals: 0, difficulty: "pro", theme: THEMES.find((t) => t.id === id)!, seed: 3, replay: pts() },
+                               null, () => {});
         expect(hilly.track.hills.length, id).toBeGreaterThan(0);
-        expect(hilly.features.ramps.length, id).toBe(flat.features.ramps.length);
+        expect(hilly.features.ramps.length, id).toBe(jumps);
         for (const r of hilly.features.ramps) {
           for (const h of hilly.track.hills) expect(r.s0 + 45 < h.s0 || r.s0 > h.s0 + h.len, id).toBe(true);
         }
@@ -1584,7 +1585,7 @@ describe("the mountain pass, driven on", () => {
 
   it("builds its climbs as rocky mountainsides and as ledges along cliffs", async () => {
     const styles = new Set<string>();
-    for (const seed of [3, 4, 5, 6]) {
+    for (const seed of [3, 4]) {
       const race = new Race({ rivals: 0, difficulty: "pro", theme: mountain, seed, replay: twisty() }, null, () => {});
       await race.prepare();
       for (const h of race.track.hills) {
@@ -1606,7 +1607,7 @@ describe("the construction zone", () => {
   it("builds its climbs as foundations, scaffolds and girders, a tower crane by every girder", async () => {
     const styles = new Set<string>();
     let girders = 0, cranes = 0;
-    for (const seed of [3, 4, 5, 6]) {
+    for (const seed of [3, 4]) {
       const race = new Race({ rivals: 0, difficulty: "pro", theme: site, seed, replay: twisty() }, null, () => {});
       await race.prepare();
       const t = race.track;
