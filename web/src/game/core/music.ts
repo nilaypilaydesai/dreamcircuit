@@ -101,6 +101,24 @@ const SONGS: Record<string, Song> = {
     arp: 8,
     drums: { kick: "x...x...x...x...", snare: "....x.......x...", hat: "x.x.x.x.x.x.x.x." },
   },
+  // the volcano: a driving minor riff over a pounding bass, with a climb in the second half
+  volcano: {
+    bpm: 146,
+    chords: ["Em", "C", "Am", "B7", "Em", "C", "D", "B7"],
+    lead: [
+      "E5 . E5 . G5 . B5 - A5 . G5 . F#5 - E5 .",
+      "C5 . E5 . G5 - - . E5 . G5 . C6 - - .",
+      "A5 . G5 . E5 . C5 - E5 . A5 . C6 - B5 .",
+      "B5 - - . A5 - - . F#5 - - . D#5 - - .",
+      "B5 . A5 . G5 . E5 - G5 . B5 . E6 - - .",
+      "C6 . B5 . G5 . E5 - G5 . C6 . E6 - - .",
+      "D6 . C6 . A5 . F#5 - A5 . D6 . F#6 - - .",
+      "D#6 - - . B5 - - . F#5 - - . D#5 - - .",
+    ],
+    bass: "drive",
+    arp: 16,
+    drums: { kick: "x...x.x.x...x.x.", snare: "....x.......x...", hat: "x.x.x.x.x.x.x.x." },
+  },
 };
 
 const NAMES: Record<string, number> = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };

@@ -14,11 +14,13 @@ export const STAT_LABELS: Record<StatKey, string> = {
   speed: "SPEED", accel: "ACCEL", weight: "WEIGHT", handling: "HANDLING", traction: "TRACTION", turbo: "MINI-TURBO",
 };
 export const STAT_MAX = 20;
+/** The longest a part's note may be: one line of the garage's hint bar on a 376 px screen. */
+export const NOTE_MAX = 44;
 
 export interface Part {
   id: string;
   name: string; // at most 14 characters, for the garage panel
-  note: string; // one line about it
+  note: string; // one line about it, at most NOTE_MAX characters (the garage's hint bar)
   stats: Partial<Stats>; // points added to the neutral 10
 }
 
@@ -30,19 +32,19 @@ export const BODIES: Part[] = [
     stats: { speed: 2, handling: 2, accel: -2, weight: -1, traction: -1 } },
   { id: "toro", name: "TORO V12", note: "RAGING-BULL WEDGE WITH A V12. HUGE TOP END",
     stats: { speed: 4, weight: 2, accel: -3, handling: -2, turbo: -1 } },
-  { id: "papaya", name: "PAPAYA GT", note: "BRITISH CARBON-TUB SUPERCAR, BORN AT THE TRACK",
+  { id: "papaya", name: "PAPAYA GT", note: "BRITISH CARBON-TUB SUPERCAR, BORN TO RACE",
     stats: { speed: 2, turbo: 2, accel: 1, weight: -2, traction: -2, handling: -1 } },
-  { id: "boxer", name: "BOXER RS", note: "REAR-ENGINE FLAT-SIX. CORNERS LIKE IT IS ON RAILS",
+  { id: "boxer", name: "BOXER RS", note: "REAR-ENGINE FLAT-SIX. CORNERS ON RAILS",
     stats: { handling: 3, traction: 2, speed: -2, weight: -1, turbo: -1 } },
   { id: "hyper", name: "HYPER W16", note: "QUAD-TURBO W16 HYPERCAR. HEAVY, AND FAST",
     stats: { speed: 5, weight: 3, accel: -4, handling: -3, traction: -1 } },
-  { id: "ghost", name: "GHOST CC", note: "SWEDISH MEGACAR. LIGHT, LOUD AND A LITTLE WILD",
+  { id: "ghost", name: "GHOST CC", note: "SWEDISH MEGACAR. LIGHT, LOUD, A LITTLE WILD",
     stats: { speed: 3, turbo: 2, accel: 1, traction: -3, handling: -1, weight: -2 } },
   { id: "tsukuba", name: "TSUKUBA R", note: "JDM TWIN-TURBO TUNER LEGEND. LIVES FOR DRIFT",
     stats: { turbo: 4, accel: 2, handling: 1, speed: -2, weight: -2, traction: -3 } },
   { id: "pony", name: "PONY V8", note: "AMERICAN MUSCLE. BIG BLOCK, BIGGER BUMPS",
     stats: { speed: 2, weight: 4, accel: 1, handling: -4, traction: -2, turbo: -1 } },
-  { id: "kei", name: "KEI SPRINT", note: "TINY JAPANESE CITY CAR. QUICKEST OFF THE LINE",
+  { id: "kei", name: "KEI SPRINT", note: "TINY JAPANESE CITY CAR, QUICK OFF THE LINE",
     stats: { accel: 4, handling: 3, turbo: 1, speed: -4, weight: -4 } },
   { id: "rally", name: "RALLY HATCH", note: "ALL-WHEEL-DRIVE GRAVEL HATCH. GRIPS ANYWHERE",
     stats: { traction: 5, accel: 2, handling: 1, speed: -3, weight: -1, turbo: -2 } },
@@ -54,9 +56,9 @@ export const BODIES: Part[] = [
 
 export const WHEELS: Part[] = [
   { id: "standard", name: "STANDARD", note: "ALL-ROUND KART TIRES", stats: {} },
-  { id: "slicks", name: "RACE SLICKS", note: "NO TREAD AT ALL: FAST ON TARMAC, LOST ON GRASS",
+  { id: "slicks", name: "RACE SLICKS", note: "NO TREAD: FAST ON TARMAC, LOST ON THE GRASS",
     stats: { speed: 2, handling: 1, traction: -3 } },
-  { id: "semi", name: "SEMI-SLICKS", note: "TRACK-DAY TIRES THAT STILL HAVE A LITTLE TREAD",
+  { id: "semi", name: "SEMI-SLICKS", note: "TRACK-DAY TIRES WITH A LITTLE TREAD LEFT",
     stats: { speed: 1, handling: 1, traction: -1, turbo: -1 } },
   { id: "offroad", name: "OFF-ROAD", note: "CHUNKY KNOBBY TREAD FOR THE DIRT",
     stats: { traction: 4, weight: 1, speed: -2, handling: -1, accel: -1 } },
@@ -95,7 +97,7 @@ export const SPOILERS: Part[] = [
     stats: { traction: 3, handling: 2, weight: 2, speed: -3, accel: -2 } },
   { id: "double", name: "DOUBLE DECK", note: "TWO-ELEMENT WING FOR MAXIMUM DOWNFORCE",
     stats: { handling: 4, speed: -3, accel: -1 } },
-  { id: "active", name: "ACTIVE AERO", note: "A SELF-ADJUSTING WING THAT DOUBLES AS AN AIRBRAKE",
+  { id: "active", name: "ACTIVE AERO", note: "SELF-ADJUSTING WING, ALSO AN AIRBRAKE",
     stats: { speed: 1, handling: 1, turbo: 1, weight: 1, accel: -2, traction: -1 } },
   { id: "sharkfin", name: "SHARK FIN", note: "PROTOTYPE STABILITY FIN", stats: { speed: 1, turbo: 1, handling: -1, weight: -1 } },
 ];

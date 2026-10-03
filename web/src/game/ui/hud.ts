@@ -159,10 +159,9 @@ export class Hud {
     scr.fillRect(x, y, size, size, ready ? (p.trailing ? hex("#63c8ff") : GOLD) : DREAM);
     scr.dimRect(x + 2, y + 2, size - 4, size - 4, INK, 0.82);
     const kind = p.roulette > 0 ? ITEM_KINDS[Math.floor(now * 14) % ITEM_KINDS.length] : p.item;
-    if (kind) {
+    if (kind) { // (drawn pixel for pixel: the icons are made the slot's size)
       const icon = this.icons[kind];
-      const w = icon.w * 2, h = icon.h * 2;
-      scr.blitScaled(icon, x + (size - w) / 2, y + (size - h) / 2, w, h);
+      scr.blit(icon, x + Math.floor((size - icon.w) / 2), y + Math.floor((size - icon.h) / 2));
     }
     if (ready && p.uses > 1) this.font.draw(scr, `x${p.uses}`, x + size - 2, y + size - 9, { color: WHITE, outline: INK, align: "right" });
     if (ready && p.item) {

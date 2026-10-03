@@ -10,15 +10,15 @@ import {
   rollItem,
 } from "../src/game/race/items";
 import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
-import { CLASSES, Kart, REVERSE_SPEED, collideKarts } from "../src/game/race/kart";
+import { CLASSES, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, collideKarts } from "../src/game/race/kart";
 import { CALM_BAND, TRACK_TYPES, type TrackTypeId, WILD_BAND, surpriseType, trackType } from "../src/game/race/tracktypes";
 import {
-  ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
+  ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, NOTE_MAX, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
   cleanBuild, perfOf, rivalBuild, statsOf,
 } from "../src/game/race/parts";
 import { stickControls } from "../src/game/core/input";
 import { screenSize } from "../src/game/core/gfx";
-import { Race, takesControls } from "../src/game/race/race";
+import { LAPS, Race, takesControls } from "../src/game/race/race";
 import { THEMES } from "../src/game/themes";
 import {
   BRIDGE_DECK, BRIDGE_HEIGHT, BRIDGE_RAMP, HALF_WIDTH, N, SPACING, Track, bridgeLift, checkLap, crSegment,
@@ -26,6 +26,7 @@ import {
 import {
   CHUNK, type Designer, INITIAL, LiveCircuit, STEP_SCALE, arcStyle, bandMiss, fromSteps, smoothArc, stepMask, toModel, toSteps,
 } from "../src/game/world/trackgen";
+import { BANK_EDGE } from "../src/game/world/texture";
 import circuits from "./circuits.json";
 
 const range = (a: number, b: number) => Array.from({ length: b - a }, (_, k) => (((a + k) % N) + N) % N);
@@ -940,10 +941,11 @@ describe("the grand prix", () => {
     expect(cup.podium().map((x) => x.id)).toEqual([0, 1, 2]); // 39, 37, 35
   });
 
-  it("runs through every world, the reef and the mountains too", () => {
+  it("runs through every world, the reef, the mountains and the volcano too", () => {
     const ids = THEMES.map((t) => t.id);
-    expect(ids).toEqual(expect.arrayContaining(["valley", "neon", "mesa", "reef", "mountain"]));
+    expect(ids).toEqual(expect.arrayContaining(["valley", "neon", "mesa", "reef", "mountain", "volcano"]));
     expect(THEMES.find((t) => t.id === "reef")!.underwater).toBe(true);
+    expect(THEMES.find((t) => t.id === "volcano")!.volcano).toBe(true);
   });
 });
 
@@ -1186,5 +1188,162 @@ describe("what a track type confirms", () => {
         expect(d > h.len + 20 && d < t.length - 60).toBe(true);
       }
     }
+  });
+});
+
+describe("the volcano", () => {
+  const volcano = THEMES.find((t) => t.volcano)!;
+  const none = { steer: 0, throttle: 0, brake: 0, drift: false };
+  const racing = async (seed = 3, rivals = 0) => {
+    const race = new Race({ rivals, difficulty: "pro", theme: volcano, seed, replay: calm() }, null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    return race;
+  };
+
+  it("is a lake of lava, with the road on a bank of rock", async () => {
+    const race = await racing();
+    const t = race.track, tex = race.tex;
+    let road = 0, bank = 0, lava = 0, n = 0;
+    for (let i = 0; i < t.count; i += 37) {
+      if (t.elev[i] > 0.25) continue;
+      const [tx, ty] = t.tangent(i);
+      for (const side of [1, -1]) {
+        const at = (off: number) => tex.lavaAt(t.xs[i] - ty * off * side, t.ys[i] + tx * off * side);
+        n++;
+        if (!at(0) && !at(HALF_WIDTH - 0.5) && !at(HALF_WIDTH + 1.5)) road++;
+        if (!at(BANK_EDGE - 0.8)) bank++;
+        if (at(BANK_EDGE + 3)) lava++;
+      }
+    }
+    expect(road).toBe(n);
+    expect(bank).toBe(n);
+    expect(lava / n).toBeGreaterThan(0.9); // (unless another stretch of road runs that close)
+    expect(tex.lavaAt(500, 500)).toBe(true); // and the lake goes on past the edge of the world
+    expect(new Race({ rivals: 0, difficulty: "pro", theme: THEMES[0], seed: 3, replay: calm() }, null, () => {})
+      .tex.lavaAt(500, 500)).toBe(false);
+  });
+
+  it("swallows a kart that drives off the rock; a drone sets it back on the road and lets it go", async () => {
+    const race = await racing();
+    const p = race.player;
+    for (let i = 0; i < 180; i++) race.update(1 / 60, { ...none, throttle: 1 });
+    const seen: string[] = [];
+    for (let i = 0; i < 900 && p.fall < 0; i++) {
+      race.update(1 / 60, { ...none, throttle: 1, steer: 1 });
+      seen.push(...race.events.map((e) => e.kind));
+      race.events = [];
+    }
+    expect(seen).toContain("lava");
+    expect(race.tex.lavaAt(p.fallX, p.fallY)).toBe(true);
+    const fellAt = race.clock;
+    let rescuedAt = -1, releasedAt = -1;
+    for (let i = 0; i < 60 * 2.5 && releasedAt < 0; i++) {
+      race.update(1 / 60, { ...none, throttle: 1, steer: 1 }); // the controls do nothing meanwhile
+      if (race.events.some((e) => e.kind === "rescued")) rescuedAt = race.clock;
+      race.events = [];
+      if (p.falling) expect(p.v).toBe(0);
+      else releasedAt = race.clock;
+    }
+    expect(rescuedAt - fellAt).toBeCloseTo(FALL_SWAP, 1);
+    expect(releasedAt - fellAt).toBeCloseTo(FALL_RELEASE, 1);
+    // set down on the middle of the road, facing up it, just over it
+    expect(Math.abs(p.offset)).toBeLessThan(0.5);
+    const [tx, ty] = race.track.tangent(p.idx);
+    expect(Math.cos(p.heading) * tx + Math.sin(p.heading) * ty).toBeGreaterThan(0.99);
+    expect(p.elev - p.ground).toBeGreaterThan(0.2);
+    const pilot = new RivalDriver(new Rand(2), p, 0);
+    for (let i = 0; i < 60 * 4; i++) race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, p, race.karts));
+    expect(p.fall).toBe(-1);
+    expect(p.v).toBeGreaterThan(15); // driving on
+  });
+
+  it("pays a trick for a fresh hop as the drone lets go, not for a hop held all through the rescue", async () => {
+    const drop = async (hop: (fall: number) => boolean) => {
+      const race = await racing();
+      const p = race.player, t = race.track;
+      const i = t.wrap(p.idx + 150), [tx, ty] = t.tangent(i);
+      p.x = t.xs[i] - ty * (BANK_EDGE + 3);
+      p.y = t.ys[i] + tx * (BANK_EDGE + 3);
+      p.idx = i;
+      race.update(1 / 60, none);
+      expect(p.falling).toBe(true);
+      let trick = -1;
+      for (let k = 0; k < 60 * 3; k++) {
+        race.update(1 / 60, { ...none, drift: hop(p.fall) });
+        for (const e of race.events) if (e.kind === "land") trick = e.trick;
+        race.events = [];
+      }
+      return { trick, boost: p.boostTime };
+    };
+    const fresh = await drop((f) => f >= FALL_RELEASE && f < FALL_RELEASE + 0.05);
+    expect(fresh.trick).toBe(2);
+    const held = await drop(() => true);
+    expect(held.trick).toBe(0);
+  });
+
+  it("keeps the bank safe: a kart on the rock beside the road does not go in", async () => {
+    const race = await racing();
+    const p = race.player, t = race.track;
+    const i = t.wrap(p.idx + 120), [tx, ty] = t.tangent(i);
+    p.x = t.xs[i] - ty * (BANK_EDGE - 1);
+    p.y = t.ys[i] + tx * (BANK_EDGE - 1);
+    p.idx = i;
+    for (let k = 0; k < 30; k++) race.update(1 / 60, none);
+    expect(p.fall).toBe(-1);
+  });
+
+  it("counts the laps right when the drone puts a kart back behind the line", async () => {
+    const race = await racing(5, 3);
+    const p = race.player, pilot = new RivalDriver(new Rand(2), p, 0);
+    let pushed = 0, best = p.crossings;
+    for (let i = 0; i < 60 * 300 && race.phase !== "done"; i++) {
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, p, race.karts));
+      race.events = [];
+      if (p.crossings > best && p.crossings > 1 && !p.falling && pushed < 2) {
+        // just over the line: shove it into the lava (it was last on the road before the line)
+        const [tx, ty] = race.track.tangent(p.idx);
+        p.x -= ty * (BANK_EDGE + 2);
+        p.y += tx * (BANK_EDGE + 2);
+        pushed++;
+      }
+      best = Math.max(best, p.crossings);
+    }
+    expect(pushed).toBe(2);
+    expect(p.finished).toBe(true);
+    expect(p.lapTimes.length).toBe(LAPS);
+  });
+
+  it("leaves a kart in the lava alone: nothing spins it, it bumps nothing, it cannot fire", () => {
+    const t = Track.fromPoints(calm());
+    const k = new Kart(1, "K", 1, false), o = new Kart(2, "O", 2, false);
+    k.placeOn(t, 50, 0);
+    o.placeOn(t, 50, 0.5);
+    k.fallIn();
+    expect(k.falling).toBe(true);
+    expect(k.spinOut()).toBe(false);
+    expect(collideKarts([k, o]).hits.length).toBe(0);
+    const items = new Items(new Rand(1));
+    items.grant(k, "turbo");
+    expect(items.press(k, [k, o])).toBe(false);
+  });
+
+  it("is a fair fight: the whole field finishes, and rivals seldom end up in the lava", async () => {
+    const race = await racing(7, 7);
+    const p = race.player, pilot = new RivalDriver(new Rand(2), p, 0);
+    let falls = 0;
+    for (let i = 0; i < 60 * 300 && race.phase !== "done"; i++) {
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, p, race.karts));
+      race.events = [];
+      falls += race.karts.filter((k) => k.fall === 0).length;
+    }
+    expect(race.karts.every((k) => k.finished)).toBe(true);
+    expect(falls).toBeLessThan(race.karts.length); // fewer than one fall a kart in three laps
+  });
+});
+
+describe("the garage", () => {
+  it("has a one-line note for every part", () => {
+    for (const part of [...BODIES, ...WHEELS, ...SPOILERS, ...EXHAUSTS]) expect(part.note.length).toBeLessThanOrEqual(NOTE_MAX);
   });
 });

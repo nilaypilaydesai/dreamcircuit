@@ -187,7 +187,7 @@ export class Items {
 
   /** The item button went down: oil, orbs and bombs are held out behind the kart; the rest fire. */
   press(k: Kart, karts: Kart[]): boolean {
-    if (!k.item || k.roulette > 0 || k.spin > 0 || k.rocket > 0) return false;
+    if (!k.item || k.roulette > 0 || k.spin > 0 || k.rocket > 0 || k.falling) return false;
     if (TRAILS.has(k.item)) {
       k.trailing = true;
       k.aimLocked = k.aim; // a bomb goes where the arrow pointed when the button went down
@@ -205,7 +205,7 @@ export class Items {
 
   /** Fire ``k``'s item now. Returns false if it has none ready. */
   use(k: Kart, karts: Kart[]): boolean {
-    if (!k.item || k.roulette > 0 || k.spin > 0 || k.rocket > 0) return false;
+    if (!k.item || k.roulette > 0 || k.spin > 0 || k.rocket > 0 || k.falling) return false;
     const item = k.item;
     k.trailing = false;
     const c = Math.cos(k.heading), s = Math.sin(k.heading);
@@ -244,7 +244,7 @@ export class Items {
         break;
       case "shock":
         for (const o of karts) {
-          if (o === k || o.finished || o.invincible) continue;
+          if (o === k || o.finished || o.invincible || o.falling) continue;
           o.spinOut(0.7);
           o.shrink = SHOCK_SHRINK;
           o.item = null; // a shock knocks the item out of every hand
@@ -334,7 +334,7 @@ export class Items {
         continue;
       }
       for (const k of karts) {
-        if (k.finished || Math.abs(k.elev - b.elev) > 1.8) continue;
+        if (k.finished || k.falling || Math.abs(k.elev - b.elev) > 1.8) continue;
         if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > PICKUP_R * PICKUP_R) continue;
         b.respawn = BOX_RESPAWN;
         if (!k.item && k.roulette <= 0) {
@@ -364,7 +364,7 @@ export class Items {
       if (sl.ttl <= 0) return false;
       for (const k of karts) {
         if (k === sl.owner && sl.armed > 0) continue;
-        if (k.spin > 0 || k.air || Math.abs(k.elev - sl.elev) > 1.2) continue;
+        if (k.spin > 0 || k.air || k.falling || Math.abs(k.elev - sl.elev) > 1.2) continue;
         if ((k.x - sl.x) ** 2 + (k.y - sl.y) ** 2 > SLICK_R * SLICK_R) continue;
         if (k.spinOut()) this.events.push({ kind: "spun", kart: k, by: "oil", owner: sl.owner });
         return false; // driven through (an invincible kart just splashes it away)
@@ -376,8 +376,8 @@ export class Items {
       o.ttl -= dt;
       if (o.ttl <= 0) return false;
       const step = o.v * dt;
-      // a target that is already spinning (or done) is left alone: the orb flies on
-      if (o.target && (o.target.spin > 0 || o.target.finished)) o.target = null;
+      // a target that is already spinning (or done, or in the lava) is left alone: the orb flies on
+      if (o.target && (o.target.spin > 0 || o.target.finished || o.target.falling)) o.target = null;
       const t = o.target;
       const near = t && Math.hypot(t.x - o.x, t.y - o.y) < 22;
       if (near && t) {
@@ -395,7 +395,7 @@ export class Items {
       }
       const oz = track.elev[o.idx] ?? 0;
       for (const k of karts) {
-        if (k === o.owner || k.spin > 0 || Math.abs(k.elev - oz) > 2.2) continue;
+        if (k === o.owner || k.spin > 0 || k.falling || Math.abs(k.elev - oz) > 2.2) continue;
         if ((k.x - o.x) ** 2 + (k.y - o.y) ** 2 > ORB_R * ORB_R) continue;
         this.strike(k, o.x, o.y, "orb", o.owner);
         return false;
@@ -421,7 +421,7 @@ export class Items {
       }
       b.idx = track.nearest(b.x, b.y, b.idx);
       for (const k of karts) {
-        if (k === b.owner || b.hit.includes(k) || Math.abs(k.elev + 0.9 - b.z) > 2.2) continue;
+        if (k === b.owner || b.hit.includes(k) || k.falling || Math.abs(k.elev + 0.9 - b.z) > 2.2) continue;
         if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > BOOM_R * BOOM_R) continue;
         b.hit.push(k);
         if (this.shielded(k, b.x, b.y)) return false;
@@ -435,7 +435,7 @@ export class Items {
       bm.age += dt;
       const t = bm.target;
       if (t) {
-        if (t.finished || bm.age > BOMB_CHASE) return this.blast(bm, []); // it fizzles
+        if (t.finished || t.falling || bm.age > BOMB_CHASE) return this.blast(bm, []); // it fizzles
         if (bm.age > 0.25) {
           // homing: steer toward the target, skimming over the road at its height
           const dx = t.x - bm.x, dy = t.y - bm.y, d = Math.hypot(dx, dy) || 1;
@@ -474,7 +474,7 @@ export class Items {
         return true;
       }
       const armed = bm.age > 0.6; // its thrower gets a moment to drive clear
-      const close = armed && karts.some((k) =>
+      const close = armed && karts.some((k) => !k.falling &&
         Math.abs(k.elev - bm.z) < 2 && (k.x - bm.x) ** 2 + (k.y - bm.y) ** 2 < BOMB_TRIGGER ** 2);
       if (bm.age < MINE_LIFE && !close) return true;
       return this.blast(bm, karts);

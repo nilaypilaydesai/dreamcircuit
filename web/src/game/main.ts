@@ -11,7 +11,7 @@ import { GameInput, type MenuEvent } from "./core/input";
 import { RivalDriver } from "./race/ai";
 import { Cup, type CupRow, type Entrant } from "./race/cup";
 import { AIMED, type ItemKind, BLAST_TIME } from "./race/items";
-import { CLASSES, type Controls, type Difficulty, type Kart } from "./race/kart";
+import { CLASSES, type Controls, type Difficulty, FALL_SWAP, type Kart } from "./race/kart";
 import { type Build, DEFAULT_BUILD, bodyOf, cleanBuild, rivalBuild } from "./race/parts";
 import { Race, takesControls, type RaceEvent, type RaceSetup } from "./race/race";
 import { TRACK_TYPES, type TrackTypeId, surpriseType, trackType } from "./race/tracktypes";
@@ -21,11 +21,14 @@ import type { Face } from "./render/poly";
 import { aimArrow, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
 import { Sky } from "./render/sky";
 import {
-  LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, heldArt, itemBoxFrames, kartSprites, orbArt,
-  slickArt,
+  LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, droneFrames, heldArt, itemBoxFrames, kartSprites,
+  orbArt, slickArt,
 } from "./render/sprites";
 import { THEMES } from "./themes";
 import { CAUSTIC, caustics, fishSprites, makeSchools, waterOverlay } from "./render/underwater";
+import { slickPaint } from "./render/decals";
+import { emberOverlay } from "./render/volcano";
+import { lavaShift } from "./world/lava";
 import { Ceremony, STANDINGS_SETTLE, drawStandings } from "./ui/ceremony";
 import { Garage } from "./ui/garage";
 import { Hud, formatTime, kartColor } from "./ui/hud";
@@ -91,6 +94,7 @@ class Game {
   private readonly boomArt: SceneryArt[] = boomerangFrames();
   private readonly bombArt: SceneryArt[] = bombFrames();
   private readonly blastArt: SceneryArt[] = blastFrames();
+  private readonly droneArt: SceneryArt[] = droneFrames();
   private readonly held: Record<ItemKind, SceneryArt> = heldArt();
   private mode: Mode = "boot";
   private race: Race | null = null;
@@ -210,7 +214,7 @@ class Game {
       setup: new Menu("QUICK RACE", [
         { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(0, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "HOW MANY AI KARTS RACE YOU (0-7)" },
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + 2) % 3; }, right: () => { s.diff = (s.diff + 1) % 3; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
-        { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); } },
+        { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); }, hint: () => (s.theme === THEMES.length ? "A WORLD PICKED AT RANDOM" : THEMES[s.theme].blurb) },
         { label: "TRACK", value: () => TRACKS[s.track].name, left: () => { s.track = (s.track + TRACKS.length - 1) % TRACKS.length; }, right: () => { s.track = (s.track + 1) % TRACKS.length; }, hint: () => trackHint(s.track) },
         { label: "CIRCUIT", value: () => (s.circuit === 0 || !this.lastCircuit ? "NEW DREAM" : "LAST ONE"), left: () => { s.circuit = s.circuit ? 0 : 1; }, right: () => { s.circuit = s.circuit ? 0 : 1; }, hint: () => (s.circuit === 1 && this.lastCircuit ? `RE-RACE YOUR LAST LOCKED CIRCUIT (${trackType(this.lastCircuitType).name})` : "A FRESH DREAM, OR RE-RACE YOUR LAST LOCKED CIRCUIT") },
         { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("setup"), hint: "OPEN THE GARAGE" },
@@ -537,6 +541,8 @@ class Game {
       else if (e.kind === "rocket") { this.sound.rocket(); this.hud.popup("ROCKET START!", now, HOT); }
       else if (e.kind === "burnout") { this.sound.burnout(); this.hud.popup("TOO EARLY!", now, hex("#ff6b6b")); }
       else if (e.kind === "bridge") this.hud.popup("BRIDGE AHEAD!", now, DREAM);
+      else if (e.kind === "lava") { this.sound.lava(); this.shake = Math.max(this.shake, 0.3); }
+      else if (e.kind === "rescued") { this.snapCamera(this.cam, race); this.sound.rescue(); }
     }
   }
 
@@ -696,22 +702,25 @@ class Game {
       };
     }
     const theme = race.setup.theme;
-    drawGround(this.scr, cam, race.tex, theme.fog, mist,
-               theme.underwater ? { color: CAUSTIC, at: caustics(this.time) } : undefined);
-    const extras: WorldSprite[] = [];
     const now = this.time;
     const it = race.items;
+    // oil on the ground is painted into it, flat; on raised road, a sprite stands in for it
+    drawGround(this.scr, cam, race.tex, theme.fog, {
+      mist, light: theme.underwater ? { color: CAUSTIC, at: caustics(now) } : undefined, lava: lavaShift(now),
+      paint: slickPaint(it.slicks.filter((sl) => sl.elev < 0.3), now, cam.heading),
+    });
+    const extras: WorldSprite[] = [];
     it.boxes.forEach((b, i) => {
       if (b.respawn > 0) return;
-      const art = this.boxArt[(Math.floor(now * 6) + i) % this.boxArt.length];
+      const art = this.boxArt[(Math.floor(now * 10) + i * 3) % this.boxArt.length];
       extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i), base: b.elev });
     });
-    for (const sl of it.slicks) extras.push({ x: sl.x, y: sl.y, art: this.slickArt, base: sl.elev });
+    for (const sl of it.slicks) if (sl.elev >= 0.3) extras.push({ x: sl.x, y: sl.y, art: this.slickArt, base: sl.elev });
     for (const o of it.orbs) {
       extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: t.elev[o.idx] ?? 0 });
     }
     for (const b of it.boomerangs) {
-      extras.push({ x: b.x, y: b.y, art: this.boomArt[Math.floor(now * 16) % this.boomArt.length], lift: 0.4, base: b.z - 0.9 });
+      extras.push({ x: b.x, y: b.y, art: this.boomArt[Math.floor(now * 24) % this.boomArt.length], lift: 0.4, base: b.z - 0.9 });
     }
     for (const b of it.bombs) {
       const ground = t.elev[b.idx] ?? 0;
@@ -731,7 +740,7 @@ class Game {
     padFaces(painter, t, race.features, now);
     // the player's aiming arrow while a boomerang or a bomb is ready (locked, it turns blue)
     const me = race.player;
-    if (me.item && AIMED.has(me.item) && me.roulette <= 0 && me.rocket <= 0 && race === this.race) {
+    if (me.item && AIMED.has(me.item) && me.roulette <= 0 && me.rocket <= 0 && !me.falling && race === this.race) {
       aimArrow(painter, me, me.trailing ? me.aimLocked ?? me.aim : me.aim, me.trailing ? hex("#63c8ff") : HOT);
     }
     drawWorldSprites(this.scr, cam, race.scenery.items, race.karts, {
@@ -739,8 +748,16 @@ class Game {
       sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
       held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
       dome: !!theme.underwater,
+      drone: theme.volcano ? this.droneArt : undefined,
     }, theme.fog, extras, faces);
     if (theme.underwater) waterOverlay(this.scr, now);
+    if (theme.volcano) emberOverlay(this.scr, now);
+    // into the lava: the view goes dark red while the drone lifts the kart out
+    const f = me.fall;
+    if (f >= 0 && f < FALL_SWAP + 0.3 && race === this.race) {
+      const a = Math.max(0, 1 - Math.abs(f - FALL_SWAP) / 0.26);
+      if (a > 0) this.scr.dimRect(0, 0, W, H, hex("#1c0603"), 0.92 * a);
+    }
     // inside a tunnel the light drops
     if (race.features.tunnels.length) {
       const ci = t.nearest(cam.x, cam.y, race.player.idx);
@@ -801,7 +818,8 @@ class Game {
         f.draw(scr, "DREAM CIRCUIT", W / 2, logo, { scale: 2, rows: LOGO_ROWS, outline: INK, align: "center" });
         // the panel and its hint (up to two lines) sit in the space under the logo; on the setup
         // screen, a designer that is still loading (or a failed dream) takes the hint's place
-        const top = Math.max(logo + 22, Math.min(46, Math.round((H - menu.height() - 24 + logo + 22) / 2)));
+        const below = 28; // room for a two-line hint, outline and all
+        const top = Math.max(logo + 20, Math.min(46, Math.round((H - menu.height() - 24 + logo + 22) / 2), H - menu.height() - below));
         const err = this.raceError || this.designerError;
         const note = this.mode !== "main" && (!this.designer || this.raceError)
           ? { text: err || "WAKING THE DREAMER...", color: err ? HOT : DREAM } : undefined;

@@ -116,7 +116,7 @@ export function hillFaces(p: Painter, track: Track, theme: Theme): void {
       face(p, [P(j, -hw, hj), P(i, -hw, hi), P(i, -hw - fi, 0), P(j, -hw - fj, 0)], earthDark, [ty, -tx, 1], 0.1);
       if (Math.max(hi, hj) > 0.6) {
         for (const off of [-hw, hw]) {
-          face(p, [P(i, off, hi), P(j, off, hj), P(j, off, hj + 0.55), P(i, off, hi + 0.55)], STONE, null, -0.15);
+          face(p, [P(i, off, hi), P(j, off, hj), P(j, off, hj + 0.55), P(i, off, hi + 0.55)], theme.wall ?? STONE, null, -0.15);
         }
       }
     }

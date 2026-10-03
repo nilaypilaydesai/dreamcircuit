@@ -20,15 +20,18 @@ from PIL import Image
 SEGMENTS = [
     ("a_launch", 0, 45),
     ("b_jump", 30, 90),
-    ("c_bridge", 0, 36),
-    ("g_garage", 21, 81),
+    ("c_bridge", 0, 30),
+    ("g_garage", 21, 75),
     ("i_rocket", 0, 36),
     ("i_boomerang", 9, 51),
-    ("i_bomb", 12, 60),
-    ("i_shock", 0, 36),
-    ("w_reef", 0, 30),
-    ("m_tunnel", 9, 54),
-    ("p_podium", 45, 90),
+    ("i_bomb", 18, 60),
+    ("i_shock", 0, 30),
+    ("w_reef", 0, 27),
+    ("m_tunnel", 9, 42),
+    ("x_lava", 0, 36),
+    ("x_boxes", 24, 72),
+    ("x_rescue", 12, 96),
+    ("p_podium", 45, 81),
 ]
 
 

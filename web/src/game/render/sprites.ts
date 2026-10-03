@@ -905,6 +905,135 @@ function snowbank(rng: Rand): SceneryArt {
   return { sprite: s, height: 1.1, solid: false };
 }
 
+// ---------------------------------------------------------------------------------- the volcano
+
+const HOT = [hex("#ffd86a"), hex("#ff8a1f"), hex("#e0400e")];
+
+/** A cluster of hexagonal basalt columns: lit tops, a lit face and a shaded face on each. */
+function basalt(rng: Rand): SceneryArt {
+  const n = rng.int(3, 6), cw = 6, w = n * cw + 2, h = 40;
+  const s = makeSprite(w, h);
+  const base = rng.pick([hex("#3b3237"), hex("#43383c"), hex("#352d33")]);
+  for (let k = 0; k < n; k++) {
+    const x0 = 1 + k * cw, top = rng.int(4, 22);
+    for (let y = top; y < h; y++) {
+      for (let x = x0; x < x0 + cw; x++) {
+        const face = x < x0 + 2 ? 1.25 : x > x0 + cw - 3 ? 0.72 : 1; // lit left, shaded right
+        const joint = (y - top) % 9 === 8; // the columns crack into drums
+        px(s, x, y, y < top + 2 ? shade(base, 1.6) : shade(base, joint ? face * 0.7 : face));
+      }
+    }
+    if (rng.next() > 0.6) px(s, x0 + 2, h - 3, HOT[1]); // a glint of lava in a crack at the foot
+  }
+  outline(s, hex("#120c0e"));
+  return { sprite: s, height: 3 + rng.range(0, 2.5), solid: true };
+}
+
+/** Black volcanic glass: shards pointing up, each with a bright edge catching the lava's light. */
+function obsidian(rng: Rand): SceneryArt {
+  const s = makeSprite(24, 30);
+  const shards = rng.int(3, 5);
+  for (let k = 0; k < shards; k++) {
+    const cx = rng.range(5, 19), top = rng.range(1, 14), half = rng.range(3, 5.5);
+    poly(s, [[cx - half, 30], [cx + rng.range(-2, 2), top], [cx + half, 30]],
+         (x) => (x < cx - half * 0.35 ? hex("#3a2a52") : x > cx + half * 0.3 ? hex("#0d0a14") : hex("#1c1626")));
+    stroke(s, cx - half + 1, 29, cx + rng.range(-1.5, 1.5), top + 2, 0.4, hex("#b48cff")); // the bright edge
+  }
+  outline(s, hex("#07050c"));
+  return { sprite: s, height: 2.4 + rng.range(0, 1.8), solid: true };
+}
+
+/** A fumarole: a small cone of rock with lava glowing in its throat and a plume of smoke. */
+function vent(rng: Rand): SceneryArt {
+  const s = makeSprite(28, 34);
+  poly(s, [[1, 33], [10, 15], [18, 15], [27, 33]], (x, y) =>
+    y > 30 ? hex("#2a1e20") : x < 11 ? hex("#5a4446") : x > 18 ? hex("#2e2225") : hex("#45363a"));
+  for (let x = 10; x < 18; x++) px(s, x, 15, HOT[x % 3 === 0 ? 0 : 1]); // the glowing throat
+  for (let x = 11; x < 17; x++) px(s, x, 16, HOT[2]);
+  for (let k = 0; k < 4; k++) { // a lava trickle down the flank
+    px(s, 12 - k, 17 + k * 3, HOT[1]);
+    px(s, 12 - k, 18 + k * 3, HOT[2]);
+  }
+  for (let k = 0; k < 4; k++) { // smoke
+    const r = 2.5 + k * 1.1;
+    disc(s, 14 + Math.sin(k * 1.7) * 2, 11 - k * 3, r, () => (k ? hex("#5c5052") : hex("#7a6a6a")));
+  }
+  if (rng.next() > 0.5) px(s, 16, 2, HOT[0]); // an ember
+  outline(s, hex("#130c0d"));
+  return { sprite: s, height: 3 + rng.range(0, 1.2), solid: true };
+}
+
+/** A tall spire of rock standing out of the lava, jagged, with magma glowing in cracks at its foot. */
+function spire(rng: Rand): SceneryArt {
+  const w = 32, h = 84;
+  const s = makeSprite(w, h);
+  const lean = rng.range(-4, 4), rock = hex("#3a2e33");
+  for (let y = 0; y < h; y++) {
+    const u = y / h; // 0 at the tip
+    const half = 2 + u * 13 + Math.sin(y * 0.9) * 1.2 + (y % 11 < 2 ? 1.5 : 0);
+    const cx = 16 + lean * (1 - u);
+    for (let x = Math.round(cx - half); x <= cx + half; x++) {
+      const lit = x < cx - half * 0.3 ? 1.3 : x > cx + half * 0.4 ? 0.68 : 1;
+      const glow = u > 0.8 ? (u - 0.8) * 4 : 0; // the lava's light on its foot
+      px(s, x, y, mix(shade(rock, lit), hex("#c2410f"), glow * 0.55));
+    }
+  }
+  for (let k = 0; k < 5; k++) { // cracks of magma near the foot
+    let x = rng.range(9, 23), y = rng.range(60, 82);
+    for (let j = 0; j < 6; j++) {
+      px(s, x, y, HOT[j % 2]);
+      x += rng.range(-1, 1);
+      y -= 1;
+    }
+  }
+  outline(s, hex("#110a0c"));
+  return { sprite: s, height: 16 + rng.range(0, 10), solid: false };
+}
+
+/** A boulder of cooled lava with glowing cracks across it. */
+function magmarock(rng: Rand): SceneryArt {
+  const r = rock(rng, hex("#3d3236"));
+  const sp = r.sprite;
+  for (let k = 0; k < 3; k++) {
+    let x = rng.range(5, 17), y = rng.range(4, 9);
+    for (let j = 0; j < 7; j++) {
+      if (sp.data[Math.round(y) * sp.w + Math.round(x)]) px(sp, x, y, HOT[j % 3 === 2 ? 2 : 1]);
+      x += rng.range(0.4, 1.2) * (k % 2 ? 1 : -1);
+      y += rng.range(0, 0.9);
+    }
+  }
+  return { ...r, height: 1.5 + rng.range(0, 1.1) };
+}
+
+/** The rescue drone that fishes a kart out of the lava: four rotors (a blur, two frames), a
+ * warning light that blinks, and a winch underneath. */
+export function droneFrames(): SceneryArt[] {
+  return [0, 1].map((f) => {
+    const s = makeSprite(34, 16);
+    for (const cx of [5, 28]) { // the rotors: pale blurred discs (alternating streaks spin them)
+      for (let x = -5; x <= 5; x++) {
+        for (const y of [2, 3]) {
+          if ((x + y + f) % 3 !== 0 || Math.abs(x) < 4) px(s, cx + x, y, (x + f) % 2 ? hex("#dfe6ee") : hex("#9aa6b4"));
+        }
+      }
+      rect(s, cx - 1, 3, cx + 1, 6, hex("#4a505c")); // the motor
+    }
+    stroke(s, 5, 6, 28, 6, 0.8, hex("#5a606c")); // the arms
+    for (let y = 5; y < 12; y++) { // the body
+      for (let x = 11; x < 23; x++) {
+        const corner = (x === 11 || x === 22) && (y === 5 || y === 11);
+        if (!corner) px(s, x, y, y < 7 ? hex("#ffcf3a") : x < 14 ? hex("#e8a51c") : x > 20 ? hex("#a66d0c") : hex("#d1901a"));
+      }
+    }
+    for (let x = 12; x < 22; x += 3) px(s, x, 9, hex("#2a2016")); // hazard stripes
+    px(s, 16, 4, f ? hex("#ff3b2a") : hex("#ffb0a0")); // the warning light
+    px(s, 17, 4, f ? hex("#ff3b2a") : hex("#ffb0a0"));
+    rect(s, 15, 12, 19, 14, hex("#3a3f4a")); // the winch
+    outline(s, hex("#14161c"));
+    return { sprite: s, height: 0.95, solid: false };
+  });
+}
+
 export function makeScenery(kind: SceneryKind, rng: Rand): SceneryArt {
   switch (kind) {
     case "kelp": return kelp(rng);
@@ -916,6 +1045,11 @@ export function makeScenery(kind: SceneryKind, rng: Rand): SceneryArt {
     case "cliff": return cliff(rng);
     case "peak": return peak(rng);
     case "snowbank": return snowbank(rng);
+    case "basalt": return basalt(rng);
+    case "obsidian": return obsidian(rng);
+    case "vent": return vent(rng);
+    case "spire": return spire(rng);
+    case "magmarock": return magmarock(rng);
     case "pine": return pine(rng);
     case "oak": return oak(rng);
     case "bush": return bush(rng);
@@ -965,48 +1099,148 @@ export function grandstand(rng: Rand): SceneryArt {
 }
 
 // ---------------------------------------------------------------------------------- items
+// Items are drawn the way the 16-bit classics drew pre-rendered 3D: shading worked out pixel by
+// pixel under one light from the upper left (round bodies, balls, a bevelled star, an extruded
+// bolt, a crystal cube turning in ten steps), then kept as plain sprites. Each is drawn at a size
+// ``k``: 1 in the world, about 1.6 in the HUD's item slot, which shows them pixel for pixel.
+
+const LX = -0.52, LY = -0.6, LZ = 0.61; // the light (x right, y down, z out of the picture)
+
+/** How lit a surface with normal (nx, ny, nz) is (in a few steps: the pixel-art look), and how
+ * much of a highlight it shows. */
+function lit(nx: number, ny: number, nz: number): [number, number] {
+  const d = nx * LX + ny * LY + nz * LZ;
+  const r = Math.max(0, 2 * d * nz - LZ) ** 18; // the light reflected toward the viewer
+  return [Math.round(Math.max(0, d) * 6) / 6, r > 0.45 ? 1 : r > 0.15 ? 0.45 : 0];
+}
+
+/** A ball, lit, with a highlight and ``rim`` light reflected up onto its lower edge; ``base``
+ * may vary over it (nx, ny: where on the ball, -1..1). */
+function ball(s: Sprite, cx: number, cy: number, r: number, base: (nx: number, ny: number) => number,
+              rim = 0, amb = 0.42): void {
+  for (let y = Math.floor(cy - r); y <= cy + r; y++) {
+    for (let x = Math.floor(cx - r); x <= cx + r; x++) {
+      const nx = (x + 0.5 - cx) / r, ny = (y + 0.5 - cy) / r, d2 = nx * nx + ny * ny;
+      if (d2 > 1) continue;
+      const nz = Math.sqrt(1 - d2), [diff, spec] = lit(nx, ny, nz);
+      let c = shade(base(nx, ny), amb + diff * 0.85);
+      if (rim && ny > 0) c = mix(c, rim, Math.min(0.7, (1 - nz) * ny * 1.6));
+      if (spec) c = mix(c, 0xffffffff, spec);
+      px(s, x, y, c);
+    }
+  }
+}
+
+/** A round body lying in the picture from (x0, y0) to (x1, y1), its radius ``r(t)`` along the
+ * way (t = 0..1), shaded round; ``color(t, n)`` is its colour there, n across it (-1..1). */
+function rod(s: Sprite, x0: number, y0: number, x1: number, y1: number, r: (t: number) => number,
+             color: (t: number, n: number) => number, amb = 0.45): void {
+  const len = Math.hypot(x1 - x0, y1 - y0), ax = (x1 - x0) / len, ay = (y1 - y0) / len;
+  let big = 0;
+  for (let k = 0; k <= 24; k++) big = Math.max(big, r(k / 24));
+  for (let y = Math.floor(Math.min(y0, y1) - big); y <= Math.max(y0, y1) + big; y++) {
+    for (let x = Math.floor(Math.min(x0, x1) - big); x <= Math.max(x0, x1) + big; x++) {
+      const dx = x + 0.5 - x0, dy = y + 0.5 - y0;
+      const t = (dx * ax + dy * ay) / len, rr = t >= 0 && t <= 1 ? r(t) : 0;
+      if (rr <= 0) continue;
+      const n = (-dx * ay + dy * ax) / rr;
+      if (Math.abs(n) > 1) continue;
+      const [diff, spec] = lit(-ay * n, ax * n, Math.sqrt(1 - n * n));
+      let c = shade(color(t, n), amb + diff * 0.8);
+      if (spec) c = mix(c, 0xffffffff, spec * 0.85);
+      px(s, x, y, c);
+    }
+  }
+}
+
+/** A capsule's radius ``r`` along its length: straight, rounded over the last ``end`` of each end. */
+const capsule = (r: number, end: number) => (t: number): number => {
+  const e = Math.max(0, Math.abs(t - 0.5) - (0.5 - end)) / end;
+  return r * Math.sqrt(Math.max(0, 1 - e * e));
+};
 
 const QUESTION = [".###.", "#...#", "....#", "..##.", "..#..", ".....", "..#.."];
+/** The rainbow of the items: item box rims, the sheen on oil. */
+const SHEEN = ["#ff5fa2", "#ffd23f", "#5dff7a", "#63c8ff", "#c79bff"].map(hex);
+/** Frames in a turn of the item box (a quarter turn: a cube looks the same after it). */
+export const BOX_FRAMES = 10;
 
-/** Item boxes: a glossy crystal cube with a question mark, its rim cycling through colors. */
+/** Item boxes: a crystal cube with a question mark on every side, seen from a little above,
+ * turning as its rim cycles through the colours (ray-cast once into each frame). */
 export function itemBoxFrames(): SceneryArt[] {
-  const rims = [hex("#ff5fa2"), hex("#ffd23f"), hex("#5dff7a"), hex("#63c8ff"), hex("#c79bff")];
-  return rims.map((rim, f) => {
-    const s = makeSprite(18, 18);
-    rect(s, 0, 0, 18, 18, rim);
-    rect(s, 2, 2, 16, 16, mix(hex("#f4ecff"), rim, 0.22));
-    for (let k = 0; k < 9; k++) px(s, 3 + k, 3 + ((k + f) % 2), 0xffffffff); // gloss
-    rect(s, 2, 13, 16, 16, mix(hex("#d9c9ff"), rim, 0.35));
-    QUESTION.forEach((row, y) => {
-      for (let x = 0; x < row.length; x++) {
-        if (row[x] === "#") rect(s, 6 + x, 5 + y, 7 + x, 6 + y, hex("#3a1f6b"));
+  const S = 26, unit = 7.8, pitch = 0.45; // px per half-edge; how far it is seen from above
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  return Array.from({ length: BOX_FRAMES }, (_, f) => {
+    const s = makeSprite(S, S);
+    const yaw = 0.3 + (f / BOX_FRAMES) * (Math.PI / 2), rim = SHEEN[f % SHEEN.length];
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cube = (x: number, y: number, z: number) => [x * cy + y * sy, -x * sy + y * cy, z]; // view -> cube
+    const d = cube(0, cp, -sp), right = cube(1, 0, 0), up = cube(0, sp, cp); // the ray, the picture's axes
+    for (let py = 0; py < S; py++) {
+      for (let qx = 0; qx < S; qx++) {
+        const u = (qx + 0.5 - S / 2) / unit, v = (S / 2 - py - 0.5) / unit;
+        const o = [0, 1, 2].map((a) => u * right[a] + v * up[a] - 5 * d[a]);
+        let t0 = -Infinity, t1 = Infinity, axis = 0;
+        for (let a = 0; a < 3; a++) {
+          if (Math.abs(d[a]) < 1e-9) {
+            if (Math.abs(o[a]) > 1) t0 = Infinity;
+            continue;
+          }
+          const ta = (-1 - o[a]) / d[a], tb = (1 - o[a]) / d[a];
+          if (Math.min(ta, tb) > t0) { t0 = Math.min(ta, tb); axis = a; }
+          t1 = Math.min(t1, Math.max(ta, tb));
+        }
+        if (t0 > t1) continue;
+        const h = [0, 1, 2].map((a) => o[a] + t0 * d[a]);
+        const sign = d[axis] > 0 ? -1 : 1; // the face turned to the viewer
+        // where on that face (across, up), as seen from outside it
+        const [fu, fv] = axis === 2 ? [h[0], h[1]] : axis === 0 ? [sign * h[1], h[2]] : [-sign * h[0], h[2]];
+        const nx = sign * right[axis], nu = sign * up[axis], nz = -sign * d[axis];
+        const [diff] = lit(nx, -nu, nz);
+        let c: number;
+        if (Math.max(Math.abs(fu), Math.abs(fv)) > 0.74) c = shade(rim, 0.66 + diff * 0.55); // the rim
+        else {
+          c = shade(mix(hex("#e9dcff"), rim, 0.3), axis === 2 ? 1.08 : 0.46 + diff * 0.7);
+          if (axis !== 2) {
+            const gx = Math.floor((fu + 0.5) * 5), gy = Math.floor(((0.62 - fv) / 1.24) * 7);
+            if (gx >= 0 && gx < 5 && gy >= 0 && gy < 7 && QUESTION[gy][gx] === "#") c = shade(hex("#3a1f6b"), 0.8 + diff * 0.3);
+            else if (Math.abs(fu - fv * 0.6 + 0.4) < 0.08) c = mix(c, 0xffffffff, 0.6); // a glint
+          }
+        }
+        px(s, qx, py, c);
       }
-    });
+    }
     outline(s, hex("#1a1030"));
-    return { sprite: s, height: 1.3, solid: false };
+    return { sprite: s, height: 1.5, solid: false };
   });
 }
 
-/** An oil slick: a flat dark puddle with a rainbow sheen. */
+/** An oil slick, as a sprite: the puddle a slick on raised road shows (on the ground, slicks
+ * are painted into the road itself; see render/decals.ts). */
 export function slickArt(): SceneryArt {
-  const s = makeSprite(30, 9);
-  for (let y = 0; y < 9; y++) {
-    for (let x = 0; x < 30; x++) {
-      const e = ((x - 14.5) / 14.5) ** 2 + ((y - 4) / 4.4) ** 2;
-      if (e <= 1) px(s, x, y, hex("#14121c"));
+  const s = makeSprite(40, 12);
+  for (let y = 0; y < 12; y++) {
+    for (let x = 0; x < 40; x++) {
+      const e = ((x - 19.5) / 19.5) ** 2 + ((y - 5.5) / 5.8) ** 2;
+      if (e > 1) continue;
+      const sheen = Math.abs(e - 0.45) < 0.07;
+      px(s, x, y, sheen ? SHEEN[Math.floor(x / 3) % SHEEN.length] : e > 0.85 ? hex("#2c2838") : hex("#14121c"));
     }
   }
-  const sheen = [hex("#ff5fa2"), hex("#ffd23f"), hex("#5dff7a"), hex("#63c8ff")];
-  for (let k = 0; k < 12; k++) px(s, 8 + k, 3 + (k > 5 ? 1 : 0), sheen[k % 4]);
-  return { sprite: s, height: 0.42, solid: false };
+  for (let x = 9; x < 17; x++) px(s, x, 3, hex("#8a8aa0")); // the shine
+  return { sprite: s, height: 0.62, solid: false };
 }
 
-/** A dream orb: a glowing violet sphere with a bright core. */
-export function orbArt(): SceneryArt {
-  const s = makeSprite(14, 14);
-  disc(s, 6.5, 6.5, 6.4, (x, y) => mix(hex("#ffffff"), hex("#7b3cff"), Math.min(1, Math.hypot(x - 5, y - 5) / 7)));
+/** A dream orb: a glassy violet ball with a pale swirl turning inside it. */
+export function orbArt(k = 1): SceneryArt {
+  const n = Math.round(20 * k), r = n / 2 - 0.7;
+  const s = makeSprite(n, n);
+  ball(s, n / 2, n / 2, r, (x, y) => {
+    const a = Math.atan2(y, x), d = Math.hypot(x, y);
+    return Math.sin(a * 2 + d * 6) > 0.55 && d < 0.85 ? hex("#cdb0ff") : hex("#7b3cff");
+  }, hex("#ff7ad9"), 0.5);
   outline(s, hex("#2b0f5c"));
-  return { sprite: s, height: 1.15, solid: false };
+  return { sprite: s, height: 1.4, solid: false };
 }
 
 /** Fill a polygon (even-odd) in sprite pixel coordinates. */
@@ -1033,102 +1267,124 @@ function stroke(s: Sprite, x0: number, y0: number, x1: number, y1: number, r: nu
   for (let k = 0; k <= n; k++) disc(s, x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n, r, () => c);
 }
 
-function turboIcon(): Sprite {
-  const s = makeSprite(16, 16);
-  for (let k = 0; k < 2; k++) {
-    for (let y = 0; y < 12; y++) {
-      const x = 3 + k * 6 + (y < 6 ? y : 11 - y) / 1.5;
-      rect(s, Math.round(x), 2 + y, Math.round(x) + 3, 3 + y, k ? hex("#ffd23f") : hex("#ff7a1a"));
-    }
-  }
-  outline(s, hex("#2a1408"));
-  return s;
-}
-
-/** A turbo cell: an orange capsule with a white chevron (what a kart carries for a turbo). */
-function turboCell(): Sprite {
-  const s = makeSprite(12, 15);
-  for (let y = 0; y < 15; y++) {
-    for (let x = 0; x < 12; x++) {
-      const corner = (x < 2 || x > 9) && (y < 2 || y > 12);
-      if (!corner) px(s, x, y, x < 4 ? hex("#ffa24a") : x > 8 ? hex("#d9580a") : hex("#ff7a1a"));
-    }
-  }
-  for (let k = 0; k < 2; k++) {
-    for (let y = 0; y < 6; y++) {
-      const x = 3 + (y < 3 ? y : 5 - y) + k * 3;
-      px(s, x, 4 + y, 0xffffffff);
-      px(s, x + 1, 4 + y, 0xffffffff);
-    }
-  }
+/** A turbo cell: an orange capsule with a white arrow up its front, standing up. */
+function turboCell(k = 1): Sprite {
+  const w = Math.round(14 * k), h = Math.round(18 * k);
+  const s = makeSprite(w, h);
+  rod(s, w / 2, 0.5, w / 2, h - 0.5, capsule(w / 2 - 1, 0.22), (t, n) => {
+    const arrow = (t > 0.22 && t < 0.5 && Math.abs(n) < (t - 0.22) * 2.4) || (t >= 0.5 && t < 0.78 && Math.abs(n) < 0.24);
+    return arrow ? 0xffffffff : t < 0.12 || t > 0.88 ? hex("#d9580a") : hex("#ff7a1a");
+  });
   outline(s, hex("#3a1606"));
   return s;
 }
 
-/** Three little turbo cells. */
-function tripleIcon(): Sprite {
-  const s = makeSprite(16, 16);
-  for (const [ox, oy] of [[5, 1], [1, 7], [9, 7]]) {
-    rect(s, ox, oy, ox + 6, oy + 8, hex("#ff7a1a"));
-    rect(s, ox, oy, ox + 2, oy + 8, hex("#ffa24a"));
-    px(s, ox + 2, oy + 2, 0xffffffff);
-    px(s, ox + 3, oy + 3, 0xffffffff);
-    px(s, ox + 2, oy + 4, 0xffffffff);
+/** Three turbo cells, for the HUD. */
+function tripleIcon(k = 1): Sprite {
+  const n = Math.round(18 * k);
+  const s = makeSprite(n, n);
+  const cell = turboCell(k * 0.58);
+  for (const [fx, fy] of [[0.5, 0.02], [0.12, 0.42], [0.88, 0.42]]) {
+    const ox = Math.round(fx * n - cell.w / 2), oy = Math.round(fy * n);
+    for (let y = 0; y < cell.h; y++) for (let x = 0; x < cell.w; x++) {
+      const c = cell.data[y * cell.w + x];
+      if (c) px(s, ox + x, oy + y, c);
+    }
   }
-  outline(s, hex("#3a1606"));
   return s;
 }
 
-function oilIcon(): Sprite {
-  const s = makeSprite(16, 16);
-  disc(s, 7.5, 9.5, 5, () => hex("#14121c"));
-  for (let y = 2; y < 7; y++) rect(s, 8 - Math.floor((y - 1) / 2), y, 8 + Math.ceil((y - 1) / 2), y + 1, hex("#14121c"));
-  [hex("#ff5fa2"), hex("#ffd23f"), hex("#63c8ff")].forEach((c, k) => px(s, 5 + k, 8, c));
+/** A drop of oil, glossy black with a rainbow sheen, for the HUD. */
+function oilIcon(k = 1): Sprite {
+  const w = Math.round(14 * k), h = Math.round(18 * k);
+  const s = makeSprite(w, h);
+  const r = (t: number) => (t < 0.62 ? (w / 2 - 1) * (t / 0.62) ** 0.75 : (w / 2 - 1) * Math.sqrt(Math.max(0, 1 - ((t - 0.62) / 0.38) ** 2)));
+  rod(s, w / 2, 0.5, w / 2, h - 0.5, r, (t, n) =>
+    Math.abs(t - 0.66 + n * n * 0.1) < 0.045 ? SHEEN[Math.floor((n + 1) * 2.5) % SHEEN.length] : hex("#2a2638"), 0.5);
   outline(s, hex("#d9e1ea"));
   return s;
 }
 
 /** An oil barrel: what a kart holds out behind it before the slick is poured. */
-function oilBarrel(): Sprite {
-  const s = makeSprite(12, 15);
-  for (let y = 1; y < 15; y++) {
-    for (let x = 1; x < 11; x++) {
-      const ring = y === 4 || y === 10;
-      px(s, x, y, ring ? hex("#8b93a8") : x < 4 ? hex("#2f3a66") : x > 8 ? hex("#141a33") : hex("#202a52"));
+function oilBarrel(k = 1): Sprite {
+  const w = Math.round(14 * k), h = Math.round(18 * k);
+  const s = makeSprite(w, h);
+  const top = Math.max(2, Math.round(2.5 * k));
+  rod(s, w / 2, top, w / 2, h - 0.5, () => w / 2 - 1, (t) =>
+    Math.abs(t - 0.3) < 0.05 || Math.abs(t - 0.72) < 0.05 ? hex("#a3abc0") : hex("#2b3770"));
+  // the lid, an ellipse seen from a little above, and its bung
+  for (let y = 0; y < 2 * top; y++) {
+    for (let x = 0; x < w; x++) {
+      const e = ((x + 0.5 - w / 2) / (w / 2 - 1)) ** 2 + ((y + 0.5 - top) / top) ** 2;
+      if (e <= 1) px(s, x, y, e > 0.6 ? hex("#5a6492") : hex("#3a4680"));
     }
   }
-  rect(s, 2, 0, 10, 1, hex("#5a6288"));
-  [hex("#ff5fa2"), hex("#ffd23f"), hex("#63c8ff")].forEach((c, k) => px(s, 5 + k, 7, c));
+  px(s, Math.round(w * 0.65), top, hex("#141a33"));
+  [hex("#ff5fa2"), hex("#ffd23f"), hex("#63c8ff")].forEach((c, i) => px(s, Math.round(w / 2 - 1 + i), Math.round(h * 0.52), c));
   outline(s, hex("#0a0d1c"));
   return s;
 }
 
-/** A boomerang, spinning: four frames a quarter turn apart. */
-export function boomerangFrames(): SceneryArt[] {
-  return [0, 1, 2, 3].map((f) => {
-    const s = makeSprite(18, 18);
-    const a = (f / 4) * Math.PI * 2;
-    const arm = (ang: number, c: number) => stroke(s, 9, 9, 9 + Math.cos(ang) * 7, 9 + Math.sin(ang) * 7, 1.6, c);
-    arm(a, hex("#1fb5a8"));
-    arm(a + 1.75, hex("#1fb5a8"));
-    stroke(s, 9, 9, 9 + Math.cos(a) * 6, 9 + Math.sin(a) * 6, 0.6, hex("#a8fff4"));
-    stroke(s, 9, 9, 9 + Math.cos(a + 1.75) * 6, 9 + Math.sin(a + 1.75) * 6, 0.6, hex("#ffd23f"));
+/** A boomerang, spinning flat (eight frames a turn) and seen from above at an angle: each arm
+ * rounded across its width and lit, a yellow stripe near each tip, and its edge showing under it. */
+export function boomerangFrames(k = 1): SceneryArt[] {
+  const W = Math.round(28 * k), Hh = Math.round(22 * k), cx = W / 2, cy = Hh / 2 - k;
+  const e = 0.62, se = Math.sin(e), ce = Math.cos(e); // how steeply it is seen from above
+  const len = 10.5 * k, thick = 2.2 * k * ce;
+  return Array.from({ length: 8 }, (_, f) => {
+    const s = makeSprite(W, Hh);
+    const a = (f / 8) * Math.PI * 2;
+    const tips = [a, a + 1.95].map((b) => [Math.cos(b) * len, Math.sin(b) * len]);
+    /** Nearest point on either arm to (x, y) in the boomerang's plane: [distance, how far out
+     * the arm (0 at the elbow), signed offset across it, the arm's direction]. */
+    const arm = (x: number, y: number): [number, number, number, number, number] => {
+      let best: [number, number, number, number, number] = [Infinity, 0, 0, 0, 0];
+      for (const [tx, ty] of tips) {
+        const t = Math.max(0, Math.min(1, (x * tx + y * ty) / (len * len)));
+        const d = Math.hypot(x - tx * t, y - ty * t);
+        if (d < best[0]) best = [d, t, (x * ty - y * tx) / len, tx / len, ty / len];
+      }
+      return best;
+    };
+    const half = (t: number) => (3.1 - 1.2 * t) * k;
+    for (const layer of [0, 1]) { // the edge first, the top over it
+      for (let y = 0; y < Hh; y++) {
+        for (let x = 0; x < W; x++) {
+          // screen -> plane: x across, y away from the viewer (foreshortened)
+          const [d, t, side, ax, ay] = arm(x + 0.5 - cx, -(y + 0.5 - cy - (layer ? 0 : thick)) / se);
+          if (d > half(t)) continue;
+          if (!layer) { px(s, x, y, hex("#0a4f49")); continue; }
+          // the top is rounded across the arm: its normal leans out toward the nearer edge
+          const w = Math.max(-1, Math.min(1, side / half(t))) * 0.75, up = Math.sqrt(1 - w * w);
+          const bx = ay, by = -ax; // across the arm, in the plane
+          const nx = bx * w, ny = -(by * w * se + up * ce), nz = -by * w * ce + up * se;
+          const [diff, spec] = lit(nx, ny, nz);
+          const base = Math.abs(t - 0.74) < 0.08 ? hex("#ffd23f") : hex("#1fb5a8");
+          px(s, x, y, mix(shade(base, 0.5 + diff * 0.8), 0xffffffff, spec * 0.8));
+        }
+      }
+    }
     outline(s, hex("#083b37"));
-    return { sprite: s, height: 1.15, solid: false };
+    return { sprite: s, height: 1.5, solid: false };
   });
 }
 
-/** A round bomb with a lit fuse (two frames: the spark flickers). */
-export function bombFrames(): SceneryArt[] {
+/** A round bomb, gunmetal with a shine, a steel cap and a fuse whose spark flickers (two frames). */
+export function bombFrames(k = 1): SceneryArt[] {
+  const W = Math.round(22 * k), Hh = Math.round(26 * k), r = 9 * k, cx = W / 2 - 0.5 * k, cy = Hh - r - 0.6;
   return [0, 1].map((f) => {
-    const s = makeSprite(16, 18);
-    disc(s, 7.5, 10.5, 6.5, (x, y) => (Math.hypot(x - 5.5, y - 8) < 2 ? hex("#6b6b80") : hex("#23232c")));
-    rect(s, 5, 2, 10, 4, hex("#8a8d99"));
-    for (let k = 0; k < 4; k++) px(s, 10 + k, 1 - (k > 1 ? 1 : 0) + 2, hex("#c9a46b"));
-    disc(s, 13.5, 1.5, f ? 1.6 : 1.1, () => (f ? 0xffffffff : hex("#ffd23f")));
-    if (f) { px(s, 15, 0, hex("#ff8a1f")); px(s, 12, 0, hex("#ff8a1f")); }
+    const s = makeSprite(W, Hh);
+    ball(s, cx, cy, r, () => hex("#2c2c3a"), hex("#5a6aa8"), 0.55);
+    // the cap: a short steel cylinder on top
+    rod(s, cx - 3.2 * k, cy - r - 0.6 * k, cx + 3.2 * k, cy - r - 0.6 * k, () => 2 * k, () => hex("#8a8d99"));
+    for (let x = Math.round(cx - 2.6 * k); x <= cx + 2.6 * k; x++) px(s, x, Math.round(cy - r - 2.4 * k), hex("#c9ccd6"));
+    // the fuse, curling up and to the right, and its spark
+    stroke(s, cx + 1.5 * k, cy - r - 2.5 * k, cx + 4.5 * k, cy - r - 4.2 * k, 0.55 * k, hex("#c9a46b"));
+    const sx = cx + 5.6 * k, sy = Math.max(1.5, cy - r - 5 * k);
+    disc(s, sx, sy, (f ? 1.7 : 1.1) * k, () => (f ? 0xffffffff : hex("#ffd23f")));
+    if (f) { px(s, sx + 2 * k, sy - k, hex("#ff8a1f")); px(s, sx - 2 * k, sy - k, hex("#ff8a1f")); }
     outline(s, hex("#0b0b10"));
-    return { sprite: s, height: 1.25, solid: false };
+    return { sprite: s, height: 1.5, solid: false };
   });
 }
 
@@ -1142,76 +1398,91 @@ export function blastFrames(): SceneryArt[] {
     disc(s, 20, 20, r, (x, y) => {
       const d = Math.hypot(x - 20, y - 20) / r;
       if (t > 0.55 && rng.next() < (t - 0.5) * 0.9) return 0; // breaking up
-      return t < 0.25
+      const lower = y > 20 + r * 0.25 && x > 20 - r * 0.2 ? 0.82 : 1; // a shaded underside: a ball of fire
+      return shade(t < 0.25
         ? (d < 0.6 ? 0xffffffff : hex("#ffe27a"))
         : t < 0.7
           ? (d < 0.4 ? hex("#ffe27a") : d < 0.75 ? hex("#ff8a1f") : hex("#d9381e"))
-          : (d < 0.5 ? hex("#8f8a90") : hex("#5d5862"));
+          : (d < 0.5 ? hex("#8f8a90") : hex("#5d5862")), lower);
     });
     return { sprite: s, height: 3.2, solid: false };
   });
 }
 
-/** The prism: a five-point star in shifting rainbow bands. */
-function prismIcon(): Sprite {
-  const s = makeSprite(16, 16);
+/** The prism: a bevelled five-point star, each point a rainbow colour, lit on one side of its
+ * ridge and shaded on the other. */
+function prismIcon(k = 1): Sprite {
+  const n = Math.round(18 * k);
+  const s = makeSprite(n, n);
+  const cx = n / 2, cy = n / 2 + 0.6 * k, R = n / 2 - 0.6, ri = R * 0.43;
   const pts: number[][] = [];
-  for (let k = 0; k < 10; k++) {
-    const a = -Math.PI / 2 + (k * Math.PI) / 5, r = k % 2 ? 3.2 : 7.4;
-    pts.push([8 + Math.cos(a) * r, 8.6 + Math.sin(a) * r]);
+  for (let j = 0; j < 10; j++) {
+    const a = -Math.PI / 2 + (j * Math.PI) / 5;
+    pts.push([cx + Math.cos(a) * (j % 2 ? ri : R), cy + Math.sin(a) * (j % 2 ? ri : R)]);
   }
-  const bands = [hex("#ff5fa2"), hex("#ffd23f"), hex("#5dff7a"), hex("#63c8ff"), hex("#c79bff")];
-  poly(s, pts, (x, y) => (Math.hypot(x - 7.5, y - 8) < 2 ? 0xffffffff : bands[Math.floor((x + y) / 3) % bands.length]));
+  const bands = ["#ff5fa2", "#ffd23f", "#5dff7a", "#63c8ff", "#c79bff"].map(hex);
+  poly(s, pts, (x, y) => {
+    const a = Math.atan2(y + 0.5 - cy, x + 0.5 - cx);
+    const j = Math.round((a + Math.PI / 2) / ((2 * Math.PI) / 5));
+    const tip = -Math.PI / 2 + (j * 2 * Math.PI) / 5;
+    const face = tip + (Math.sin(a - tip) >= 0 ? 0.35 : -0.35); // which side of the point's ridge
+    const [diff, spec] = lit(Math.cos(face) * 0.62, Math.sin(face) * 0.62, 0.78);
+    return mix(shade(bands[((j % 5) + 5) % 5], 0.55 + diff * 0.75), 0xffffffff, spec * 0.8);
+  });
   outline(s, hex("#2b0f5c"));
   return s;
 }
 
-/** The shock: a lightning bolt. */
-function shockIcon(): Sprite {
-  const s = makeSprite(16, 16);
-  poly(s, [[9, 0], [3, 9], [7, 9], [5, 16], [13, 6], [9, 6], [12, 0]], (x) => (x < 7 ? hex("#fff6b0") : hex("#ffd23f")));
+/** The shock: a lightning bolt with depth: its edge shows below and to the right of its face. */
+function shockIcon(k = 1): Sprite {
+  const n = Math.round(18 * k);
+  const s = makeSprite(n, n);
+  const bolt = [[10, 0], [3, 10], [8, 10], [5, 17], [14, 6], [9, 6], [13, 0]].map(([x, y]) => [x * k, y * k]);
+  poly(s, bolt.map(([x, y]) => [x + 1.4 * k, y + 1.1 * k]), () => hex("#a86e00"));
+  poly(s, bolt, (x, y) => mix(hex("#fff8c0"), hex("#ffc21a"), Math.min(1, (x + y) / (20 * k))));
+  for (let j = 0; j < 2; j++) { // light along the two upper-left edges
+    const [a, b] = j ? [bolt[0], bolt[1]] : [bolt[2], bolt[3]];
+    const steps = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]));
+    for (let q = 0; q <= steps; q++) px(s, a[0] + ((b[0] - a[0]) * q) / steps + 0.6, a[1] + ((b[1] - a[1]) * q) / steps, 0xffffffff);
+  }
   outline(s, hex("#3d2a00"));
   return s;
 }
 
-/** The rocket, nose up and to the right, flame trailing. */
-function rocketIcon(): Sprite {
-  const s = makeSprite(16, 16);
-  stroke(s, 4, 12, 11, 5, 2.4, hex("#eef0f6"));
-  stroke(s, 10, 6, 12.5, 3.5, 1.6, hex("#ff3b4f"));
-  disc(s, 8, 8, 1.2, () => hex("#2c3d5c"));
-  poly(s, [[2, 9], [5, 9], [3, 6]], () => hex("#ff7a1a"));
-  poly(s, [[7, 14], [7, 11], [10, 13]], () => hex("#ff7a1a"));
-  disc(s, 2.5, 13.5, 1.6, () => hex("#ffd23f"));
-  px(s, 1, 15, hex("#ff8a1f"));
+/** The rocket, nose up and to the right: a round white body with a red nose and fins, a window,
+ * and its flame. */
+function rocketIcon(k = 1): Sprite {
+  const n = Math.round(18 * k);
+  const s = makeSprite(n, n);
+  const x0 = 4.2 * k, y0 = n - 4.2 * k, x1 = n - 1.2 * k, y1 = 1.2 * k;
+  // the flame, then the fins, behind the body
+  poly(s, [[x0 - 0.5 * k, y0 - 2.4 * k], [x0 + 2.4 * k, y0 + 0.5 * k], [0.4 * k, n - 0.4 * k]], () => hex("#ff8a1f"));
+  disc(s, x0 - 0.6 * k, y0 + 0.6 * k, 1.5 * k, () => hex("#ffd23f"));
+  poly(s, [[x0 + 1 * k, y0 - 4.5 * k], [x0 - 1.4 * k, y0 - 5 * k], [x0 + 3 * k, y0 - 2 * k]], () => hex("#ff5a6a"));
+  poly(s, [[x0 + 4.5 * k, y0 - 1 * k], [x0 + 5 * k, y0 + 1.4 * k], [x0 + 2 * k, y0 - 3 * k]], () => hex("#b81f30"));
+  rod(s, x0, y0, x1, y1, (t) => (t < 0.7 ? 2.9 * k : 2.9 * k * Math.sqrt(Math.max(0, 1 - ((t - 0.7) / 0.3) ** 2))),
+      (t) => (t > 0.7 ? hex("#ff3b4f") : Math.abs(t - 0.12) < 0.05 ? hex("#ff3b4f") : hex("#eef0f6")));
+  ball(s, x0 + (x1 - x0) * 0.48, y0 + (y1 - y0) * 0.48, 1.4 * k, () => hex("#3a6fd8"), 0, 0.5); // the window
   outline(s, hex("#1d1f2a"));
   return s;
 }
 
-/** 16x16 icons for the HUD's item slot. */
+/** The item slot's icons, drawn big enough to show pixel for pixel in the HUD (about 28 px). */
 export function itemIcons(): Record<"turbo" | "triple" | "oil" | "orb" | "boomerang" | "bomb" | "prism" | "shock" | "rocket", Sprite> {
-  const boom = boomerangFrames()[0].sprite, bomb = bombFrames()[0].sprite;
-  const fit = (src: Sprite): Sprite => { // a 16x16 copy
-    const s = makeSprite(16, 16);
-    const ox = Math.floor((16 - src.w) / 2), oy = Math.floor((16 - src.h) / 2);
-    for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) { const c = src.data[y * src.w + x]; if (c) px(s, x + ox, y + oy, c); }
-    return s;
-  };
   return {
-    turbo: turboIcon(), triple: tripleIcon(), oil: oilIcon(), orb: orbArt().sprite, boomerang: fit(boom),
-    bomb: fit(bomb), prism: prismIcon(), shock: shockIcon(), rocket: rocketIcon(),
+    turbo: turboCell(1.55), triple: tripleIcon(1.6), oil: oilIcon(1.5), orb: orbArt(1.4).sprite,
+    boomerang: boomerangFrames(1.12)[1].sprite, bomb: bombFrames(1.12)[0].sprite, prism: prismIcon(1.6),
+    shock: shockIcon(1.6), rocket: rocketIcon(1.6),
   };
 }
 
-/** What a kart carries out behind it, by item (drawn small, trailing the kart). */
+/** What a kart carries over its driver's head (and holds out behind it). */
 export function heldArt(): Record<"turbo" | "triple" | "oil" | "orb" | "boomerang" | "bomb" | "prism" | "shock" | "rocket", SceneryArt> {
-  const icons = itemIcons();
   const art = (sprite: Sprite, height = 0.85): SceneryArt => ({ sprite, height, solid: false });
   return {
     turbo: art(turboCell()), triple: art(turboCell()), oil: art(oilBarrel(), 0.95), orb: art(orbArt().sprite, 0.9),
-    boomerang: art(boomerangFrames()[0].sprite, 0.9), bomb: art(bombFrames()[0].sprite, 0.95), prism: art(icons.prism),
-    shock: art(icons.shock),
-    rocket: art(icons.rocket, 0.95),
+    boomerang: art(boomerangFrames()[1].sprite, 0.9), bomb: art(bombFrames()[0].sprite, 0.95), prism: art(prismIcon()),
+    shock: art(shockIcon()), rocket: art(rocketIcon(), 0.95),
   };
 }
 

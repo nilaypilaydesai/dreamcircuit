@@ -118,13 +118,13 @@ export class Scenery {
     for (let k = 0; k < 900 && this.items.length < 700; k++) {
       const x = this.rng.range(-HALF + 12, HALF - 12), y = this.rng.range(-HALF + 12, HALF - 12);
       const kind = this.rng.pick(t.far);
-      const big = kind === "mesa" || kind === "peak" || kind === "wreck";
+      const big = kind === "mesa" || kind === "peak" || kind === "wreck" || kind === "spire";
       // big landmarks stand well back from the road (a mountain peak furthest of all)
       const need = kind === "peak" ? 120 : big ? 60 : HALF_WIDTH + 7;
       const d = this.roadDistance(track, x, y, need + 10);
       if (d < need) continue;
       // forests cluster: drop a few neighbours around trees
-      const n = ["pine", "oak", "cactus", "crystal", "kelp", "coral", "snowpine"].includes(kind) ? this.rng.int(1, 4) : 1;
+      const n = ["pine", "oak", "cactus", "crystal", "kelp", "coral", "snowpine", "basalt"].includes(kind) ? this.rng.int(1, 4) : 1;
       for (let m = 0; m < n; m++) {
         const xx = x + this.rng.range(-6, 6) * (m > 0 ? 1 : 0), yy = y + this.rng.range(-6, 6) * (m > 0 ? 1 : 0);
         this.add(track, xx, yy, this.art(kind), this.rng.next() > 0.5, HALF_WIDTH + 6);
@@ -133,6 +133,7 @@ export class Scenery {
     const si = track.startIndex;
     const [tx, ty] = track.tangent(si);
     this.items.push({ x: track.xs[si] + tx * 0.5, y: track.ys[si] + ty * 0.5, art: gantry(this.bannerText), flip: false });
+    if (t.volcano) return; // nobody sits out on the lava
     const off = HALF_WIDTH + 9;
     this.add(track, track.xs[si] - ty * off + tx * 25, track.ys[si] + tx * off + ty * 25, grandstand(this.rng), false,
              HALF_WIDTH + 4);

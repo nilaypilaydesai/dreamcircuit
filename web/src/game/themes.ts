@@ -6,11 +6,13 @@ export type SceneryKind =
   | "pine" | "oak" | "bush" | "rock" | "flowers" | "cactus" | "palm" | "crystal" | "neonpalm"
   | "mesa" | "lamp" | "tire" | "cone" | "chevron"
   | "kelp" | "coral" | "anemone" | "shell" | "wreck" // the reef
-  | "snowpine" | "cliff" | "peak" | "snowbank"; // the mountains
+  | "snowpine" | "cliff" | "peak" | "snowbank" // the mountains
+  | "basalt" | "obsidian" | "vent" | "spire" | "magmarock"; // the volcano
 
 export interface Theme {
   id: string;
   name: string;
+  blurb: string; // one line for the WORLD menu
   skyTop: number;
   skyHorizon: number;
   fog: number;
@@ -34,11 +36,14 @@ export interface Theme {
   mountain?: boolean; // climbs over hills, tunnels, a more winding road
   snow?: number; // snow on the far mountain tops (0 = none)
   farAmp?: number; // how tall the far hills on the horizon are (default 26 px)
+  volcano?: boolean; // a lake of lava around a rock road (drive into it and a drone fishes you
+  // out), crater walls with lava falls all around, embers in the air
+  wall?: number; // the low walls along a climb (default: grey stone)
 }
 
 export const THEMES: Theme[] = [
   {
-    id: "valley", name: "DREAM VALLEY",
+    id: "valley", name: "DREAM VALLEY", blurb: "MEADOWS, WOODS AND A BIG BLUE SKY",
     skyTop: hex("#3a6fd8"), skyHorizon: hex("#b9e4ff"), fog: hex("#cfeaff"), sun: 0, stars: false,
     farHills: hex("#7b8ccf"), nearHills: hex("#3f9a52"), clouds: hex("#ffffff"),
     ground: [hex("#4caf50"), hex("#43a047")], groundSpeck: hex("#66bb6a"),
@@ -49,7 +54,7 @@ export const THEMES: Theme[] = [
     far: ["oak", "pine", "pine", "bush", "rock", "flowers"],
   },
   {
-    id: "neon", name: "NEON NIGHT",
+    id: "neon", name: "NEON NIGHT", blurb: "A SYNTHWAVE GRID OF CRYSTALS UNDER THE STARS",
     skyTop: hex("#0b0420"), skyHorizon: hex("#6d1b7b"), fog: hex("#3b1650"), sun: hex("#ff6ad5"),
     stars: true, farHills: hex("#2a0f4a"), nearHills: hex("#16082e"), clouds: 0,
     ground: [hex("#140a26"), hex("#170c2c")], groundSpeck: hex("#24123f"),
@@ -60,7 +65,7 @@ export const THEMES: Theme[] = [
     far: ["crystal", "neonpalm", "crystal", "lamp"],
   },
   {
-    id: "mesa", name: "SUNSET MESA",
+    id: "mesa", name: "SUNSET MESA", blurb: "DESERT ROAD THROUGH THE MESAS AT DUSK",
     skyTop: hex("#5a2a7a"), skyHorizon: hex("#ffb463"), fog: hex("#f6b27a"), sun: hex("#ffd36b"),
     stars: false, farHills: hex("#a4506a"), nearHills: hex("#c86a3c"), clouds: hex("#ffd1a1"),
     ground: [hex("#d9a35b"), hex("#d29b52")], groundSpeck: hex("#e4b46c"),
@@ -71,7 +76,7 @@ export const THEMES: Theme[] = [
     far: ["mesa", "cactus", "rock", "cactus", "palm"],
   },
   {
-    id: "reef", name: "CORAL REEF",
+    id: "reef", name: "CORAL REEF", blurb: "UNDER THE SEA, IN BUBBLE HELMETS",
     skyTop: hex("#03203b"), skyHorizon: hex("#1f8fb0"), fog: hex("#1a6f8c"), sun: 0, stars: false,
     farHills: hex("#0f4a66"), nearHills: hex("#155868"), clouds: 0,
     ground: [hex("#d8c497"), hex("#cfba8c")], groundSpeck: hex("#f4e9cf"),
@@ -83,7 +88,7 @@ export const THEMES: Theme[] = [
     underwater: true,
   },
   {
-    id: "mountain", name: "MOUNTAIN PASS",
+    id: "mountain", name: "MOUNTAIN PASS", blurb: "CLIMBS, TUNNELS AND SNOWY PEAKS",
     skyTop: hex("#2f6fd6"), skyHorizon: hex("#cfe6ff"), fog: hex("#dbe9f7"), sun: hex("#fff3c4"), stars: false,
     farHills: hex("#6b7ba0"), nearHills: hex("#3d6a4d"), clouds: hex("#ffffff"),
     ground: [hex("#6f8f5a"), hex("#678653")], groundSpeck: hex("#f4f7fb"),
@@ -93,5 +98,19 @@ export const THEMES: Theme[] = [
     near: ["snowpine", "rock", "snowpine", "snowbank", "cliff", "snowpine", "cone"],
     far: ["snowpine", "snowpine", "peak", "rock", "cliff", "snowpine", "snowbank"],
     mountain: true, snow: hex("#f6f9ff"), farAmp: 46,
+  },
+  {
+    // inside a volcano: the road is a causeway of rock across a lake of lava ("ground" is the
+    // rock of its banks; the lava is painted by world/texture.ts)
+    id: "volcano", name: "VOLCANO CORE", blurb: "A ROAD OF ROCK ACROSS THE LAVA. FALL IN AND A DRONE FISHES YOU OUT",
+    skyTop: hex("#0c0304"), skyHorizon: hex("#5e1b0f"), fog: hex("#4a170e"), sun: 0, stars: false,
+    farHills: hex("#2a1210"), nearHills: hex("#170909"), clouds: hex("#2c1412"),
+    ground: [hex("#2e2427"), hex("#2a2124")], groundSpeck: hex("#4a3a3c"),
+    shoulder: hex("#3a3034"), road: hex("#2d2a33"), roadSpeck: hex("#3c3843"),
+    edge: hex("#ff8a2a"), kerb: [hex("#e0301a"), hex("#1d1518")], barrier: hex("#3a1a14"),
+    grid: 0,
+    near: ["magmarock", "basalt", "obsidian", "vent", "magmarock", "basalt"],
+    far: ["spire", "basalt", "vent", "obsidian", "spire", "magmarock", "basalt"],
+    volcano: true, farAmp: 58, wall: hex("#4a3a3e"),
   },
 ];

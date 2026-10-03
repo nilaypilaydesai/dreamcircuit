@@ -137,6 +137,13 @@ export class Sound {
   shock(): void { this.tone(1400, 0.45, "square", 0.08, 0, 90); this.noise(0.35, 0.12, 5000); }
   rocketGo(): void { this.tone(110, 1.1, "sawtooth", 0.09, 0, 440); this.noise(1.0, 0.1, 1800); }
   blocked(): void { this.tone(1568, 0.08, "square", 0.08); this.noise(0.1, 0.12, 2500); }
+  /** Into the lava: a hiss and a deep gulp. */
+  lava(): void { this.noise(0.9, 0.2, 2600); this.tone(260, 0.5, "triangle", 0.16, 0.05, 60); }
+  /** The rescue drone: rotors whining up, and a two-note beep. */
+  rescue(): void {
+    this.tone(180, 0.9, "sawtooth", 0.035, 0, 320);
+    [988, 784].forEach((f, i) => this.tone(f, 0.09, "square", 0.06, 0.15 + i * 0.12));
+  }
 
   // the award ceremony
   fanfare(): void {

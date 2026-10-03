@@ -1,6 +1,7 @@
 // Arcade kart physics: snappy steering, drifting with mini-turbo boosts, off-road slowdown,
 // kart-to-kart bumps and a soft outer fence; road height (bridges) with guard rails; jumps off
-// ramps, with a trick for a well-timed hop. Tuned for fun, not for the research simulator.
+// ramps, with a trick for a well-timed hop; and in the volcano, falling into the lava, out of
+// which a drone lifts the kart back onto the road. Tuned for fun, not for the research simulator.
 
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import type { ItemKind } from "./items";
@@ -44,6 +45,14 @@ export const ROCKET_SPEED = 1.5; // the rocket's speed, relative to the class to
 export const REVERSE_SPEED = 7; // m/s backing up (on the road; less on the grass)
 const REVERSE_ACCEL = 9; // m/s^2
 const SHRUNK_SPEED = 0.72; // top speed while shrunk by a shock
+// into the lava (the volcano; race.ts decides when): the kart sinks, the screen goes dark while
+// a drone lifts it out at the last point it was on the road, lowers it there and lets it go
+export const FALL_SINK = 0.55; // s to sink out of sight
+export const FALL_SWAP = 0.72; // s: lifted out at the rescue point
+export const FALL_RELEASE = 2.0; // s: let go, half a meter up; the driver has control again
+export const FALL_END = 2.6; // s: the drone has flown off
+export const SINK_DEPTH = 1.8; // m
+const CARRY_HIGH = 3.4, CARRY_LOW = 0.55; // m over the road: where the kart is lowered from and let go
 
 export type TrickGrade = 0 | 1 | 2; // none, good, perfect
 
@@ -80,6 +89,14 @@ export class Kart {
   rocketFrom = 0; // the place it was fired from (it burns out after passing a couple of karts)
   private rocketCarry = 0; // m travelled as a rocket that has not yet reached the next road point
   shrink = 0; // s left shrunk by a shock
+  fall = -1; // s since the kart went into the lava (-1: it has not; see FALL_*)
+  fallX = 0; // where it went in (the splash)
+  fallY = 0;
+  fallZ = 0;
+  dropX = 0; // where the drone set it down
+  dropY = 0;
+  dropZ = 0;
+  private safeIdx = 0; // the last road point the kart was on (not the bank, not in the air)
   // the kart's build (garage parts) and what it does to the class's numbers
   build: Build = DEFAULT_BUILD;
   perf: Perf = NEUTRAL;
@@ -123,10 +140,30 @@ export class Kart {
     return this.prism > 0 || this.rocket > 0;
   }
 
+  /** In the lava or in the rescue drone's hands: out of the race for a moment (nothing hits it,
+   * it hits nothing, and it cannot use its item). */
+  get falling(): boolean {
+    return this.fall >= 0 && this.fall < FALL_RELEASE;
+  }
+
+  /** Into the lava: everything the kart was doing stops. */
+  fallIn(): void {
+    this.fall = 0;
+    this.fallX = this.x;
+    this.fallY = this.y;
+    this.fallZ = this.ground;
+    this.v = this.vz = 0;
+    this.drifting = false;
+    this.boostLevel = this.boostTime = 0;
+    this.spin = this.spinAngle = this.trickAngle = 0;
+    this.trick = 0;
+    this.trailing = false;
+  }
+
   /** Knocked into a spin: it slides on, slowing, with no control for a moment. Returns false
-   * for an invincible kart. */
+   * for an invincible kart (and one in the lava). */
   spinOut(time = SPIN_TIME): boolean {
-    if (this.invincible) return false;
+    if (this.invincible || this.falling) return false;
     this.spin = Math.max(this.spin, time);
     this.v *= 0.45;
     this.drifting = false;
@@ -145,7 +182,7 @@ export class Kart {
     this.x = track.xs[idx] - ty * lateral;
     this.y = track.ys[idx] + tx * lateral;
     this.heading = Math.atan2(ty, tx);
-    this.idx = idx;
+    this.idx = this.safeIdx = idx;
     this.v = 0;
     this.ground = this.elev = track.elev[idx] ?? 0;
     this.air = false;
@@ -163,6 +200,7 @@ export class Kart {
     if (this.prism > 0) this.prism = Math.max(0, this.prism - dt);
     if (this.shrink > 0) this.shrink = Math.max(0, this.shrink - dt);
     if (this.rocket > 0) return this.fly(dt, track, cls);
+    if (this.fall >= 0 && this.rescue(dt, track, input)) return { boosted: false, landed: -1 };
     const P = this.perf;
     // spun out: no control while the kart slides on, slowing, and the sprite turns
     let c = input;
@@ -181,6 +219,7 @@ export class Kart {
     this.offset = track.offset(this.x, this.y, this.idx);
     const a = Math.abs(this.offset);
     this.surface = a < HALF_WIDTH - 1.3 ? "road" : a < HALF_WIDTH ? "kerb" : a < HALF_WIDTH + 1.8 ? "shoulder" : "grass";
+    if (!this.air && this.surface !== "grass") this.safeIdx = this.idx;
     let landed: TrickGrade | -1 = -1;
 
     // hop button (the drift button) for tricks: a fresh press, timed against the ramp lip
@@ -306,6 +345,42 @@ export class Kart {
     return { boosted, landed };
   }
 
+  /** In the lava: sink, then (in the dark) out at the last road point the kart was on, hanging
+   * under the drone as it comes down to the road. Returns false once it is let go (it drops the
+   * last half meter and drives on; a fresh hop as it drops is a trick, as off a ramp, but a hop
+   * button held all through the rescue is not). */
+  private rescue(dt: number, track: Track, input: Controls): boolean {
+    this.fall += dt;
+    if (this.fall >= FALL_END) this.fall = -1; // the drone has flown off
+    if (this.fall < 0 || this.fall >= FALL_RELEASE) return false;
+    this.hopAge += dt; // (the hop button is watched all along, as in update)
+    if (input.drift && !this.hopHeld) this.hopAge = 0;
+    this.hopHeld = !!input.drift;
+    this.v = this.vz = 0;
+    this.surface = "air";
+    if (this.fall < FALL_SWAP) {
+      this.elev = this.ground - SINK_DEPTH * Math.min(1, this.fall / FALL_SINK);
+      return true;
+    }
+    if (this.fall - dt < FALL_SWAP) {
+      const i = this.safeIdx;
+      const [tx, ty] = track.tangent(i);
+      this.x = this.dropX = track.xs[i];
+      this.y = this.dropY = track.ys[i];
+      this.heading = Math.atan2(ty, tx);
+      this.idx = i;
+      this.offset = this.slip = this.steer = this.yawRate = 0;
+      this.ground = this.dropZ = track.elev[i] ?? 0;
+    }
+    const u = Math.min(1, (this.fall - FALL_SWAP) / (FALL_RELEASE - FALL_SWAP));
+    this.elev = this.ground + CARRY_HIGH + (CARRY_LOW - CARRY_HIGH) * (1 - (1 - u) ** 2);
+    if (this.fall + dt >= FALL_RELEASE) { // let go: it drops the rest of the way
+      this.air = true;
+      this.airTime = 0;
+    }
+    return true;
+  }
+
   /** As a rocket the kart rides the road itself at rocket speed: along the centerline, easing
    * into the middle, over ramps and bridges at road height (it can neither cut a corner nor fall
    * off a deck), and comes out of it with a boost. */
@@ -388,6 +463,7 @@ export function collideKarts(karts: Kart[], vmax = 45): { hits: Kart[]; spun: [K
   for (let i = 0; i < karts.length; i++) {
     for (let j = i + 1; j < karts.length; j++) {
       const a = karts[i], b = karts[j];
+      if (a.falling || b.falling) continue; // in the lava, or in the drone's hands
       if (Math.abs(a.elev - b.elev) > 1.8) continue; // one on a bridge, one underneath
       const dx = b.x - a.x, dy = b.y - a.y;
       const d = Math.hypot(dx, dy);

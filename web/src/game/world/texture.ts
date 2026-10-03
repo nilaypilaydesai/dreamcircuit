@@ -1,10 +1,13 @@
 // The ground under the Mode-7 camera: one 2560 x 2560 texture (0.3 m per texel) covering a
 // 768 m square. Terrain is painted once per race; road is painted into it chunk by chunk, as
 // the circuit designer commits each new stretch (raised road, on bridges, is painted as the
-// shadow it casts). A mip chain keeps distant ground from shimmering.
+// shadow it casts). A mip chain keeps distant ground from shimmering. In the volcano the terrain
+// is a lake of lava (marked texels whose colours cycle, world/lava.ts) and the road runs on a
+// bank of rock with a glowing rim where it meets the lava.
 
 import { hash2, mix, shade, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
+import { CRACK, CRUST, MOLTEN, PHASES, SHADOW, isLava, isMark, lavaColor, lavaMark } from "./lava";
 import { HALF_WIDTH, type Track } from "./track";
 
 export const TEX = 2560;
@@ -12,11 +15,16 @@ export const RES = 0.3; // meters per texel
 export const HALF = (TEX * RES) / 2; // world spans [-HALF, HALF]
 const LEVELS = 5;
 const KERB_KAPPA = 1 / 40; // corners tighter than 40 m radius get kerbs
+/** In the volcano: how far from the centerline the rock goes (road, shoulder, then 2.6 m of
+ * bank); past it is lava. */
+export const BANK_EDGE = HALF_WIDTH + 1.8 + 2.6;
 
 export class WorldTexture {
   readonly levels: Uint32Array[] = [];
+  readonly lava: boolean; // the terrain is lava (the volcano)
   private readonly shaded = new Set<number>(); // raised road whose shadow is already painted
   constructor(readonly theme: Theme, readonly seed: number) {
+    this.lava = !!theme.volcano;
     for (let k = 0; k < LEVELS; k++) this.levels.push(new Uint32Array((TEX >> k) * (TEX >> k)));
     this.paintTerrain(0, 0, TEX, TEX);
     this.buildMips(0, 0, TEX, TEX);
@@ -27,7 +35,36 @@ export class WorldTexture {
     return [(x + HALF) / RES, (HALF - y) / RES];
   }
 
+  /** Whether the ground at world (x, y) is lava (beyond the texture, the lake goes on). */
+  lavaAt(x: number, y: number): boolean {
+    if (!this.lava) return false;
+    const [tx, ty] = WorldTexture.texel(x, y);
+    const ix = Math.floor(tx), iy = Math.floor(ty);
+    if (ix < 0 || iy < 0 || ix >= TEX || iy >= TEX) return true;
+    return isLava(this.levels[0][iy * TEX + ix]);
+  }
+
+  /** The lake: flowing bands (the phase follows two scales of noise and a slow drift across the
+   * lake), with cooled plates of crust riding on it, cracked through with molten seams. */
+  private paintLava(x0: number, y0: number, x1: number, y1: number): void {
+    const tex = this.levels[0], seed = this.seed;
+    for (let ty = Math.max(0, y0); ty < Math.min(TEX, y1); ty++) {
+      const wy = HALF - (ty + 0.5) * RES;
+      for (let tx = Math.max(0, x0); tx < Math.min(TEX, x1); tx++) {
+        const wx = (tx + 0.5) * RES - HALF;
+        const n = valueNoise(wx, wy, 9, seed) * 1.3 + valueNoise(wx, wy, 26, seed + 1) * 0.9;
+        const phase = Math.floor((n + (wx * 0.8 + wy * 0.5) / 160) * PHASES);
+        const plate = valueNoise(wx, wy, 15, seed + 2) > 0.6 && (n * 7) % 1 > 0.08;
+        tex[ty * TEX + tx] = lavaMark(phase, plate ? CRUST : MOLTEN);
+      }
+    }
+  }
+
   private paintTerrain(x0: number, y0: number, x1: number, y1: number): void {
+    if (this.lava) {
+      this.paintLava(x0, y0, x1, y1);
+      return;
+    }
     const t = this.theme;
     const tex = this.levels[0];
     for (let ty = Math.max(0, y0); ty < Math.min(TEX, y1); ty++) {
@@ -96,7 +133,25 @@ export class WorldTexture {
       return h > 0.93 ? t.roadSpeck : shade(t.road, 0.96 + 0.08 * hash2(tx >> 2, ty >> 2, 3));
     };
     const tex = this.levels[0];
-    const shadow = (tx: number, ty: number) => shade(tex[ty * TEX + tx], 0.62);
+    // (lava in a shadow stays lava, only darker; a crack in the rock stays as it is)
+    const shadow = (tx: number, ty: number) => {
+      const c = tex[ty * TEX + tx];
+      return isLava(c) ? lavaMark(c, SHADOW) : isMark(c) ? c : shade(c, 0.62);
+    };
+    // the volcano's rock bank, laid only over lava (never over road or rock already there), and
+    // the glowing rim where it meets the lava
+    const rock = (tx: number, ty: number) => {
+      const c = tex[ty * TEX + tx];
+      if (!isLava(c)) return c;
+      const wx = (tx + 0.5) * RES - HALF, wy = HALF - (ty + 0.5) * RES;
+      if (Math.abs(valueNoise(wx, wy, 6, this.seed + 6) - 0.5) < 0.022) return lavaMark(c, CRACK);
+      if (hash2(tx, ty, 13) > 0.975) return t.groundSpeck;
+      return shade(t.ground[(Math.floor(wx / 4) + Math.floor(wy / 4)) & 1], 0.78 + 0.4 * valueNoise(wx, wy, 2.5, this.seed + 5));
+    };
+    const rim = (tx: number, ty: number) => {
+      const c = tex[ty * TEX + tx];
+      return isLava(c) ? lavaMark(c, CRACK) : c;
+    };
     for (let i = start; i < end; i++) {
       const j = track.wrap(i + 1);
       const hw = HALF_WIDTH;
@@ -105,6 +160,10 @@ export class WorldTexture {
         if (!this.shaded.has(i)) strip(i, j, -hw, hw, shadow);
         this.shaded.add(i);
         continue;
+      }
+      if (this.lava) {
+        strip(i, j, -BANK_EDGE + 0.5, BANK_EDGE - 0.5, rock);
+        strip(i, j, -BANK_EDGE, BANK_EDGE, rim);
       }
       strip(i, j, -hw - 1.8, hw + 1.8, (tx, ty) => shade(t.shoulder, 0.92 + 0.12 * hash2(tx, ty, 11)));
       strip(i, j, -hw, hw, asphalt);
@@ -176,6 +235,9 @@ export class WorldTexture {
   }
 
   private buildMips(x0: number, y0: number, x1: number, y1: number): void {
+    // lava marks are not colours: a block of mostly lava keeps a mark (so far lava flows too),
+    // and a block at the lava's edge blends the colours the marks stand for
+    const lava = this.lava, flat = (c: number) => (isMark(c) ? lavaColor(c, 0) : c);
     for (let k = 1; k < LEVELS; k++) {
       const src = this.levels[k - 1], dst = this.levels[k];
       const sw = TEX >> (k - 1), dw = TEX >> k;
@@ -184,7 +246,14 @@ export class WorldTexture {
       for (let y = ay; y < by; y++) {
         for (let x = ax; x < bx; x++) {
           const i = 2 * y * sw + 2 * x;
-          dst[y * dw + x] = mix(mix(src[i], src[i + 1], 0.5), mix(src[i + sw], src[i + sw + 1], 0.5), 0.5);
+          const a = src[i], b = src[i + 1], c = src[i + sw], d = src[i + sw + 1];
+          if (lava) {
+            const marks = +isMark(a) + +isMark(b) + +isMark(c) + +isMark(d);
+            dst[y * dw + x] = marks >= 3 ? (isMark(a) ? a : b)
+              : mix(mix(flat(a), flat(b), 0.5), mix(flat(c), flat(d), 0.5), 0.5);
+          } else {
+            dst[y * dw + x] = mix(mix(a, b, 0.5), mix(c, d, 0.5), 0.5);
+          }
         }
       }
     }

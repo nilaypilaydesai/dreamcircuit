@@ -25,7 +25,9 @@ const HOT = hex("#ffd23f");
 
 export class Menu {
   index = 0;
-  private rects: [number, number, number, number][] = [];
+  /** Where each row was drawn (x, y, w, h), for clicks and taps. A screen that draws its rows
+   * itself (the garage) fills these in. */
+  rects: [number, number, number, number][] = [];
 
   /** How wide (pixels) and how many lines the hint under the panel may take (default: the
    * screen's width, two lines). */
@@ -39,7 +41,7 @@ export class Menu {
    * panel and a two-line hint always fit under the logo. */
   get rowH(): number {
     if (this.stacked) return H < 214 ? 18 : 20;
-    if (this.items.length >= 8) return H < 200 ? 13 : H < 240 ? 14 : 16;
+    if (this.items.length >= 8) return H < 214 ? 13 : H < 240 ? 14 : 16;
     return H < 214 ? 14 : 16;
   }
 
@@ -70,16 +72,17 @@ export class Menu {
   }
 
   click(x: number, y: number, sound: Sound): void {
-    this.rects.forEach(([rx, ry, rw, rh], i) => {
-      if (x < rx || x > rx + rw || y < ry || y > ry + rh) return;
-      this.index = i;
-      const it = this.items[i];
-      sound.select();
-      const onLeft = this.stacked ? x < rx + rw * 0.4 : x < rx + rw * 0.5 && x > rx + rw * 0.3;
-      if (it.value && it.left && onLeft) it.left();
-      else if (it.action) it.action();
-      else if (it.right) it.right();
-    });
+    // the first row hit (rows touch: a click on the line between two must not act on both)
+    const i = this.rects.findIndex(([rx, ry, rw, rh]) => x >= rx && x <= rx + rw && y >= ry && y < ry + rh);
+    if (i < 0) return;
+    const [rx, , rw] = this.rects[i];
+    this.index = i;
+    const it = this.items[i];
+    sound.select();
+    const onLeft = this.stacked ? x < rx + rw * 0.4 : x < rx + rw * 0.5 && x > rx + rw * 0.3;
+    if (it.value && it.left && onLeft) it.left();
+    else if (it.action) it.action();
+    else if (it.right) it.right();
   }
 
   /** ``note``: a status line shown where the hint goes, instead of it (e.g. a loading message). */

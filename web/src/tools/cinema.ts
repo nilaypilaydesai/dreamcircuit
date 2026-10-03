@@ -1,9 +1,10 @@
 // The DATA page's hero video (and the stills and GIF frames for the README), filmed in the game
-// itself: a trailer that cuts between the five worlds, the items, the garage and the Grand Prix
+// itself: a trailer that cuts between the six worlds, the items, the garage and the Grand Prix
 // podium. It drives races through the dev hook (window.__dc) on circuits the designer dreamed and
 // films clean, HUD-free shots from scripted cameras: a drone over the grid at the launch, the
-// chase camera through a jump, an orbit around a bridge, tracking shots, cranes, and close-ups of
-// items in use; the garage and the podium are filmed as the game draws them. Every 384x216 frame
+// chase camera through a jump, an orbit around a bridge, tracking shots, cranes, close-ups of
+// items in use, and a kart going into the volcano's lava and coming back out under the rescue
+// drone; the garage and the podium are filmed as the game draws them. Every 384x216 frame
 // is upscaled with nearest-neighbour sampling (the pixel art stays crisp) and encoded as it is
 // filmed, with WebCodecs, into H.264 MP4s, one per output size. Shots cross-fade, and the last
 // fades back into the first, so the video loops without a seam; the poster is its first frame.
@@ -17,22 +18,27 @@ import { Encoder } from "./mp4";
 interface Kart {
   x: number; y: number; heading: number; elev: number; ground: number; air: boolean; idx: number; v: number;
   place: number; dist: number; isPlayer: boolean; finished: boolean; drifting: boolean; boostLevel: number;
+  offset: number; fall: number; dropX: number; dropY: number; dropZ: number; // (the volcano's lava)
 }
 interface Track {
   xs: number[]; ys: number[]; s: number[]; elev: number[]; count: number; length: number; startIndex: number;
   bridges: { center: number; lower: number }[]; hills: { s0: number; len: number; h: number }[];
   tangent(i: number): [number, number];
+  curvature(i: number): number;
+  wrap(i: number): number;
 }
 interface Race {
   track: Track; player: Kart; standings: Kart[]; karts: Kart[]; phase: string; countdown: number;
+  scenery: { items: { x: number; y: number; art: { solid: boolean } }[] };
   features: { ramps: { start: number }[]; tunnels: { s0: number }[] };
-  items: { blasts: unknown[] };
+  items: { blasts: unknown[]; rowS: number[] };
   aimPhase: number; // the player's aiming arrow (where it is in its sweep)
 }
 interface Game {
   race: Race | null;
   time: number;
-  garage: { menu: { index: number; items: { right?: () => void }[] } };
+  cam: { heading: number };
+  garage: { menu: { index: number; items: { right?: () => void }[] }; set(b: Record<string, string>): void };
   ceremony: { update(dt: number, sound: unknown): void } | null;
   sound: unknown;
   render(): void;
@@ -55,7 +61,7 @@ export interface Variant { name: string; w: number; h: number; bitrate: number }
 export interface FilmOptions {
   url?: string; // capture server
   figure8: number[]; // a figure-eight (game meters) with a bridge and a jump: the launch, the jump, the bridge
-  loops: number[][]; // six plain loops: three for the items (Sunset Mesa), the reef, the mountains, the valley
+  loops: number[][]; // seven plain loops: three for the items (Sunset Mesa), the reef, the mountains, the valley, the volcano
   fps?: number;
   fade?: number; // frames of cross-fade between shots
   variants?: Variant[];
@@ -69,7 +75,8 @@ export const VARIANTS: Variant[] = [
 
 // the aiming arrow's sweep (race/items.ts)
 const AIM_MAX = 0.75, AIM_RATE = 3.1;
-const THEME = { valley: 0, neon: 1, mesa: 2, reef: 3, mountain: 4 };
+const THEME = { valley: 0, neon: 1, mesa: 2, reef: 3, mountain: 4, volcano: 5 };
+const FALL_SWAP = 0.72, FALL_RELEASE = 2.0; // into the lava: lifted out, let go (race/kart.ts)
 
 const tick = () => new Promise<void>((r) => {
   const ch = new MessageChannel();
@@ -202,6 +209,8 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     fetch(`${url}/save/${name}`, { method: "POST", body: blob, headers: { "Content-Type": "text/plain" } });
   dc.pin([384, 216]); // the film is composed for the classic 16:9 framebuffer, whatever the window
   dc.hold(true);
+  // every take starts from the same kart (the garage shot changes it, and the browser keeps it)
+  dc.game.garage.set({ body: "classic", wheels: "standard", spoiler: "none", exhaust: "stock", paint: "sunset", accent: "cream" });
   const canvas = document.getElementById("game") as HTMLCanvasElement;
   const reel = await Reel.open(canvas, fps, fade, o.every ?? 0, o.variants ?? VARIANTS, post);
   const race = () => dc.game.race!;
@@ -411,37 +420,28 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   await film("w_reef", 3.6, (f, n) => track(race().player, -1, 6 + 1.5 * (f / n), 1.9));
 
   // ---------------------------------------------------------------- Mountain Pass
+  // 11. Into a tunnel through the rock, on the game's chase camera.
   await start(o.loops[4], THEME.mountain, 6);
   {
     const t = race().track, tunnels = race().features.tunnels;
-    // 11. Into a tunnel through the rock, on the game's chase camera.
     if (tunnels.length) {
       const before = (s: number) => tunnels.some((tn) => tn.s0 - s > 22 && tn.s0 - s < 30);
       await until(() => race().phase === "racing" && before(t.s[race().player.idx]), 60 * 90);
       await film("m_tunnel", 3.2, () => dc.shot({ clear: 2.5 }));
     }
-    // 12. A crane over a climb, the snowy ridges behind.
-    const climbing = () => race().player.elev > 1.2;
-    await until(() => climbing(), 60 * 60);
-    await film("m_hill", 3.2, (f, n) => {
-      const k = race().player, e = smooth(f / n);
-      const back = 9 + 12 * e;
-      dc.shot({ x: k.x - Math.cos(k.heading) * back, y: k.y - Math.sin(k.heading) * back, heading: k.heading,
-                height: 4 + k.elev + 7 * e, focal: 250, fx: 0, clear: 4 });
-    });
   }
 
   // ---------------------------------------------------------------- Dream Valley: a roller coaster
   await start(o.loops[5], THEME.valley, 7, "coaster");
-  // 13. A drift: sideways through a bend, the sparks charging a mini-turbo.
+  // 12. A drift: sideways through a bend, the sparks charging a mini-turbo.
   await until(() => race().phase === "racing" && race().player.drifting && race().player.boostLevel >= 1, 60 * 60);
   await film("v_drift", 2.6, () => {
     const k = race().player;
     dc.shot({ x: k.x - Math.cos(k.heading) * 5.4, y: k.y - Math.sin(k.heading) * 5.4, heading: k.heading,
               height: 1.7 + k.ground, focal: 250, fx: 0, clear: 2 });
   });
-  // 14. A crane up and back from the leader, the climbs and the circuit below.
-  await film("e_crane", 4.0, (f, n) => {
+  // 13. A crane up and back from the leader, the climbs and the circuit below.
+  await film("e_crane", 3.6, (f, n) => {
     const k = race().standings[0];
     const e = smooth(Math.min(1, f / n));
     const back = 7 + 26 * e;
@@ -449,8 +449,69 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
               heading: k.heading, height: 3 + k.ground + 17 * e, focal: 250, fx: 0, clear: 5 + 10 * e });
   });
 
+  // ---------------------------------------------------------------- Volcano Core
+  await start(o.loops[6], THEME.volcano, 7);
+  // 14. Alongside the pack on the causeway of rock, the lava lake glowing and the crater behind.
+  await until(() => race().phase === "racing" && race().player.dist > 90, 60 * 30);
+  await film("x_lava", 3.4, (f, n) => track(race().player, 1, 7.5 + 2.5 * (f / n), 3.4));
+  // 15. Low beside a row of item boxes (crystal cubes, turning) as the leaders drive through them.
+  {
+    const t = race().track;
+    // the next row the leader has not reached yet, filmed from when it is 40-55 m away
+    const next = () => {
+      const at = t.s[race().standings[0].idx];
+      return race().items.rowS.map((s) => (s - at + t.length) % t.length).filter((d) => d > 8).sort((a, b) => a - b)[0] ?? -1;
+    };
+    await until(() => { const d = next(); return d > 40 && d < 55; }, 60 * 60);
+    const rowS = (t.s[race().standings[0].idx] + next()) % t.length;
+    let i = 0;
+    for (let j = 1; j < t.count; j++) if (Math.abs(t.s[j] - rowS) < Math.abs(t.s[i] - rowS)) i = j;
+    const [tx, ty] = t.tangent(i);
+    const cx = t.xs[i] + tx * 5 - ty * 7.5, cy = t.ys[i] + ty * 5 + tx * 7.5; // just past the row, at the road's edge
+    await film("x_boxes", 3.0, () => dc.shot({ x: cx, y: cy, heading: Math.atan2(t.ys[i] - cy, t.xs[i] - cx) - 0.25,
+                                               height: 1.5 + t.elev[i], focal: 250, fx: 0, clear: 2 }));
+  }
+  // 16. Into the lava: the player turns off a straight, across the rock bank and in; the view goes
+  // dark red, and the rescue drone lowers the kart back onto the road and lets it go.
+  {
+    const t = race().track;
+    const ahead = (m: number) => t.wrap(race().player.idx + Math.round(m / 0.6));
+    const straight = () => [0, 15, 30, 45].every((m) => Math.abs(t.curvature(ahead(m))) < 1 / 160);
+    // no jump coming up, and nothing solid on the bank where it will leave the road (a rock would
+    // stop it short of the lava)
+    const noRamp = () => race().features.ramps.every((q) => (t.s[q.start] - t.s[race().player.idx] + t.length) % t.length > 90);
+    const clear = () => [10, 14, 18, 22, 26, 30, 34, 38].every((m) => {
+      const i = ahead(m), [tx, ty] = t.tangent(i);
+      return [6, 8.5, 11].every((off) => {
+        const x = t.xs[i] + ty * off, y = t.ys[i] - tx * off; // right of the road
+        return !race().scenery.items.some((it) => it.art.solid && Math.hypot(it.x - x, it.y - y) < 3.2);
+      });
+    });
+    await until(() => straight() && noRamp() && clear() && race().player.v > 18, 60 * 90);
+    const side = -1; // off to the right (positive offsets are to the left of the road)
+    reel.begin("x_rescue");
+    for (let f = 0; f < frames(5); f++) {
+      const k = race().player;
+      // steer off until well onto the rock bank, then straight on into the lava
+      const steer = k.fall < 0 && Math.abs(k.offset) < 8 ? (side > 0 ? ["left"] : ["right"]) : [];
+      dc.step(per, k.fall < 0 ? ["gas", ...steer] : [], false);
+      if (k.fall < FALL_SWAP) {
+        // the driver's view, from a little higher and further back: off the road, over the rock and in
+        const h = dc.game.cam.heading;
+        dc.shot({ x: k.x - Math.cos(h) * 9, y: k.y - Math.sin(h) * 9, height: 4.1 + k.ground, clear: 2.5 });
+      } else {
+        // beside where the drone sets it down (high enough to keep the drone in the picture)
+        const [tx, ty] = t.tangent(t.wrap(k.idx));
+        const x = k.dropX + tx * 4 - ty * 9.5, y = k.dropY + ty * 4 + tx * 9.5;
+        dc.shot({ x, y, heading: Math.atan2(k.dropY - y, k.dropX - x), height: 3.6 + k.dropZ, focal: 250, fx: 0, clear: 3 });
+      }
+      await reel.save();
+      if (k.fall >= FALL_RELEASE + 0.55) break;
+    }
+  }
+
   // ---------------------------------------------------------------- the Grand Prix podium
-  // 15. The award ceremony: the top three on the podium, fireworks and confetti. (It fades back
+  // 17. The award ceremony: the top three on the podium, fireworks and confetti. (It fades back
   // into the launch.)
   {
     dc.cup(true, 1);

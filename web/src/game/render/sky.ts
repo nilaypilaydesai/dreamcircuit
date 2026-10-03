@@ -1,7 +1,8 @@
 // A 360-degree parallax backdrop per theme: gradient sky, stars or clouds, a sun, and two hill
-// silhouettes that scroll at different rates as the camera turns.
+// silhouettes that scroll at different rates as the camera turns. Inside the volcano the hills
+// are the crater's walls: dark basalt lit red from below, with lava falling down them.
 
-import { H, Rand, W, mix, shade, type Screen } from "../core/gfx";
+import { H, Rand, W, hex, mix, shade, type Screen } from "../core/gfx";
 import type { Theme } from "../themes";
 
 const PAN = 1536; // panorama width in px for a full turn
@@ -29,8 +30,63 @@ export class Sky {
     if (t.clouds) {
       for (let k = 0; k < 14; k++) this.cloud(rng, rng.int(0, PAN), rng.int(6, Math.floor(h * 0.55)));
     }
+    if (t.volcano) {
+      this.crater(this.far, rng, h, t.farHills, 0.6, t.farAmp ?? 26, 4, 9);
+      this.crater(this.near, rng, h, t.nearHills, 0.84, 13, 5, 0);
+      return;
+    }
     this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3, t.snow ?? 0);
     this.hills(this.near, rng, h, t.nearHills, 0.82, 12, 5);
+  }
+
+  /** A crater wall: a jagged ridge of basalt in strata, glowing red toward its foot (the lava's
+   * light), with ``falls`` streams of lava pouring down it from notches in the rim. */
+  private crater(dst: Uint32Array, rng: Rand, h: number, color: number, base: number, amp: number,
+                 octaves: number, falls: number): void {
+    const comps = Array.from({ length: octaves * 3 }, (_, k) => ({
+      f: 1 + rng.int(1, 4 + k * 4), a: rng.range(0.4, 1) / (1 + k * 0.8), p: rng.range(0, Math.PI * 2),
+    }));
+    const norm = comps.reduce((s, c) => s + c.a, 0);
+    const tops = new Int32Array(PAN);
+    for (let x = 0; x < PAN; x++) {
+      const th = (x / PAN) * Math.PI * 2;
+      let v = 0;
+      for (const c of comps) v += c.a * Math.sin(c.f * th + c.p);
+      const n = 0.3 - 1.2 * Math.abs(v / norm); // ridged: sharp crags
+      tops[x] = Math.max(0, Math.floor(h * base - n * amp - amp * 0.4));
+      for (let y = tops[x]; y < h; y++) {
+        const u = (y - tops[x]) / Math.max(1, h - tops[x]);
+        const strata = (y + ((x * 7) >> 5)) % 6 === 0 ? 0.8 : 1;
+        dst[y * PAN + x] = y === tops[x] ? shade(color, 1.5)
+          : mix(shade(color, strata), hex("#7a2410"), Math.max(0, u - 0.35) * 0.9);
+      }
+    }
+    // lava falls: from a notch in the rim, a bright core with a glow either side, wavering down
+    for (let k = 0; k < falls; k++) {
+      let x0 = rng.int(0, PAN);
+      for (let j = 0; j < 40; j++) { // the lowest point nearby: the notch the lava spills from
+        const xx = (x0 + j - 20 + PAN) % PAN;
+        if (tops[xx] > tops[x0]) x0 = xx;
+      }
+      const width = rng.int(1, 3);
+      for (let y = tops[x0] + 1; y < h; y++) {
+        const wob = Math.round(Math.sin(y * 0.35 + k) * 1.2 + (y - tops[x0]) * 0.04);
+        for (let dx = -width - 2; dx <= width + 2; dx++) {
+          const x = (x0 + wob + dx + PAN) % PAN;
+          if (y < tops[x]) continue;
+          const i = y * PAN + x, core = Math.abs(dx) <= width >> 1;
+          dst[i] = core ? ((y + k) % 5 === 0 ? hex("#fff0a0") : hex("#ffc04a"))
+            : Math.abs(dx) <= width ? hex("#ff6a1a") : mix(dst[i], hex("#d63a10"), 0.45);
+        }
+      }
+      // where it lands, a pool of light at the foot of the wall
+      for (let dx = -8; dx <= 8; dx++) {
+        for (let y = h - 3; y < h; y++) {
+          const i = y * PAN + ((x0 + dx + PAN) % PAN);
+          dst[i] = mix(dst[i], hex("#ff8a2a"), 0.5 * (1 - Math.abs(dx) / 9));
+        }
+      }
+    }
   }
 
   private drawSun(rng: Rand, h: number): void {

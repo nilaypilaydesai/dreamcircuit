@@ -3,10 +3,12 @@
 // depth sorted together with the 3D faces of bridges, ramps and pads (render/poly.ts).
 // Karts show what they carry: the item they will use next floats over the driver's head, spare
 // shots circle the kart, and one held as a shield drags on the road behind it; boosts and rockets
-// breathe fire, a prism shimmers through the rainbow and a shocked kart is drawn small.
+// breathe fire, a prism shimmers through the rainbow and a shocked kart is drawn small. In the
+// volcano a kart that goes into the lava sinks in a splash and a puff of smoke, and comes back
+// hanging under the rescue drone.
 
 import { H, W, hex, mix, type Screen } from "../core/gfx";
-import type { Kart } from "../race/kart";
+import { FALL_END, FALL_RELEASE, FALL_SINK, FALL_SWAP, type Kart } from "../race/kart";
 import type { Placed } from "../world/scenery";
 import type { Camera } from "./mode7";
 import type { Face } from "./poly";
@@ -29,6 +31,7 @@ export interface KartLook {
   sparks: (k: Kart) => number;
   held: (k: Kart) => SceneryArt | null;
   dome?: boolean; // every driver wears a clear bubble helmet (under the sea)
+  drone?: SceneryArt[]; // the rescue drone's frames (the volcano)
 }
 
 interface Item {
@@ -93,6 +96,11 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowBias, true, 1, it.flip);
   }
   for (const k of karts) {
+    if (k.fall >= 0) {
+      lavaSplash(k, project, (q, z, draw) => items.push({ ...q, z: z + lowBias, draw }), scr, now);
+      if (look.drone) rescueDrone(k, look.drone, project, (q, z, draw) => items.push({ ...q, z, draw }), scr, now, lowBias);
+      if (k.fall >= FALL_SINK && k.fall < FALL_SWAP) continue; // under the lava
+    }
     const p = project(k.x, k.y, k.elev);
     const ps = project(k.x, k.y, k.ground);
     if (!p || !ps) continue;
@@ -109,16 +117,20 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const air = Math.max(0, k.elev - k.ground);
     const shrink = (1 / (1 + air * 0.35)) * size;
     const prism = k.prism > 0;
-    const tint = prism ? RAINBOW[Math.floor(now * 14 + k.id) % RAINBOW.length] : fog;
-    const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : fogAt(p.z);
+    // sinking into the lava it glows hot (and the lava hides what is under its surface); hanging
+    // under the drone it cools off
+    const sinking = k.fall >= 0 && k.fall < FALL_SINK, carried = k.falling && !sinking;
+    const heat = sinking ? 0.25 + 0.5 * (k.fall / FALL_SINK) : carried ? 0.4 * (1 - (k.fall - FALL_SWAP) / (FALL_RELEASE - FALL_SWAP)) : 0;
+    const tint = prism ? RAINBOW[Math.floor(now * 14 + k.id) % RAINBOW.length] : heat > 0 ? LAVA_GLOW : fog;
+    const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : heat > 0 ? heat : fogAt(p.z);
     const bias = k.elev > 1 ? -0.5 : lowBias;
     items.push({
       ...p,
       z: p.z + bias,
       draw: () => {
-        shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
+        if (!sinking) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
         const top = p.gy - h * KART_ANCHOR + bounce;
-        scr.blitScaled(s, p.sx - w / 2, top, w, h, false, tint, tintAmount);
+        scr.blitScaled(s, p.sx - w / 2, top, w, h, false, tint, tintAmount, sinking ? Math.round(ps.gy + 0.2 * ps.ppm) : H);
         const head = look.dome && k.rocket <= 0 ? sprites.heads?.[vi] : undefined;
         if (head) drawDome(scr, p.sx - w / 2 + (head[0] * w) / s.w, top + (head[1] * h) / s.h, (5.6 * 1.55 * h) / s.h);
         const sp = look.sparks(k);
@@ -137,25 +149,96 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     // triple turbo, boomerangs) circle the kart slowly, and oil, an orb or a bomb held out behind
     // (button down) drags on the road behind it
     const art = look.held(k);
-    if (art && k.rocket <= 0) {
+    if (art && k.rocket <= 0 && !k.falling) {
       const small = k.shrink > 0 ? 0.62 : 1;
       if (k.trailing) {
-        billboard(art, k.x - c * 1.6, k.y - sn * 1.6, k.elev, 0.03, bias - 0.02, false, 0.66 * small);
+        billboard(art, k.x - c * 1.7, k.y - sn * 1.7, k.elev, 0.03, bias - 0.02, false, 0.8 * small);
       } else {
         // (a kart is about 0.8 m tall to the top of the helmet)
-        billboard(art, k.x, k.y, k.elev, (0.98 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.62 * small);
+        billboard(art, k.x, k.y, k.elev, (1.0 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.8 * small);
       }
       const spare = Math.max(0, k.uses - 1);
       for (let n = 0; n < spare; n++) {
         const ang = now * 1.3 + k.id + (n / spare) * Math.PI * 2;
-        const ox = Math.cos(ang) * 1.7 * small, oy = Math.sin(ang) * 1.7 * small;
-        billboard(art, k.x + ox, k.y + oy, k.elev, 0.6 * small, bias - 0.01, false, 0.52 * small);
+        const ox = Math.cos(ang) * 1.8 * small, oy = Math.sin(ang) * 1.8 * small;
+        billboard(art, k.x + ox, k.y + oy, k.elev, 0.6 * small, bias - 0.01, false, 0.64 * small);
       }
     }
   }
   const all: { z: number; draw: () => void }[] = [...items, ...faces];
   all.sort((a, b) => b.z - a.z);
   for (const it of all) it.draw();
+}
+
+const LAVA_GLOW = hex("#ff6a1a");
+const SPLASH = ["#fff0a0", "#ffb03a", "#ff6a1a", "#c2300c"].map(hex);
+type Projected = { z: number; sx: number; gy: number; ppm: number };
+type Project = (x: number, y: number, h?: number) => Projected | null;
+type Push = (q: Projected, z: number, draw: () => void) => void;
+
+/** Where a kart went into the lava: blobs of lava thrown up on short arcs, then a puff of smoke
+ * that rises and spreads as it thins. */
+function lavaSplash(k: Kart, project: Project, push: Push, scr: Screen, now: number): void {
+  const u = k.fall;
+  if (u > 1.5) return;
+  for (let j = 0; j < 14; j++) {
+    const t = u - (j % 5) * 0.035;
+    if (t <= 0) continue;
+    const a = j * 2.39996 + k.id, out = 1.6 + (j % 4) * 1.1, vz = 4 + (j % 3) * 1.8;
+    const z = k.fallZ + vz * t - 9 * t * t;
+    if (z < k.fallZ) continue; // fallen back into the lake
+    const q = project(k.fallX + Math.cos(a) * out * t, k.fallY + Math.sin(a) * out * t, z);
+    if (!q) continue;
+    const c = SPLASH[Math.min(SPLASH.length - 1, Math.floor(t * 5))];
+    const r = Math.max(1, Math.round(q.ppm * (j % 3 ? 0.11 : 0.16)));
+    push(q, q.z, () => scr.fillRect(Math.round(q.sx - r / 2), Math.round(q.gy - r / 2), r, r, c));
+  }
+  for (let j = 0; j < 5; j++) {
+    const t = u - 0.12 - j * 0.1;
+    if (t <= 0) continue;
+    const q = project(k.fallX + Math.cos(j * 2.1) * 0.5 * t, k.fallY + Math.sin(j * 2.1) * 0.5 * t, k.fallZ + 0.3 + t * 1.8);
+    if (!q) continue;
+    const r = q.ppm * (0.3 + t * 0.55), a = Math.max(0, 0.6 - t * 0.45);
+    push(q, q.z - 0.01, () => puff(scr, q.sx + Math.sin(now * 3 + j) * 0.1 * q.ppm, q.gy, r, a));
+  }
+}
+
+/** The rescue drone: comes down with the kart hanging under it on a cable, lets it go just over
+ * the road, and flies off. */
+function rescueDrone(k: Kart, art: SceneryArt[], project: Project, push: Push, scr: Screen, now: number,
+                     lowBias: number): void {
+  if (k.fall < FALL_SWAP || k.fall >= FALL_END) return;
+  const gone = k.fall >= FALL_RELEASE;
+  // (it hovers 1.3 m over the kart's floor while carrying, then climbs away from where it let go)
+  const x = gone ? k.dropX : k.x, y = gone ? k.dropY : k.y;
+  const base = gone ? k.dropZ + 0.55 + (k.fall - FALL_RELEASE) * 7 : k.elev;
+  const q = project(x, y, base + 1.3);
+  if (!q) return;
+  const sp = art[Math.floor(now * 20) % art.length];
+  const h = sp.height * q.ppm, w = (h * sp.sprite.w) / sp.sprite.h;
+  const hook = gone ? null : project(x, y, base + 0.8); // the top of the kart
+  push(q, q.z + (base > 1 ? -0.5 : lowBias) - 0.04, () => {
+    if (hook) { // the cable: steel, with a dark edge so it reads over the road and the lava
+      const cw = Math.max(1, Math.round(q.ppm * 0.035)), cx = Math.round(q.sx - cw / 2);
+      for (let yy = Math.round(q.gy); yy < Math.round(hook.gy); yy++) {
+        scr.fillRect(cx - 1, yy, cw + 2, 1, hex("#1a1c22"));
+        scr.fillRect(cx, yy, cw, 1, hex("#c9d1de"));
+      }
+    }
+    scr.blitScaled(sp.sprite, q.sx - w / 2, q.gy - h, w, h);
+  });
+}
+
+/** A soft round puff of smoke. */
+function puff(scr: Screen, cx: number, cy: number, r: number, alpha: number): void {
+  const buf = scr.buf, c = hex("#4a3c3c");
+  for (let y = Math.floor(cy - r); y <= cy + r; y++) {
+    if (y < 0 || y >= H) continue;
+    const half = Math.sqrt(Math.max(0, r * r - (y - cy) ** 2));
+    for (let x = Math.floor(cx - half); x <= cx + half; x++) {
+      if (x >= 0 && x < W) buf[y * W + x] = mix(buf[y * W + x], c, alpha);
+    }
+  }
 }
 
 function shadow(scr: Screen, cx: number, cy: number, rx: number, ry: number): void {

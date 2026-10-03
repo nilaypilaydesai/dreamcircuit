@@ -223,7 +223,10 @@ of its start line), painted when road is committed (grass noise, asphalt, kerbs 
 tighter than 40 m, edge lines, the start checkers and grid slots, and the shadow a bridge casts on
 the road below it) and mip-mapped, so each row samples the level that matches its footprint.
 Distance fog blends into each world's horizon color, and the frontier mist is a per-pixel term
-that pulses near the end of the dreamed road.
+that pulses near the end of the dreamed road. Oil slicks are painted into the ground the same way,
+per pixel as each row is drawn: a dark puddle with a wobbly edge, a slowly turning rainbow film
+and the sky shining on its far side, so it lies flat in perspective under the karts that drive
+over it (on raised road, where the ground under it is hidden, a sprite stands in for it).
 
 **Polygons in a Mode-7 world.** A flat ground texture cannot show a bridge, so bridges, jump
 ramps and boost pads are drawn as flat-shaded convex polygons by a small software rasterizer
@@ -249,8 +252,16 @@ same level, so traffic passes over and under freely.
 rendered from 16 directions at load time. The renderer picks the view from the angle between the
 camera and the kart and leans the sprite with steering. Scenery (trees, rocks, cacti, crystals,
 palms, lamps, chevron boards, the start gantry, grandstands) is painted with simple primitives.
-Billboards are depth-sorted, scaled with distance and fogged, with drop shadows and drift
-sparks. Nothing is a bitmap file.
+The items are drawn the way 16-bit games drew pre-rendered 3D: shaded pixel by pixel under one
+light from the upper left, in a few steps of brightness so they stay pixel art. Balls (bombs, dream
+orbs) take a normal from the sphere, a stepped diffuse term, a highlight and light reflected up
+onto their lower edge; turbo cells, oil barrels and the rocket are bodies of revolution shaded
+across their width; the prism is a bevelled star lit on one side of each point's ridge; the shock
+is a bolt with its edge showing; the boomerang is rounded across each arm and spins in eight
+frames; and the item box is a crystal cube, ray-cast into ten frames of a quarter turn (which is
+all a cube needs), with a question mark on every side. The HUD's item slot uses bigger versions
+drawn pixel for pixel. Billboards are depth-sorted, scaled with distance and fogged, with drop
+shadows and drift sparks. Nothing is a bitmap file.
 
 **Scenery placement.** A spatial hash of the committed road decides what may stand where: trees
 and rocks scatter near new road as it is committed (never on it), chevron boards go on the
@@ -306,9 +317,14 @@ middle on Pro and the top on Legend. Each kart is assembled as a voxel model fro
 shell sampled from a width and roof-height profile along the car, a carved cockpit, lights,
 intakes, stripes; wheels with rims painted on their outer faces; the spoiler and pipes mounted
 where the body says) and baked into its 16 views once per build; the garage's turntable splats
-the same voxels live at any angle, so the kart can turn slowly on its pedestal.
+the same voxels live at any angle, so the kart can turn slowly on its pedestal. The garage screen
+is laid out from the screen's size: the showroom (the title, the kart on its pedestal as big as
+the height allows, the stats on a card under it) beside the parts panel (each part's name over
+what is fitted, with room between parts), and a bar along the bottom with a line about the part
+picked, as tall as the longest of those lines needs, so nothing moves from one part to the next;
+on a phone held upright the three are stacked.
 
-**The reef and the mountains.** Two worlds are more than palettes. Under the sea (Coral Reef)
+**The reef, the mountains and the volcano.** Three worlds are more than palettes. Under the sea (Coral Reef)
 the ground is lit by caustics, two layers of a tiling 64x64 sine pattern drifting against each
 other and multiplied, so bright filaments ripple over the sand at the cost of two table lookups
 per ground pixel; shafts of light slant down over the view, bubbles rise past the camera, and
@@ -327,6 +343,29 @@ the karts are kept between, a ceiling and lamps inside, a rock mound over the to
 around each mouth outside; the view darkens while the camera is in one. The designer is asked for
 a more winding road there (the style signal leans 0.12 wilder), and the far hills on the horizon
 are tall and snow-capped.
+
+Inside the volcano (Volcano Core) the road is a causeway of rock across a lake of lava
+(`world/lava.ts`). The terrain is not painted in colours there: each lava texel holds a phase (from
+two scales of noise and a slow drift across the lake) and a crust level (molten, a cooled plate,
+lava in a shadow, or a glowing crack in the rock), marked in the alpha byte that real colours keep
+at 255. The Mode-7 renderer looks each mark up in a palette that turns over with time, so bands of
+heat flow across the whole lake for one table lookup a pixel: the old colour-cycling trick. Mip
+levels keep the marks where a block is mostly lava (so far lava flows too) and blend the colours
+they stand for at its edge. As road is committed, a bank of rock is laid either side of it, 2.6 m
+past the shoulder, only over lava (never over road or rock already there), with a glowing rim where
+it meets the lava. A kart on the ground and off the road goes in when the texel under it is lava:
+the same texture the player sees decides. It sinks for half a second in a splash of lava and a
+puff of smoke (the sprite is clipped at the surface and glows hot), the view goes dark red, and
+under cover of it the kart is lifted out at the last road point it was on, centred and facing up
+the road, hanging from a rescue drone that lowers it from 3.4 m and lets it go just over the road
+two seconds after it went in; a fresh hop as it drops is a trick, as off a ramp. Meanwhile it is out
+of the race: no item, kart or bump touches it, and it cannot use its own item. Being set down
+behind the line counts as backing over it, so no lap is counted twice. Rivals drive the same line
+as anywhere else and almost never go in (in 27 test races across three classes and three circuits,
+not once); the player who drives off the rock does. The sky is the crater: ridged walls of basalt
+in strata, lit red toward their foot, with lava pouring down them from notches in the rim, and
+embers rise through the air; the scenery is basalt columns, obsidian shards, smoking vents, magma
+boulders and spires of rock standing in the lava, and nobody sits in a grandstand out there.
 
 **The Grand Prix.** A cup (`race/cup.ts`) runs one race in every world, back to back. The rivals
 keep the same karts throughout (their builds come from the cup's seed, not each race's), and each

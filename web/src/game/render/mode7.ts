@@ -3,6 +3,7 @@
 // level that matches each row's footprint, with distance fog into the horizon.
 
 import { H, W, mix, type Screen } from "../core/gfx";
+import { isMark, lavaColor } from "../world/lava";
 import { RES, TEX, HALF, type WorldTexture } from "../world/texture";
 
 export interface Camera {
@@ -34,13 +35,18 @@ export function fitCamera(cam: Camera): void {
   cam.focal = 250 * viewScale();
 }
 
-/** ``mist``: the shimmer at the edge of road not dreamed yet; ``light``: light falling on the
- * ground (the reef's caustics), each a 0..1 amount at world (x, y). */
-export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: number,
-                           mist: (x: number, y: number) => number = () => 0,
-                           light?: { color: number; at: (x: number, y: number) => number }): void {
+/** What else the ground shows, at world (x, y). */
+export interface GroundFx {
+  mist?: (x: number, y: number) => number; // the shimmer at the edge of road not dreamed yet (0..1)
+  light?: { color: number; at: (x: number, y: number) => number }; // light on it (the reef's caustics, 0..1)
+  lava?: number; // where the lava's colour cycle is (world/lava.ts), for a texture with lava in it
+  paint?: (x: number, y: number, c: number) => number; // things lying flat on it (oil slicks)
+}
+
+export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: number, fx: GroundFx = {}): void {
+  const cycles = tex.lava, lava = fx.lava ?? 0, { mist, light, paint } = fx;
   const buf = scr.buf;
-  const fx = Math.cos(cam.heading), fy = Math.sin(cam.heading);
+  const fwx = Math.cos(cam.heading), fwy = Math.sin(cam.heading);
   const rx = Math.sin(cam.heading), ry = -Math.cos(cam.heading); // right of the view direction
   const fogStart = cam.far * 0.45;
   for (let y = cam.horizon + 1; y < H; y++) {
@@ -58,7 +64,7 @@ export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: num
     const size = TEX >> level;
     const scale = 1 / (RES * (1 << level));
     const lat = z / cam.focal; // meters per pixel sideways
-    const cx = cam.x + fx * z, cy = cam.y + fy * z;
+    const cx = cam.x + fwx * z, cy = cam.y + fwy * z;
     let wx = cx + rx * lat * (0.5 - W / 2);
     let wy = cy + ry * lat * (0.5 - W / 2);
     const sx = rx * lat, sy = ry * lat;
@@ -67,8 +73,10 @@ export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: num
       const tx = ((wx + HALF) * scale) | 0;
       const ty = ((HALF - wy) * scale) | 0;
       let c = tx >= 0 && ty >= 0 && tx < size && ty < size ? data[ty * size + tx] : data[0];
+      if (cycles && isMark(c)) c = lavaColor(c, lava);
+      if (paint) c = paint(wx, wy, c);
       if (fogT > 0) c = mix(c, fog, fogT);
-      const m = mist(wx, wy);
+      const m = mist ? mist(wx, wy) : 0;
       if (m > 0) c = mix(c, 0xffd9a8f5, m);
       if (light) {
         const l = light.at(wx, wy);

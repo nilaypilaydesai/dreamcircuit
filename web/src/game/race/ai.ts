@@ -90,7 +90,7 @@ export class RivalDriver {
    * fired) when the moment comes. Sharper classes react sooner. */
   private itemButton(track: Track, cls: ClassParams, others: Kart[]): boolean {
     const k = this.kart;
-    if (!k.item || k.roulette > 0 || k.spin > 0 || k.finished || k.rocket > 0) {
+    if (!k.item || k.roulette > 0 || k.spin > 0 || k.finished || k.rocket > 0 || k.falling) {
       this.holding = this.tapped = false;
       return false;
     }

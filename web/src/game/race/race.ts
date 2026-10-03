@@ -12,7 +12,7 @@ import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "./features";
 import { AIMED, AIM_MAX, AIM_RATE, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
-import { CLASSES, type Controls, type Difficulty, Kart, collideKarts } from "./kart";
+import { CLASSES, type Controls, type Difficulty, FALL_SWAP, Kart, collideKarts } from "./kart";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
 import { DEFAULT_PADS, DEFAULT_RAMPS, type HillRule, MOUNTAIN_HILLS, type TrackType, type TrackTypeId, trackType } from "./tracktypes";
 import { LIVERIES } from "../render/sprites";
@@ -42,7 +42,9 @@ export type RaceEvent =
   | { kind: "pad" } // the player hit a boost pad
   | { kind: "rocket" } // a perfectly timed start
   | { kind: "burnout" } // throttle held too early: wheels spin at GO
-  | { kind: "bridge" }; // the dream crossed itself and built a bridge
+  | { kind: "bridge" } // the dream crossed itself and built a bridge
+  | { kind: "lava" } // the player drove into the lava
+  | { kind: "rescued" }; // and was lifted out at the road (the camera cuts there)
 
 export interface RaceSetup {
   rivals: number; // 0..7
@@ -344,16 +346,19 @@ export class Race {
       const c = d.act(dt, this.track, this.cls, this.player, this.karts);
       d.kart.update(dt, c, this.track, this.cls);
       this.fire(d.kart, c);
-      if (this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
+      if (!d.kart.falling && this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
     });
     const controls = this.player.finished ? { steer: 0, throttle: 0.3, brake: 0, drift: false } : playerControls;
     const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
+    const wasSunk = this.player.fall >= 0 && this.player.fall < FALL_SWAP;
     const { boosted, landed } = this.player.update(dt, controls, this.track, this.cls);
     if (boosted) this.events.push({ kind: "boost" });
-    if (!wasAir && this.player.air) this.events.push({ kind: "jump" });
+    if (!wasAir && this.player.air && !this.player.falling) this.events.push({ kind: "jump" });
     if (landed !== -1) this.events.push({ kind: "land", trick: landed });
     if (wasRocket && this.player.rocket <= 0) this.events.push({ kind: "rocketOver" });
-    if (this.features.onPad(this.track, this.player)) {
+    if (wasSunk && this.player.fall >= FALL_SWAP) this.events.push({ kind: "rescued" });
+    this.lava();
+    if (!this.player.falling && this.features.onPad(this.track, this.player)) {
       if (this.player.boostTime < 0.85) this.events.push({ kind: "pad" });
       this.player.boostTime = Math.max(this.player.boostTime, 1.0);
     }
@@ -385,7 +390,7 @@ export class Race {
       else if (by === me) this.events.push({ kind: "hit" });
     }
     for (const k of this.karts) {
-      if (k.elev < 1 && this.scenery.collide(k) && k.isPlayer) this.events.push({ kind: "bump" });
+      if (!k.falling && k.elev < 1 && this.scenery.collide(k) && k.isPlayer) this.events.push({ kind: "bump" });
       if (k.updateProgress(this.track) && k.crossings > 1) this.completeLap(k);
     }
     this.standings = [...this.karts].sort((a, b) => {
@@ -417,6 +422,19 @@ export class Race {
     }
     for (const d of this.drivers) {
       if (this.rng.next() < 0.2 + 0.45 * this.cls.aiCorner) d.kart.boostTime = 1.0;
+    }
+  }
+
+  /** The volcano: a kart on the ground that has left the road for the lava goes in (a drone
+   * fishes it out; see Kart.fallIn). Off the road, the ground under the kart decides: the rock
+   * bank is safe, the lava (and the lava beside raised road) is not. */
+  private lava(): void {
+    if (!this.tex.lava) return;
+    for (const k of this.karts) {
+      if (k.falling || k.air || k.rocket > 0 || Math.abs(k.offset) <= HALF_WIDTH || k.elev - k.ground > 0.3) continue;
+      if (!this.tex.lavaAt(k.x, k.y)) continue;
+      k.fallIn();
+      if (k.isPlayer) this.events.push({ kind: "lava" });
     }
   }
 
