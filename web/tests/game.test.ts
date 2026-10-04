@@ -2439,3 +2439,40 @@ describe("the neon tunnel", () => {
     expect(race.karts.filter((k) => k.finished).length).toBeGreaterThan(2);
   });
 });
+
+describe("the cuttings", () => {
+  it("cut the road down through the land in every world but the tunnel, and their walls hold karts on it", async () => {
+    const { BANK_AT, BANK_LEAN } = await import("../src/game/world/banks");
+    for (const theme of THEMES) {
+      let banks = 0;
+      for (const [pts, seed] of [[calm(), 2], [twisty(), 3], [figure8(), 2]] as const) {
+        const race = new Race({ rivals: 0, difficulty: "pro", theme, seed, replay: pts }, null, () => {});
+        const t = race.track;
+        banks += race.features.banks.length;
+        for (const b of race.features.banks) {
+          const a = t.s.findIndex((s) => s >= b.s0), e = t.s.findIndex((s) => s >= b.s0 + b.len);
+          for (let i = a; i < e; i += 5) expect(t.elev[i], theme.id).toBe(0); // on flat road
+          // nothing stands on the wall's land, and nothing can be fallen into there
+          const land = BANK_AT + BANK_LEAN[b.style] * b.h + 4;
+          for (const it of race.scenery.items) {
+            const i = t.nearest(it.x, it.y, a), off = t.offset(it.x, it.y, i);
+            const on = Math.sign(off) === b.side && t.s[i] > b.s0 + 2 && t.s[i] < b.s0 + b.len - 2;
+            if (on) expect(Math.abs(off) < BANK_AT - 1 || Math.abs(off) > land, theme.id).toBe(true);
+          }
+        }
+        if (race.features.banks.length && !theme.tube) {
+          // a kart steering hard into a wall stays at its foot
+          const b = race.features.banks[0], i = t.wrap(t.s.findIndex((s) => s >= b.s0 + b.len / 2) - 20);
+          const k = race.player;
+          k.placeOn(t, i, 0);
+          k.v = 20;
+          race.phase = "racing";
+          for (let n = 0; n < 60; n++) race.update(1 / 60, { steer: b.side, throttle: 1, brake: 0, drift: false });
+          if (race.features.bankAt(t.s[k.idx], b.side)) expect(Math.abs(k.offset), theme.id).toBeLessThanOrEqual(BANK_AT);
+        }
+      }
+      if (theme.tube) expect(banks).toBe(0);
+      else expect(banks, theme.id).toBeGreaterThan(0);
+    }
+  });
+});

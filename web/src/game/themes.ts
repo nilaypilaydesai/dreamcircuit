@@ -5,6 +5,7 @@ import {
   type HillRule, MESA_HILLS, MOON_HILLS, REEF_HILLS, SITE_HILLS, TOKYO_HILLS, TUBE_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
 } from "./race/tracktypes";
 import type { ObstacleKind } from "./race/obstacles";
+import type { BankRule } from "./world/banks";
 import type { HazardKind } from "./world/hazards";
 import type { LandformKind } from "./world/landforms";
 import type { HillStyle } from "./world/track";
@@ -63,6 +64,7 @@ export interface Theme {
   landforms?: LandformKind[]; // the land around the circuit: knolls, buttes, dunes, peaks (3D, off the road)
   hazard?: HazardKind; // what a kart can drive into off the road (the rescue drone fishes it out)
   obstacle?: ObstacleKind; // what gets in the way on the road (race/obstacles.ts): cows, police...
+  banks?: BankRule; // cuttings: stretches where the land rises in walls beside the road (world/banks.ts)
 }
 
 export const THEMES: Theme[] = [
@@ -76,6 +78,7 @@ export const THEMES: Theme[] = [
     near: ["bush", "oak", "pine", "flowers", "rock", "tire", "cone"],
     far: ["oak", "pine", "pine", "bush", "rock", "flowers"],
     hills: VALLEY_HILLS, hillStyle: "meadow", relief: 7, landforms: ["knoll"], hazard: "pond", obstacle: "cow",
+    banks: { style: "grass", len: [50, 110], h: [3.5, 6.5], gap: [120, 260], both: 0.35 },
   },
   {
     // the neon tunnel: the whole race inside a tube of light (world/tube.ts). Ride up its walls,
@@ -101,6 +104,7 @@ export const THEMES: Theme[] = [
     near: ["cactus", "rock", "palm", "tire", "cone", "rock"],
     far: ["mesa", "cactus", "rock", "cactus", "palm"],
     hills: MESA_HILLS, hillStyle: "mesa", relief: 4, ripples: true, landforms: ["butte", "dune", "dune"], hazard: "quicksand", obstacle: "tumbleweed",
+    banks: { style: "canyon", len: [70, 140], h: [9, 15], gap: [140, 280], both: 0.6 },
   },
   {
     id: "reef", name: "CORAL REEF", blurb: "OVER CORAL RIDGES UNDER THE SEA, IN BUBBLE HELMETS",
@@ -112,6 +116,7 @@ export const THEMES: Theme[] = [
     near: ["kelp", "coral", "anemone", "rock", "shell", "kelp", "coral"],
     far: ["kelp", "coral", "kelp", "rock", "wreck", "coral", "anemone"],
     underwater: true, hills: REEF_HILLS, hillStyle: "coral", relief: 3, ripples: true, landforms: ["reefrock"], hazard: "trench", obstacle: "jelly",
+    banks: { style: "coral", len: [50, 100], h: [4, 7], gap: [130, 260], both: 0.4 },
   },
   {
     // Tokyo at night, for drifting: winding streets between lit towers, vending machines and paper
@@ -127,6 +132,7 @@ export const THEMES: Theme[] = [
     far: ["tower", "apartment", "tower", "billboard", "sakura", "pagoda", "tower", "apartment"],
     winding: true, farAmp: 34, hills: TOKYO_HILLS, hillStyle: "expressway", tunnels: "city", terrain: "city",
     skyline: "tokyo", wall: hex("#b8bcc4"), landforms: ["block"], hazard: "canal", obstacle: "police",
+    banks: { style: "street", len: [70, 150], h: [12, 22], gap: [80, 180], both: 0.7 },
   },
   {
     // inside a volcano: the road is a causeway of rock across a lake of lava ("ground" is the
@@ -140,6 +146,7 @@ export const THEMES: Theme[] = [
     near: ["magmarock", "basalt", "obsidian", "vent", "magmarock", "basalt"],
     far: ["spire", "basalt", "vent", "obsidian", "spire", "magmarock", "basalt"],
     volcano: true, farAmp: 58, wall: hex("#4a3a3e"), hills: VOLCANO_HILLS, hillStyle: "basalt", landforms: ["cone"], obstacle: "geyser",
+    banks: { style: "basalt", len: [50, 110], h: [6, 11], gap: [140, 280], both: 0.4 },
   },
   {
     // a building site: the road climbs onto concrete foundations, along scaffolding and high
@@ -155,6 +162,7 @@ export const THEMES: Theme[] = [
     far: ["crane", "skeleton", "mixer", "digger", "pipes", "girders", "skeleton", "crane"],
     hills: SITE_HILLS, hillStyle: "scaffold", tunnels: "frame", terrain: "dirt", skyline: "city",
     wall: hex("#ff8a1f"), relief: 2.5, landforms: ["spoil"], hazard: "pit", obstacle: "wrecker",
+    banks: { style: "hoarding", len: [50, 100], h: [2.6, 6], gap: [120, 240], both: 0.4 },
   },
   {
     // the moon: low gravity (a fast kart floats over every crater's rim, and a jump carries it
@@ -171,5 +179,6 @@ export const THEMES: Theme[] = [
     far: ["boulder", "lander", "dish", "habitat", "rover", "boulder", "boulder"],
     gravity: 0.3, scale: 1.6, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
     wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"], hazard: "chasm", obstacle: "meteor",
+    banks: { style: "regolith", len: [40, 90], h: [2.5, 5], gap: [140, 280], both: 0.3 },
   },
 ];

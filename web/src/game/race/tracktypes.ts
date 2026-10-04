@@ -57,7 +57,7 @@ export const DEFAULT_PADS: PadRule = { gap: 170, straights: false };
 /** Tokyo's climbs (any track type there): up onto the elevated expressway on its concrete piers,
  * and up the ramp of a parking garage, under its ceiling, a floor up. */
 export const TOKYO_HILLS: HillRule = {
-  len: [90, 200], h: [3.6, 7.5], gap: [70, 150], segs: [24, 186],
+  len: [90, 200], h: [3.6, 7.5], gap: [50, 110], segs: [24, 186],
   kinds: [
     { style: "expressway", shape: "plateau", len: [150, 210], h: [6, 7.5] },
     { style: "garage", shape: "plateau", len: [90, 130], h: [3.6, 4.2] },
@@ -66,7 +66,7 @@ export const TOKYO_HILLS: HillRule = {
 /** The construction zone's: up onto concrete foundations, along scaffolding, and high along a
  * steel girder past a tower crane. */
 export const SITE_HILLS: HillRule = {
-  len: [90, 150], h: [2, 4], gap: [70, 140], segs: [24, 186],
+  len: [90, 150], h: [2, 4], gap: [50, 100], segs: [24, 186],
   kinds: [
     { style: "foundation", shape: "plateau", len: [80, 120], h: [1.8, 2.6] },
     { style: "scaffold", shape: "plateau", len: [90, 130], h: [3.2, 4.4] },
@@ -75,17 +75,17 @@ export const SITE_HILLS: HillRule = {
 };
 /** Dream Valley's: the road rolls over grassy rises in the meadows. */
 export const VALLEY_HILLS: HillRule = {
-  len: [100, 160], h: [2.5, 4.5], gap: [90, 170], segs: [24, 186],
+  len: [100, 160], h: [2.5, 4.5], gap: [60, 120], segs: [24, 186],
   kinds: [{ style: "meadow", shape: "sine", len: [100, 160], h: [2.5, 4.5] }],
 };
 /** The neon tunnel's: the tube rising and dipping as it runs. */
 export const TUBE_HILLS: HillRule = {
-  len: [90, 150], h: [3, 5.5], gap: [80, 160], segs: [24, 186],
+  len: [90, 150], h: [3, 5.5], gap: [60, 120], segs: [24, 186],
   kinds: [{ style: "earth", shape: "sine", len: [90, 150], h: [3, 5.5] }],
 };
 /** Sunset Mesa's: up onto the top of a mesa, and over dunes. */
 export const MESA_HILLS: HillRule = {
-  len: [60, 170], h: [2, 6.5], gap: [80, 160], segs: [24, 186],
+  len: [60, 170], h: [2, 6.5], gap: [55, 115], segs: [24, 186],
   kinds: [
     { style: "mesa", shape: "plateau", len: [120, 170], h: [4.5, 6.5] },
     { style: "dune", shape: "sine", len: [60, 95], h: [2, 3.4] },
@@ -93,17 +93,17 @@ export const MESA_HILLS: HillRule = {
 };
 /** The reef's: over ridges of rock and coral. */
 export const REEF_HILLS: HillRule = {
-  len: [80, 130], h: [2.5, 4.2], gap: [90, 170], segs: [24, 186],
+  len: [80, 130], h: [2.5, 4.2], gap: [60, 120], segs: [24, 186],
   kinds: [{ style: "coral", shape: "sine", len: [80, 130], h: [2.5, 4.2] }],
 };
 /** The volcano's: causeways of basalt, raised over the lava. */
 export const VOLCANO_HILLS: HillRule = {
-  len: [80, 120], h: [2.4, 3.4], gap: [100, 180], segs: [24, 186],
+  len: [80, 120], h: [2.4, 3.4], gap: [70, 130], segs: [24, 186],
   kinds: [{ style: "basalt", shape: "plateau", len: [80, 120], h: [2.4, 3.4] }],
 };
 /** The moon's: short, steep crater rims, which a fast kart floats over in the low gravity. */
 export const MOON_HILLS: HillRule = {
-  len: [44, 62], h: [2.2, 3.4], gap: [55, 120], segs: [24, 192],
+  len: [44, 62], h: [2.2, 3.4], gap: [45, 95], segs: [24, 192],
   kinds: [{ style: "crater", shape: "sine", len: [44, 62], h: [2.2, 3.4] }],
 };
 

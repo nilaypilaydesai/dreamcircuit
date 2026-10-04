@@ -10,6 +10,7 @@
 
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import type { Kart } from "./kart";
+import type { Bank } from "../world/banks";
 import { TUBE_FLOOR, TUBE_R } from "../world/tube";
 import { DEFAULT_PADS, DEFAULT_RAMPS, type PadRule, type RampRule } from "./tracktypes";
 
@@ -53,6 +54,8 @@ export class Features {
   ramps: Ramp[] = [];
   pads: Pad[] = [];
   tunnels: Tunnel[] = [];
+  /** Cuttings (world/banks.ts): walls of land beside the road, set out by the race. */
+  banks: Bank[] = [];
   private straight = 0; // m of straight road in a row, at the end of what was scanned
   private tunnelRun = 0; // m of gently curving flat road in a row
   private lastTunnel = -Infinity;
@@ -242,6 +245,11 @@ export class Features {
       if (u >= 0 && u < 1) return { height: RAMP_HEIGHT * u, u };
     }
     return { height: 0, u: -1 };
+  }
+
+  /** The cutting's wall beside arc length ``s`` on ``side`` (1 the left, -1 the right), if any. */
+  bankAt(s: number, side: number): Bank | undefined {
+    return this.banks.find((b) => b.side === side && s >= b.s0 && s < b.s0 + b.len);
   }
 
   /** Whether arc length ``s`` is inside a tunnel. */

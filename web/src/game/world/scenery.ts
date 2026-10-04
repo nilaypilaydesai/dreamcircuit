@@ -20,7 +20,7 @@ export interface Placed {
 }
 
 const CELL = 12;
-const LANDFORMS = 18; // the most a world gets
+const LANDFORMS = 28; // the most a world gets
 
 export class Scenery {
   items: Placed[] = [];
@@ -29,6 +29,8 @@ export class Scenery {
   private readonly cache = new Map<string, SceneryArt[]>(); // a few variants per kind
   private readonly rng: Rand;
   private readonly half: number; // m: the world spans [-half, half] (its ground texture's)
+  /** Whether (x, y) is on a cutting's wall (world/banks.ts): nothing is set out there. */
+  inWall: ((x: number, y: number) => boolean) | null = null;
   private readonly area: number; // how many times the usual world's area it has (the moon is bigger)
 
   constructor(readonly theme: Theme, seed: number, private readonly bannerText: (s: Sprite) => void) {
@@ -179,6 +181,7 @@ export class Scenery {
 
   private add(track: Track, x: number, y: number, art: SceneryArt, flip: boolean, clearance: number): void {
     if (Math.abs(x) > this.half - 4 || Math.abs(y) > this.half - 4) return;
+    if (this.inWall?.(x, y)) return;
     if (this.landforms.some((l) => onLandform(l, x, y, 2))) return;
     if (this.roadDistance(track, x, y, clearance + 1) <= clearance) return;
     this.items.push({ x, y, art, flip });

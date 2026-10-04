@@ -7,6 +7,7 @@
 // round them (dangers()).
 
 import { Rand } from "../core/gfx";
+import { BANK_AT } from "../world/banks";
 import { HALF_WIDTH, type Track } from "../world/track";
 import type { Kart } from "./kart";
 
@@ -69,6 +70,8 @@ export class Obstacles {
   private spawnIn = 5; // s until the next meteor
   private cooldown = 0; // s until the next police car may pull out
   private wreckers = 0;
+  /** Whether a cutting's wall stands beside arc length ``s`` on ``side`` (set by the race). */
+  wallAt: ((s: number, side: number) => boolean) | null = null;
 
   constructor(readonly kind: ObstacleKind | null, private readonly rng: Rand) {}
 
@@ -263,9 +266,12 @@ export class Obstacles {
       if (!st.armed || coming < 60 || coming > 140) continue;
       st.armed = false;
       if (this.rng.next() > 0.75) continue;
-      const o = this.make("tumbleweed", track, st.idx, st.side * (HALF_WIDTH + 14));
+      // out from beside the road (or the foot of a wall), across to the other side (or wall)
+      const from = this.wallAt?.(st.s, st.side) ? BANK_AT - 1 : HALF_WIDTH + 14;
+      const to = this.wallAt?.(st.s, -st.side) ? BANK_AT - 1 : HALF_WIDTH + 16;
+      const o = this.make("tumbleweed", track, st.idx, st.side * from);
       o.v = this.rng.range(7, 10);
-      o.target = -st.side * (HALF_WIDTH + 16);
+      o.target = -st.side * to;
       o.r = 0.9;
       o.state = 0;
       this.list.push(o);

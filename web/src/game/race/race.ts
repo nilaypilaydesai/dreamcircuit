@@ -5,6 +5,7 @@
 
 import { Rand, type Sprite } from "../core/gfx";
 import type { Theme } from "../themes";
+import { BANK_AT, BANK_LEAN } from "../world/banks";
 import { type FallKind, type Hazard, inHazard, placeHazards } from "../world/hazards";
 import { Scenery } from "../world/scenery";
 import { WorldTexture } from "../world/texture";
@@ -112,6 +113,9 @@ export class Race {
   private hillTurn: number; // which of the world's kinds of climb is next (they take turns)
   private hillTries = 0; // places the next one did not fit
   private hillScan = 1; // the first dense index no climb has been decided for
+  private bankScan = 1; // the first dense index no cutting has been decided for
+  private nextBank = 160; // m of road before the next cutting may start
+  private readonly bankRng: Rand;
   private cranes: number[] = []; // m along the lap of girders' middles not yet dreamed (a crane goes up there)
   private readonly hillRng: Rand;
   /** What a kart can drive into off the road (world/hazards.ts), set out when the lap locks. */
@@ -126,6 +130,7 @@ export class Race {
   constructor(readonly setup: RaceSetup, designer: Designer | null, banner: (s: Sprite) => void) {
     this.rng = new Rand(setup.seed);
     this.hillRng = new Rand(setup.seed + 21);
+    this.bankRng = new Rand(setup.seed + 53);
     this.hillTurn = this.hillRng.int(0, 6);
     this.type = trackType(setup.trackType);
     this.hillRule = this.type.hills ?? setup.theme.hills ?? null;
@@ -137,8 +142,10 @@ export class Race {
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
+    this.scenery.inWall = (x, y) => this.inWall(x, y, 1.5);
     this.items = new Items(new Rand(setup.seed + 3));
     this.obstacles = new Obstacles(setup.theme.obstacle ?? null, new Rand(setup.seed + 41));
+    this.obstacles.wallAt = (s, side) => !!this.features.bankAt(s, side);
     this.items.gravity = GRAVITY * (setup.theme.gravity ?? 1);
     // a map is a layout: each world draws it at its own scale (the moon's are bigger)
     const scale = setup.theme.scale ?? 1;
@@ -237,8 +244,10 @@ export class Race {
     // straight that earns a jump keeps it), until the lap locks
     this.placeHills(t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING));
     this.raiseCranes(to);
-    // what gets in the way (cows, geysers, police alleys...), on road whose climbs are decided
+    // what gets in the way (cows, geysers, police alleys...), and the cuttings, on road whose
+    // climbs are decided
     this.obstacles.place(t, t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING), this.roadFree);
+    this.placeBanks(t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING));
   }
 
   /** A tower crane beside each girder's middle, once the road there has been dreamed. */
@@ -309,6 +318,64 @@ export class Race {
       if (kind?.style === "girder") this.cranes.push(s + len / 2);
       this.nextHill = s + len + this.hillRng.range(rule.gap[0], rule.gap[1]);
     }
+  }
+
+  /** Cuttings (world/banks.ts) along road up to ``upto`` whose climbs are decided: on flat road all
+   * known, clear of bridges, tunnels, jumps and the line, and of anything that comes in from the
+   * side of the road (cows, alleys, tumbleweeds' gullies, a crane's mast). */
+  private placeBanks(upto: number): void {
+    const rule = this.setup.theme.banks, t = this.track, f = this.features, rng = this.bankRng;
+    if (!rule) return;
+    for (let i = Math.max(1, this.bankScan); i < Math.min(upto, t.count); i++) {
+      const s = t.s[i];
+      if (s < this.nextBank || t.fromStart(i) < 100) { this.bankScan = i + 1; continue; }
+      const len = rng.range(rule.len[0], rule.len[1]), end = i + Math.round(len / SPACING);
+      if (end + 10 >= t.count && !t.locked) return; // (its road is not all known yet: wait)
+      this.bankScan = i + 1;
+      let flat = true;
+      for (let k = i - 12; k <= end + 12 && flat; k += 3) flat = (t.elev[t.wrap(k)] ?? 1) === 0;
+      // (cows walk in from beside the road, police cars come out of alleys, a crane stands there; a
+      // tumbleweed can as well blow out from the foot of a wall)
+      const beside = (o: { s: number }, m: number) => o.s > s - m && o.s < s + len + m;
+      if (!flat || this.blocked(s - 10, len + 20, false) || f.rampNear(s - 10, len + 20) ||
+          f.tunnels.some((tn) => tn.s0 < s + len + 15 && tn.s0 + TUNNEL_LEN > s - 15) ||
+          this.obstacles.list.some((o) => (o.kind === "cow" || o.kind === "wrecker") && beside(o, 45)) ||
+          this.obstacles.sites.some((st) => beside(st, this.obstacles.kind === "police" ? 30 : 0)) ||
+          (t.locked && s + len > t.length - 120)) {
+        this.nextBank = s + 20;
+        continue;
+      }
+      const h = rng.range(rule.h[0], rule.h[1]), first: 1 | -1 = rng.next() < 0.5 ? 1 : -1;
+      for (const side of rng.next() < rule.both ? [1, -1] as const : [first]) {
+        f.banks.push({ s0: s, len, side, h: h * rng.range(0.85, 1.15), style: rule.style });
+      }
+      this.scenery.clearAlong(t, i, Math.min(end, t.count - 1), BANK_AT + 10);
+      this.nextBank = s + len + rng.range(rule.gap[0], rule.gap[1]);
+    }
+  }
+
+  /** Whether (x, y) is within ``m`` m of the land a cutting's wall stands on (from its foot to the
+   * back of its top). */
+  private inWall(x: number, y: number, m: number): boolean {
+    const t = this.track, f = this.features;
+    if (!f.banks.length) return false;
+    const i = t.nearest(x, y, 0), off = t.offset(x, y, i), a = Math.abs(off);
+    return !!f.banks.find((b) => b.side === Math.sign(off) && t.s[i] > b.s0 - m && t.s[i] < b.s0 + b.len + m &&
+      a > BANK_AT - m && a < BANK_AT + BANK_LEAN[b.style] * b.h + 4 + m);
+  }
+
+  /** A cutting's wall keeps a kart on the road and the shoulder beside it. */
+  private holdToBanks(k: Kart): void {
+    const lim = BANK_AT - 0.5;
+    if (!this.features.banks.length || Math.abs(k.offset) <= lim) return;
+    const side = k.offset > 0 ? 1 : -1;
+    if (!this.features.bankAt(this.track.s[k.idx], side)) return;
+    const [tx, ty] = this.track.tangent(k.idx), d = side * lim - k.offset;
+    k.x -= ty * d;
+    k.y += tx * d;
+    k.offset = side * lim;
+    k.v *= 0.97;
+    k.bumpTime = 0.2;
   }
 
   /** The lap has locked: make good the counts the track type confirms (jumps, pads, climbs) on
@@ -416,13 +483,16 @@ export class Race {
     this.placeHills(this.track.count);
     this.raiseCranes(this.track.count);
     this.obstacles.place(this.track, this.track.count, this.roadFree);
+    this.placeBanks(this.track.count);
     this.scenery.onLock(this.track);
     this.confirm();
     // the world's hazard, beside the road, on the outside of the bends
     const kind = this.setup.theme.hazard;
     if (kind) {
       const rng = new Rand(this.setup.seed + 31), t = this.track;
-      this.hazards = placeHazards(t, kind, () => rng.next(), (x, y, cap) => this.scenery.roadDistance(t, x, y, cap));
+      // (never where a cutting's wall stands)
+      this.hazards = placeHazards(t, kind, () => rng.next(), (x, y, cap) => this.scenery.roadDistance(t, x, y, cap))
+        .filter((h) => !this.inWall(h.x, h.y, Math.max(h.rx, h.ry) + 6));
       this.tex.addHazards(this.hazards);
       this.scenery.clearHazards(this.hazards);
     }
@@ -479,6 +549,7 @@ export class Race {
       if (d.kart.finished && this.phase === "done") return;
       const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers);
       d.kart.update(dt, c, this.track, this.cls);
+      this.holdToBanks(d.kart);
       this.fire(d.kart, c);
       if (!d.kart.falling && this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
     });
@@ -486,6 +557,7 @@ export class Race {
     const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
     const wasSunk = this.player.fall >= 0 && this.player.fall < FALL_SWAP;
     const { boosted, landed } = this.player.update(dt, controls, this.track, this.cls);
+    this.holdToBanks(this.player);
     if (boosted) this.events.push({ kind: "boost" });
     if (!wasAir && this.player.air && !this.player.falling) this.events.push({ kind: "jump" });
     if (landed !== -1) this.events.push({ kind: "land", trick: landed });

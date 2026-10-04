@@ -9,6 +9,7 @@
 import { hex, mix, shade } from "../core/gfx";
 import { PAD_HALF, PAD_LEN, RAMP_HEIGHT, RAMP_LEN, TUNNEL_H, type Features, type Pad, type Tunnel } from "../race/features";
 import type { Theme } from "../themes";
+import { BANK_AT, BANK_LEAN, type Bank } from "../world/banks";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import { type P3, type Painter, face, toCamera } from "./poly";
 
@@ -589,6 +590,110 @@ function climbPieceAt(track: Track, q: number): number {
     return Math.max(track.elev[i], track.elev[j]) < 0.12 ? -1 : i;
   }
   return -1;
+}
+
+const SHOP = [hex("#ffd98a"), hex("#dfe8ff"), hex("#ffb0d0"), hex("#9fe8ff"), hex("#ffcf7a")];
+const CONTAINERS = [hex("#c0392b"), hex("#2f6fb0"), hex("#27885a"), hex("#d98b2b"), hex("#7a7f88")];
+const CORALS = [hex("#ff6f91"), hex("#ff9f5a"), hex("#b76cff"), hex("#ffd45a"), hex("#5ad1c4")];
+
+/** The cuttings (world/banks.ts): walls of land beside the road, in each world's own make. */
+export function bankFaces(p: Painter, track: Track, banks: readonly Bank[], theme: Theme): void {
+  for (const b of banks) {
+    const a = indexAt(track, b.s0), e = Math.min(track.count - 1, indexAt(track, b.s0 + b.len));
+    if (e - a < 3 || !near(p, track, (a + e) >> 1, b.len)) continue;
+    for (let i = a; i < e; i += CLIMB_STEP) {
+      const j = Math.min(i + CLIMB_STEP, e);
+      if (near(p, track, i)) bankPiece(p, track, b, theme, i, j, (i - a) / CLIMB_STEP, i === a, j === e);
+    }
+  }
+}
+
+function bankPiece(p: Painter, track: Track, b: Bank, theme: Theme, i: number, j: number, n: number, first: boolean,
+                   last: boolean): void {
+  const sd = b.side, lean = BANK_LEAN[b.style], foot = BANK_AT, h = b.h, back = foot + lean * h + 4;
+  const zi = track.elev[i] ?? 0, zj = track.elev[j] ?? 0;
+  const [tx, ty] = track.tangent(i);
+  const P = (q: number, off: number, z: number) => edgePoint(track, q, sd * off, z);
+  const inward: P3 = [sd * ty, -sd * tx, lean]; // facing the road (and the sky, as it leans back)
+  // a band of the wall from z0 to z1 m up, in ``color``
+  const band = (z0: number, z1: number, color: number, bias = 0.12) => {
+    face(p, [P(i, foot + lean * z0, zi + z0), P(j, foot + lean * z0, zj + z0), P(j, foot + lean * z1, zj + z1),
+             P(i, foot + lean * z1, zi + z1)], color, inward, bias);
+  };
+  // a patch on the wall, u0..u1 along the piece and z0..z1 up (a window, a sign), just in front of it
+  const patch = (u0: number, u1: number, z0: number, z1: number, color: number) => {
+    const A = (u: number, z: number) => {
+      const q0 = P(i, foot + lean * z - 0.03, zi + z), q1 = P(j, foot + lean * z - 0.03, zj + z);
+      return [q0[0] + (q1[0] - q0[0]) * u, q0[1] + (q1[1] - q0[1]) * u, q0[2] + (q1[2] - q0[2]) * u] as P3;
+    };
+    face(p, [A(u0, z0), A(u1, z0), A(u1, z1), A(u0, z1)], color, inward, 0.1);
+  };
+  const lit = jag(n, 41) > 0.5 ? 1 : 0.92;
+  switch (b.style) {
+    case "grass": {
+      band(0, 0.9, shade(STONE, (n & 1 ? 0.92 : 1.04) * lit)); // a dry-stone wall at the foot
+      band(0.9, h, shade(theme.ground[n & 1], 0.86 * lit));
+      if (n % 2 === 0) patch(0.1, 0.9, 0.86, 0.95, shade(STONE, 1.25));
+      break;
+    }
+    case "canyon": {
+      const layers = 5;
+      // level beds of rock running the length of the wall, a seam darker every so often
+      for (let k = 0; k < layers; k++) {
+        band((k * h) / layers, ((k + 1) * h) / layers, shade(STRATA[(k * 2 + 1) % STRATA.length], (k & 1 ? 0.93 : 1.03) * (n % 9 === 0 ? 0.9 : 1)));
+      }
+      break;
+    }
+    case "coral": {
+      band(0, h * 0.55, shade(hex("#56697a"), lit));
+      band(h * 0.55, h, shade(hex("#6d8292"), lit));
+      if (n % 2 === 0) patch(0.15, 0.6, h * 0.82, h * 0.98, CORALS[(n >> 1) % CORALS.length]);
+      if (n % 3 === 1) patch(0.5, 0.85, h * 0.3, h * 0.42, CORALS[(n + 2) % CORALS.length]);
+      break;
+    }
+    case "street": {
+      // shop fronts three pieces wide: a lit window, a sign over it; above, floors of windows
+      const shop = Math.floor(n / 3), at = n % 3, glass = SHOP[shop % SHOP.length], sign = NEON_SIGNS[(shop * 3) % NEON_SIGNS.length];
+      band(0, 4.6, hex("#1d1f28"));
+      band(4.6, h, shade(FACADE, 0.9 + 0.2 * jag(shop, 9)));
+      if (at !== 1 || jag(shop, 13) > 0.3) patch(0.08, 0.92, 0.5, 3.1, glass);
+      patch(0, 1, 3.5, 4.5, sign);
+      if (at === 1) patch(0.15, 0.85, 3.7, 4.3, hex("#16101f"));
+      for (let z = 6; z < h - 1.5; z += 3.4) {
+        const win = jag(n * 11 + Math.round(z), 21);
+        if (win < 0.7) patch(0.2, 0.8, z, z + 1.7, win < 0.42 ? hex("#ffd98a") : win < 0.6 ? hex("#dfe8ff") : hex("#141722"));
+      }
+      break;
+    }
+    case "basalt": {
+      band(0, h, shade(hex("#2f2729"), (n & 1 ? 0.95 : 1.05) * lit));
+      if (jag(n, 17) > 0.55) patch(0.1, 0.9, h * (0.3 + 0.4 * jag(n, 19)), h * (0.3 + 0.4 * jag(n, 19)) + 0.18, hex("#ff7a1e"));
+      break;
+    }
+    case "hoarding": {
+      band(0, 2.4, n & 1 ? hex("#2f6fb0") : hex("#2a63a0"));
+      patch(0, 1, 1.1, 1.35, hex("#f4f1ea"));
+      if (h > 2.6) band(2.4, h, CONTAINERS[Math.floor(n / 4) % CONTAINERS.length]);
+      if (h > 2.6 && n % 4 === 0) patch(0, 0.08, 2.4, h, hex("#1f2026"));
+      break;
+    }
+    case "regolith": {
+      band(0, h, shade(theme.ground[0], (0.8 + 0.12 * jag(n, 23)) * lit));
+      band(h - 0.4, h, shade(theme.ground[0], 1.15));
+      break;
+    }
+  }
+  // the land on top of the wall, back from its edge, and the wall's ends
+  const top: P3 = [0, 0, 1];
+  face(p, [P(i, foot + lean * h, zi + h), P(i, back, zi + h), P(j, back, zj + h), P(j, foot + lean * h, zj + h)],
+       b.style === "street" ? ROOF : b.style === "hoarding" ? hex("#3a3e46") : shade(theme.ground[1], 1.05), top, 0.14);
+  for (const [q, end, dir] of [[i, first, -1], [j, last, 1]] as const) {
+    if (!end) continue;
+    const [ex, ey] = track.tangent(q), z = track.elev[q] ?? 0;
+    face(p, [P(q, foot, z), P(q, back, z), P(q, back, z + h), P(q, foot + lean * h, z + h)],
+         b.style === "street" ? FACADE : b.style === "canyon" ? shade(STRATA[2], 0.85) : shade(theme.ground[0], 0.75),
+         [ex * dir, ey * dir, 0], 0.12);
+  }
 }
 
 /** The tunnels: under a building in Tokyo, through a building's frame on the building site. */

@@ -20,7 +20,7 @@ import { type GameMap, SHOWCASE } from "./world/maps";
 import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
 import type { Face } from "./render/poly";
-import { aimArrow, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
+import { aimArrow, bankFaces, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
 import { type ObstacleArt, obstacleArt, obstacleFaces, obstacleSprites } from "./render/obstacles";
 import { tubeFaces, tubePoint } from "./render/tube";
 import type { ObstacleSound } from "./race/obstacles";
@@ -921,6 +921,7 @@ class Game {
       rampFaces(painter, t, race.features, race.setup.theme);
     } else {
       landformFaces(painter, race.scenery.landforms, theme);
+      bankFaces(painter, t, race.features.banks, theme);
       bridgeFaces(painter, t, race.setup.theme);
       hillFaces(painter, t, theme, race.features.pads, now);
       tunnelFaces(painter, t, race.features, theme);
