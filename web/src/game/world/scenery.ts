@@ -10,7 +10,7 @@ import type { Theme } from "../themes";
 import { type Hazard, inHazard } from "./hazards";
 import { LANDFORM_CLEAR, LANDFORM_SIZE, type Landform, onLandform, reach } from "./landforms";
 import { type Bridge, HALF_WIDTH, SPACING, type Track } from "./track";
-import { HALF } from "./texture";
+import { HALF, worldHalf } from "./texture";
 
 export interface Placed {
   x: number;
@@ -28,9 +28,13 @@ export class Scenery {
   private readonly road = new Map<number, number[]>(); // spatial hash of committed road points
   private readonly cache = new Map<string, SceneryArt[]>(); // a few variants per kind
   private readonly rng: Rand;
+  private readonly half: number; // m: the world spans [-half, half] (its ground texture's)
+  private readonly area: number; // how many times the usual world's area it has (the moon is bigger)
 
   constructor(readonly theme: Theme, seed: number, private readonly bannerText: (s: Sprite) => void) {
     this.rng = new Rand(seed);
+    this.half = worldHalf(theme.scale);
+    this.area = (this.half / HALF) ** 2;
   }
 
   private key(x: number, y: number): number {
@@ -122,8 +126,9 @@ export class Scenery {
   onLock(track: Track): void {
     const t = this.theme;
     this.placeLandforms(track);
-    for (let k = 0; k < 900 && this.items.length < 700; k++) {
-      const x = this.rng.range(-HALF + 12, HALF - 12), y = this.rng.range(-HALF + 12, HALF - 12);
+    // (as thick on the ground in a bigger world)
+    for (let k = 0; k < 900 * this.area && this.items.length < 700 * this.area; k++) {
+      const x = this.rng.range(-this.half + 12, this.half - 12), y = this.rng.range(-this.half + 12, this.half - 12);
       const kind = this.rng.pick(t.far);
       const big = kind === "mesa" || kind === "peak" || kind === "wreck" || kind === "spire" || kind === "crane" ||
         kind === "skeleton";
@@ -153,15 +158,15 @@ export class Scenery {
   private placeLandforms(track: Track): void {
     const kinds = this.theme.landforms;
     if (!kinds?.length) return;
-    for (let k = 0; k < 500 && this.landforms.length < LANDFORMS; k++) {
+    for (let k = 0; k < 500 * this.area && this.landforms.length < LANDFORMS * this.area; k++) {
       const kind = this.rng.pick(kinds), size = LANDFORM_SIZE[kind];
       const l: Landform = {
         kind, x: 0, y: 0, r: this.rng.range(size.r[0], size.r[1]), stretch: this.rng.range(size.stretch[0], size.stretch[1]),
         rot: this.rng.range(0, Math.PI), h: this.rng.range(size.h[0], size.h[1]), seed: this.rng.int(0, 1 << 20),
       };
       const far = reach(l);
-      l.x = this.rng.range(-HALF + far + 8, HALF - far - 8);
-      l.y = this.rng.range(-HALF + far + 8, HALF - far - 8);
+      l.x = this.rng.range(-this.half + far + 8, this.half - far - 8);
+      l.y = this.rng.range(-this.half + far + 8, this.half - far - 8);
       if (this.roadDistance(track, l.x, l.y, LANDFORM_CLEAR + far + 2) < LANDFORM_CLEAR + far) continue;
       if (this.landforms.some((o) => Math.hypot(o.x - l.x, o.y - l.y) < reach(o) + far + 6)) continue;
       this.landforms.push(l);
@@ -170,7 +175,7 @@ export class Scenery {
   }
 
   private add(track: Track, x: number, y: number, art: SceneryArt, flip: boolean, clearance: number): void {
-    if (Math.abs(x) > HALF - 4 || Math.abs(y) > HALF - 4) return;
+    if (Math.abs(x) > this.half - 4 || Math.abs(y) > this.half - 4) return;
     if (this.landforms.some((l) => onLandform(l, x, y, 2))) return;
     if (this.roadDistance(track, x, y, clearance + 1) <= clearance) return;
     this.items.push({ x, y, art, flip });

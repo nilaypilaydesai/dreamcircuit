@@ -4,7 +4,7 @@
 
 import { H, W, mix, type Screen } from "../core/gfx";
 import { isMark, lavaColor } from "../world/lava";
-import { RES, TEX, HALF, type WorldTexture } from "../world/texture";
+import { RES, type WorldTexture } from "../world/texture";
 
 export interface Camera {
   x: number;
@@ -44,7 +44,7 @@ export interface GroundFx {
 }
 
 export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: number, fx: GroundFx = {}): void {
-  const cycles = tex.lava, lava = fx.lava ?? 0, { mist, light, paint } = fx;
+  const cycles = tex.lava, lava = fx.lava ?? 0, { mist, light, paint } = fx, HALF = tex.half;
   const buf = scr.buf;
   const fwx = Math.cos(cam.heading), fwy = Math.sin(cam.heading);
   const rx = Math.sin(cam.heading), ry = -Math.cos(cam.heading); // right of the view direction
@@ -61,7 +61,7 @@ export function drawGround(scr: Screen, cam: Camera, tex: WorldTexture, fog: num
     const foot = z / cam.focal / RES;
     const level = Math.max(0, Math.min(tex.levels.length - 1, Math.floor(Math.log2(Math.max(foot, 1)))));
     const data = tex.levels[level];
-    const size = TEX >> level;
+    const size = tex.size >> level;
     const scale = 1 / (RES * (1 << level));
     const lat = z / cam.focal; // meters per pixel sideways
     const cx = cam.x + fwx * z, cy = cam.y + fwy * z;

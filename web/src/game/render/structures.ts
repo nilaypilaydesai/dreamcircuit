@@ -7,7 +7,7 @@
 // through the steel frame of a building going up).
 
 import { hex, mix, shade } from "../core/gfx";
-import { PAD_HALF, PAD_LEN, RAMP_HEIGHT, RAMP_LEN, TUNNEL_H, type Features, type Tunnel } from "../race/features";
+import { PAD_HALF, PAD_LEN, RAMP_HEIGHT, RAMP_LEN, TUNNEL_H, type Features, type Pad, type Tunnel } from "../race/features";
 import type { Theme } from "../themes";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import { type P3, type Painter, face, toCamera } from "./poly";
@@ -76,6 +76,8 @@ export function bridgeFaces(p: Painter, track: Track, theme: Theme): void {
   }
 }
 
+const CLIMB_STEP = 3; // dense points to a piece of a climb (hillFaces), and of a pad on one
+
 /** First dense index whose arc length is at least ``s``. */
 function indexAt(track: Track, s: number): number {
   let lo = 0, hi = track.count;
@@ -117,6 +119,7 @@ interface Piece {
   len: number; // m from i to j
   tx: number; // the road's direction
   ty: number;
+  top: number; // the nearest sort key of the strips of road drawn on it (deck), for what lies on them
 }
 
 /** A point ``u`` of the way along a piece, ``off`` m left of the centerline, ``z`` m up. */
@@ -130,8 +133,9 @@ const zAt = (c: Piece, u: number): number => c.hi + (c.hj - c.hi) * u;
 /** A strip of the deck karts drive on, ``off0`` to ``off1`` m left of the centerline, ``u0`` to
  * ``u1`` of the way along the piece, ``lift`` m over the road. */
 function deck(c: Piece, off0: number, off1: number, color: number, u0 = 0, u1 = 1, lift = 0, bias = -0.2): void {
-  const z0 = zAt(c, u0) + lift, z1 = zAt(c, u1) + lift;
+  const z0 = zAt(c, u0) + lift, z1 = zAt(c, u1) + lift, faces = c.p.faces, n = faces.length;
   face(c.p, [at(c, u0, off0, z0), at(c, u1, off0, z1), at(c, u1, off1, z1), at(c, u0, off1, z0)], color, UP, bias, 1, true);
+  if (faces.length > n) c.top = Math.min(c.top, faces[n].z);
 }
 
 /** A bar in the upright plane ``off`` m left of the centerline (a pipe, a strut, a rail): from
@@ -508,8 +512,10 @@ function basaltClimb(c: Piece): void {
 }
 
 /** The climbs, each built as its style says (the world's own when the climb does not say). */
-export function hillFaces(p: Painter, track: Track, theme: Theme): void {
-  const step = 3;
+/** ``pads``: the boost pads (a part of one on a climb is drawn with the piece of road it lies on,
+ * at ``time`` in its glow). */
+export function hillFaces(p: Painter, track: Track, theme: Theme, pads: readonly Pad[] = [], time = 0): void {
+  const step = CLIMB_STEP;
   for (const hl of track.hills) {
     const a = indexAt(track, hl.s0), e = Math.min(track.count - 1, indexAt(track, hl.s0 + hl.len));
     if (e - a < 2 || !near(p, track, (a + e) >> 1, hl.len)) continue;
@@ -520,7 +526,7 @@ export function hillFaces(p: Painter, track: Track, theme: Theme): void {
       if (Math.max(hi, hj) < 0.12 || !near(p, track, i)) continue;
       const [tx, ty] = track.tangent(i);
       const c: Piece = { p, track, theme, i, j, hi, hj, s: track.s[i], n: (i - a) / step,
-                         len: Math.max(0.05, track.s[j] - track.s[i]), tx, ty };
+                         len: Math.max(0.05, track.s[j] - track.s[i]), tx, ty, top: Infinity };
       if (style === "rock") rockClimb(c);
       else if (style === "cliff") cliffClimb(c, hl.side ?? 1);
       else if (style === "foundation") foundationClimb(c);
@@ -535,8 +541,37 @@ export function hillFaces(p: Painter, track: Track, theme: Theme): void {
       else if (style === "coral") coralClimb(c);
       else if (style === "basalt") basaltClimb(c);
       else earthClimb(c);
+      padsOn(c, pads, time);
     }
   }
+}
+
+/** The parts of boost pads on piece ``c`` of a climb: drawn straight after its road (over the
+ * lines on it), before anything standing on it. */
+function padsOn(c: Piece, pads: readonly Pad[], time: number): void {
+  if (!Number.isFinite(c.top)) return;
+  for (const pad of pads) {
+    // the pad's steps between dense points i..j (step k lies between pad.start + k and + k + 1)
+    const ua = Math.max(0, (c.i - pad.start) * SPACING), ub = Math.min(PAD_LEN, (c.j - pad.start) * SPACING);
+    if (ub <= ua) continue;
+    const faces = c.p.faces, from = faces.length;
+    padPart(c.p, c.track, pad, ua, ub, time);
+    for (let q = from; q < faces.length; q++) faces[q].z = c.top - 0.001;
+  }
+}
+
+/** The piece of climb road that dense point ``q`` starts, as hillFaces draws it (its first dense
+ * point), or -1 where the road there lies on the ground. */
+function climbPieceAt(track: Track, q: number): number {
+  const s = track.s[q];
+  for (const hl of track.hills) {
+    if (s < hl.s0 - 2 || s > hl.s0 + hl.len + 2) continue;
+    const a = indexAt(track, hl.s0), e = Math.min(track.count - 1, indexAt(track, hl.s0 + hl.len));
+    if (e - a < 2 || q < a || q >= e) continue;
+    const i = a + Math.floor((q - a) / CLIMB_STEP) * CLIMB_STEP, j = Math.min(i + CLIMB_STEP, e);
+    return Math.max(track.elev[i], track.elev[j]) < 0.12 ? -1 : i;
+  }
+  return -1;
 }
 
 /** The tunnels: through rock in the mountains, through a building's frame on the building site. */
@@ -696,24 +731,78 @@ export function aimArrow(p: Painter, k: { x: number; y: number; heading: number;
   for (const f of mine) f.z = depth;
 }
 
+/** A point ``u`` m along a boost pad from its start and ``v`` m across it from its middle, on
+ * the road under it (following the road's bends). */
+function padPoint(track: Track, pad: Pad, u: number, v: number): P3 {
+  const f = u / SPACING, k = Math.floor(f), w = f - k;
+  const i = track.wrap(pad.start + k), j = track.wrap(pad.start + k + 1);
+  const a = edgePoint(track, i, pad.offset + v, 0), b = edgePoint(track, j, pad.offset + v, 0);
+  const z = (track.elev[i] ?? 0) * (1 - w) + (track.elev[j] ?? 0) * w + 0.05;
+  return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, z];
+}
+
+const PAD_PLATE = hex("#7a2e12"), PAD_GLOW = [hex("#ff8a1f"), hex("#fff2a8")];
+
+/** A convex polygon in a pad's own terms (m along it, m across it), cut to the part ``ua`` to
+ * ``ub`` m along it. */
+function clipAlong(poly: [number, number][], ua: number, ub: number): [number, number][] {
+  let out = poly;
+  for (const [lim, keep] of [[ua, 1], [ub, -1]]) {
+    const was = out;
+    out = [];
+    for (let k = 0; k < was.length; k++) {
+      const a = was[k], b = was[(k + 1) % was.length];
+      const ain = (a[0] - lim) * keep >= 0, bin = (b[0] - lim) * keep >= 0;
+      if (ain) out.push(a);
+      if (ain !== bin) out.push([lim, a[1] + ((b[1] - a[1]) * (lim - a[0])) / (b[0] - a[0])]);
+    }
+  }
+  return out;
+}
+
+/** The part of boost pad ``pad`` from ``ua`` to ``ub`` m along it: its plate, in pieces that follow
+ * the road round a bend, and the chevrons on it, pulsing forward at ``time``. */
+function padPart(p: Painter, track: Track, pad: Pad, ua: number, ub: number, time: number): void {
+  const P = (u: number, v: number) => padPoint(track, pad, u, v);
+  const pieces = Math.max(1, Math.ceil((ub - ua) / 1.4));
+  for (let q = 0; q < pieces; q++) {
+    const u0 = ua + ((ub - ua) * q) / pieces, u1 = ua + ((ub - ua) * (q + 1)) / pieces;
+    face(p, [P(u0, -PAD_HALF), P(u1, -PAD_HALF), P(u1, PAD_HALF), P(u0, PAD_HALF)], PAD_PLATE, UP, 0, 1, true);
+  }
+  for (let c = 0; c < 3; c++) {
+    const u0 = 1 + c * 2;
+    if (u0 + 2 <= ua || u0 >= ub) continue;
+    const col = mix(PAD_GLOW[0], PAD_GLOW[1], 0.5 + 0.5 * Math.sin(time * 9 - c * 1.6));
+    // a chevron pointing along the road: two arms meeting at the tip
+    const arms: [number, number][][] = [
+      [[u0, -PAD_HALF + 0.4], [u0 + 1.4, 0], [u0 + 2.0, 0], [u0 + 0.6, -PAD_HALF + 0.4]],
+      [[u0 + 0.6, PAD_HALF - 0.4], [u0 + 2.0, 0], [u0 + 1.4, 0], [u0, PAD_HALF - 0.4]],
+    ];
+    for (const arm of arms) {
+      const cut = clipAlong(arm, ua, ub);
+      if (cut.length >= 3) face(p, cut.map(([u, v]) => P(u, v)), col, UP, 0, 1, true);
+    }
+  }
+}
+
+/** Boost pads on the ground (hillFaces draws the parts of them on a climb). */
 export function padFaces(p: Painter, track: Track, f: Features, time: number): void {
+  const steps = Math.ceil(PAD_LEN / SPACING);
   for (const pad of f.pads) {
     if (!near(p, track, pad.start)) continue;
-    const i = pad.start;
-    const z = (track.elev[i] ?? 0) + 0.05;
-    const [tx, ty] = track.tangent(i);
-    const nx = -ty, ny = tx;
-    const ox = track.xs[i] + nx * pad.offset, oy = track.ys[i] + ny * pad.offset;
-    const L = (u: number, v: number): P3 => [ox + tx * u + nx * v, oy + ty * u + ny * v, z];
-    face(p, [L(0, -PAD_HALF), L(PAD_LEN, -PAD_HALF), L(PAD_LEN, PAD_HALF), L(0, PAD_HALF)],
-         hex("#7a2e12"), [0, 0, 1], -0.3, 1, true);
-    for (let c = 0; c < 3; c++) {
-      const u0 = 1 + c * 2;
-      const glow = 0.5 + 0.5 * Math.sin(time * 9 - c * 1.6);
-      const col = mix(hex("#ff8a1f"), hex("#fff2a8"), glow);
-      // a chevron pointing along the road: two arms meeting at the tip
-      face(p, [L(u0, -PAD_HALF + 0.4), L(u0 + 1.4, 0), L(u0 + 2.0, 0), L(u0 + 0.6, -PAD_HALF + 0.4)], col, [0, 0, 1], -0.35, 1, true);
-      face(p, [L(u0 + 0.6, PAD_HALF - 0.4), L(u0 + 2.0, 0), L(u0 + 1.4, 0), L(u0, PAD_HALF - 0.4)], col, [0, 0, 1], -0.35, 1, true);
+    const from = p.faces.length;
+    // runs of the pad's steps on the ground
+    for (let k = 0; k < steps;) {
+      if (climbPieceAt(track, pad.start + k) >= 0) { k++; continue; }
+      const k0 = k;
+      while (k < steps && climbPieceAt(track, pad.start + k) < 0) k++;
+      padPart(p, track, pad, k0 * SPACING, Math.min(PAD_LEN, k * SPACING), time);
     }
+    // one decal at one depth, its far end's (the sort is stable: the plate goes down first, then
+    // the chevrons on it), so every kart on it is drawn over it
+    const mine = p.faces.slice(from);
+    if (!mine.length) continue;
+    const depth = Math.max(...mine.map((fc) => fc.z));
+    for (const fc of mine) fc.z = depth;
   }
 }

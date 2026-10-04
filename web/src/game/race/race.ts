@@ -128,21 +128,24 @@ export class Race {
     this.nextHill = this.hillRule ? Math.max(60, this.hillRule.gap[1]) : Infinity;
     this.features = new Features({
       tunnels: !!setup.theme.tunnels, ramps: this.type.ramps ?? DEFAULT_RAMPS, pads: this.type.pads ?? DEFAULT_PADS,
+      gravity: setup.theme.gravity ?? 1,
     });
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
     this.items = new Items(new Rand(setup.seed + 3));
     this.items.gravity = GRAVITY * (setup.theme.gravity ?? 1);
+    // a map is a layout: each world draws it at its own scale (the moon's are bigger)
+    const scale = setup.theme.scale ?? 1;
     if (setup.replay) {
       this.live = null;
       this.track = new Track();
-      this.track.addKnown(Array.from({ length: N }, (_, j) => j), setup.replay);
+      this.track.addKnown(Array.from({ length: N }, (_, j) => j), setup.replay.map((v) => v * scale));
       this.onCommit(0, this.track.count);
       this.onLock();
     } else {
       if (!designer) throw new Error("the circuit designer is not loaded");
-      this.live = new LiveCircuit(designer, new Rand(setup.seed + 2), setup.layout ?? this.type.layout);
+      this.live = new LiveCircuit(designer, new Rand(setup.seed + 2), setup.layout ?? this.type.layout, scale);
       this.track = this.live.track;
       this.live.onCommit = (a, b) => this.onCommit(a, b);
       this.live.onRaise = (a, b) => this.onRaise(a, b);
@@ -205,6 +208,10 @@ export class Race {
       const under = t.s[b.lower];
       this.features.ramps = this.features.ramps.filter((r) =>
         Math.abs(r.s0 - under) > UNDER_CLEAR && Math.abs(r.s0 - b.centerS) > BRIDGE_CLEAR);
+      // and a pad on road lifted into the bridge would lie under its deck (pads are drawn on the
+      // ground and on climbs, not on bridges)
+      this.features.pads = this.features.pads.filter((pd) =>
+        Math.abs(pd.s0 - under) > UNDER_CLEAR && Math.abs(pd.s0 - b.centerS) > BRIDGE_CLEAR);
       // and a climb where the bridge, or the road under it, goes would leave no headroom: flatten it
       for (const [s0, s1] of [[b.centerS - BRIDGE_CLEAR, b.centerS + BRIDGE_CLEAR], [under - UNDER_CLEAR, under + UNDER_CLEAR]]) {
         const r = t.removeHills(s0, s1);
@@ -382,6 +389,13 @@ export class Race {
     }
     this.lockedAt = this.clock;
     this.events.push({ kind: "locked" });
+  }
+
+  /** The circuit as a map keeps it, to race again anywhere: its road points at the usual scale
+   * (the moon draws every circuit bigger). */
+  layout(): Float64Array {
+    const k = this.setup.theme.scale ?? 1;
+    return Float64Array.from(this.track.points, (v) => v / k);
   }
 
   /** Dream the grid and the first stretch, then put the karts on it. */

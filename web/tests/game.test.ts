@@ -2,7 +2,7 @@
 // loops and count laps; jumps, tricks and boost pads; rivals and items, in headless races.
 
 import { afterEach, describe, expect, it } from "vitest";
-import { Rand } from "../src/game/core/gfx";
+import { Rand, hex } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
 import {
@@ -23,13 +23,13 @@ import { screenSize } from "../src/game/core/gfx";
 import { LAPS, Race, takesControls } from "../src/game/race/race";
 import { THEMES } from "../src/game/themes";
 import {
-  BRIDGE_DECK, BRIDGE_HEIGHT, BRIDGE_RAMP, HALF_WIDTH, N, SPACING, Track, bridgeLift, checkLap, crSegment,
+  BRIDGE_DECK, BRIDGE_HEIGHT, BRIDGE_RAMP, HALF_WIDTH, MAX_FROM_START, N, SPACING, Track, bridgeLift, checkLap, crSegment,
 } from "../src/game/world/track";
 import {
   CHUNK, type Designer, INITIAL, LiveCircuit, STEP_SCALE, WIDE_RADIUS, arcStyle, bandMiss, fromSteps, smoothArc, stepMask,
   tightestBend, toModel, toSteps,
 } from "../src/game/world/trackgen";
-import { BANK_EDGE } from "../src/game/world/texture";
+import { BANK_EDGE, worldHalf } from "../src/game/world/texture";
 import { SHOWCASE } from "../src/game/world/maps";
 import circuits from "./circuits.json";
 
@@ -1775,12 +1775,46 @@ describe("the moon", () => {
     expect(low.gravity).toBeCloseTo(26 * 0.3, 5);
     expect(low.craters).toBeGreaterThan(3);
     expect(low.launches).toBeGreaterThan(2);
-    expect(low.frames).toBeGreaterThan(Math.max(30, 4 * earth.frames)); // the same rims, hardly a hop at home
+    expect(low.frames).toBeGreaterThan(Math.max(30, 3.5 * earth.frames)); // the same rims, hardly a hop at home
     expect(low.finished).toBe(true);
   });
 
   it("puts every driver in a helmet", () => {
     expect(moon.helmets).toBe(true);
+  });
+
+  it("draws every circuit bigger, on ground big enough to hold the biggest lap", () => {
+    expect(moon.scale).toBeGreaterThan(1.4);
+    const half = worldHalf(moon.scale);
+    // a lap reaches at most MAX_FROM_START from its start (at the origin): at the moon's scale, road
+    // and shoulder still lie on its ground, as at home
+    expect(MAX_FROM_START * moon.scale! + HALF_WIDTH + 2).toBeLessThan(half);
+    expect(worldHalf()).toBeGreaterThan(MAX_FROM_START + HALF_WIDTH + 2);
+    for (const pts of [twisty(), calm(), figure8()]) {
+      const home = new Race({ rivals: 0, difficulty: "pro", theme: THEMES[0], seed: 3, replay: pts }, null, () => {});
+      const away = new Race({ rivals: 0, difficulty: "pro", theme: moon, seed: 3, replay: pts }, null, () => {});
+      expect(away.track.length / home.track.length).toBeCloseTo(moon.scale!, 1);
+      const t = away.track;
+      for (let i = 0; i < t.count; i += 7) expect(Math.max(Math.abs(t.xs[i]), Math.abs(t.ys[i]))).toBeLessThan(half - HALF_WIDTH - 2);
+    }
+  });
+
+  it("gives a jump room to land: three times the straight, as a kart flies three times as far", () => {
+    const home = new Features(), away = new Features({ gravity: moon.gravity });
+    expect(away.flight).toBeGreaterThan(2.5 * home.flight);
+    for (const pts of [twisty(), calm(), figure8()]) {
+      const race = new Race({ rivals: 0, difficulty: "pro", theme: moon, seed: 4, replay: pts }, null, () => {});
+      const t = race.track;
+      expect(race.features.flight).toBe(away.flight);
+      for (const r of race.features.ramps) {
+        // from the ramp's foot to past the landing: flat road, gently bent at most
+        for (let k = 0; k < away.flight / SPACING; k += 2) {
+          const i = t.wrap(r.start + k);
+          expect(Math.abs(t.curvature(i))).toBeLessThan(1 / 60);
+          expect(t.elev[i]).toBe(0);
+        }
+      }
+    }
   });
 });
 
@@ -1813,6 +1847,33 @@ describe("drawing the worlds", () => {
       expect(faces.length, style).toBeGreaterThan(40);
       for (const f of faces) f.draw();
       expect(scr.buf.some((c) => c !== 0), style).toBe(true);
+    }
+  });
+
+  it("lays a boost pad on a climb over the road under it, and a kart on the pad over the pad", async () => {
+    const { hillFaces, padFaces } = await import("../src/game/render/structures");
+    const { toCamera } = await import("../src/game/render/poly");
+    const { W } = await import("../src/game/core/gfx");
+    for (const style of ["earth", "skyway", "crater"] as const) {
+      const t = Track.fromPoints(calm());
+      t.addHill({ s0: 200, len: 160, h: 6, shape: "sine", style, side: 1 });
+      const i = t.s.findIndex((s) => s >= 228); // on the way up
+      const f = new Features();
+      f.pads.push({ start: i, s0: t.s[i], offset: 0 });
+      const { cam, scr, faces, painter } = await scene();
+      look(cam, t, i);
+      cam.height = t.elev[i] + 3.2;
+      // the middle of the pad (between two chevrons), where a kart stands on it
+      const m = i + Math.round(3.5 / SPACING), at = toCamera(cam, t.xs[m], t.ys[m], t.elev[m]);
+      const px = Math.round(W / 2 + (at[1] * cam.focal) / at[0]), py = Math.round(cam.horizon - (at[2] * cam.focal) / at[0]) - 1;
+      const KART = 0xff00ff00;
+      faces.push({ z: at[0] - 0.5, draw: () => { scr.buf[(py - 3) * W + px] = KART; } }); // (keyed as a kart on raised road)
+      hillFaces(painter, t, THEMES[0], f.pads, 0);
+      padFaces(painter, t, f, 0);
+      faces.sort((a, b) => b.z - a.z);
+      for (const fc of faces) fc.draw();
+      expect(scr.buf[py * W + px], style).toBe(hex("#7a2e12")); // the pad's plate, not the road over it
+      expect(scr.buf[(py - 3) * W + px], style).toBe(KART);
     }
   });
 

@@ -36,14 +36,15 @@ export interface Tunnel {
   n: number; // dense points through it
 }
 
-/** What a race builds: tunnels (the mountains), the jump rule (null: no jumps) and the pad rule. */
-export interface FeatureRules { tunnels: boolean; ramps: RampRule | null; pads: PadRule }
+/** What a race builds: tunnels (the mountains), the jump rule (null: no jumps) and the pad rule;
+ * ``gravity``, relative to the usual, sets how far a jump flies (on the moon, three times as far). */
+export interface FeatureRules { tunnels: boolean; ramps: RampRule | null; pads: PadRule; gravity: number }
 
 /** Where a top-up may build: ``free(s, len)`` says whether arc lengths [s, s + len) are clear of
  * bridges, item rows and karts. */
 export type Free = (s: number, len: number) => boolean;
 
-const FLIGHT = 45; // m from a ramp's foot to well past where karts land
+const FLIGHT = 45; // m from a ramp's foot to well past where karts land (in the usual gravity)
 const TOPUP_BEND = 1 / 90; // the gentlest a top-up jump's flight may bend (a 20 m flight drifts 2 m)
 
 export class Features {
@@ -56,6 +57,10 @@ export class Features {
   private readonly withTunnels: boolean;
   private readonly rampRule: RampRule | null;
   private readonly padRule: PadRule;
+  /** m from a ramp's foot to well past where karts land: a kart flies about as much further as
+   * gravity is weaker (the ramp itself is no longer). */
+  readonly flight: number;
+  private readonly straightFor: number; // m of straight road that earns a jump (room for the flight too)
 
   /** ``rules``: what to build (true/false: the defaults, with or without tunnels). */
   constructor(rules: Partial<FeatureRules> | boolean = {}) {
@@ -63,6 +68,8 @@ export class Features {
     this.withTunnels = !!r.tunnels;
     this.rampRule = r.ramps === undefined ? DEFAULT_RAMPS : r.ramps;
     this.padRule = r.pads ?? DEFAULT_PADS;
+    this.flight = RAMP_LEN + (FLIGHT - RAMP_LEN) / (r.gravity ?? 1);
+    this.straightFor = (this.rampRule?.straight ?? DEFAULT_RAMPS.straight) + this.flight - FLIGHT;
   }
 
   /** Whether arc lengths [s, s + len) overlap a tunnel (with a margin either side). */
@@ -87,11 +94,11 @@ export class Features {
       // (a 20 m flight drifts about a meter sideways), so it counts as straight here
       this.straight = k < (rr?.bend ?? DEFAULT_RAMPS.bend) && track.elev[i] === 0 ? this.straight + SPACING : 0;
       // a ramp in the middle of a long straight
-      if (rr && this.straight > rr.straight && s - this.lastRamp > rr.gap) {
-        const s0 = s - FLIGHT;
-        const start = i - Math.round(FLIGHT / SPACING);
+      if (rr && this.straight > this.straightFor && s - this.lastRamp > rr.gap) {
+        const s0 = s - this.flight;
+        const start = i - Math.round(this.flight / SPACING);
         if (!blocked(s0 - 30, RAMP_LEN + 70) && track.fromStart(start) > 140 && !this.tunnelNear(s0 - 30, RAMP_LEN + 70) &&
-            !this.padNear(s0 - 15, FLIGHT + 15)) {
+            !this.padNear(s0 - 15, this.flight + 15)) {
           this.ramps.push({ start, s0 });
           this.lastRamp = s;
         }
@@ -128,7 +135,7 @@ export class Features {
   jumpPending(s1: number): boolean {
     const rr = this.rampRule;
     if (!rr || this.straight < 20) return false;
-    return this.scanned - this.straight < s1 && this.scanned + (rr.straight - this.straight) - this.lastRamp > rr.gap;
+    return this.scanned - this.straight < s1 && this.scanned + (this.straightFor - this.straight) - this.lastRamp > rr.gap;
   }
 
   /** A pad at dense index ``i`` if the road there is free. */
@@ -142,7 +149,7 @@ export class Features {
 
   /** Whether a jump (or where its karts land) is on arc lengths [s, s + len). */
   rampNear(s: number, len: number): boolean {
-    return this.ramps.some((r) => r.s0 < s + len && r.s0 + FLIGHT > s);
+    return this.ramps.some((r) => r.s0 < s + len && r.s0 + this.flight > s);
   }
 
   private padNear(s: number, len: number): boolean {
@@ -165,7 +172,7 @@ export class Features {
    * flight may bend no more than TOPUP_BEND), well apart from other jumps. Returns how many it
    * added. */
   topUpRamps(track: Track, want: number, free: Free, limit = TOPUP_BEND): number {
-    const zone = Math.round(FLIGHT / SPACING);
+    const zone = Math.round(this.flight / SPACING);
     const spots: { i: number; bend: number }[] = [];
     for (let i = 8; i < track.count; i += 4) {
       const from = track.fromStart(i);
@@ -178,7 +185,7 @@ export class Features {
     for (const { i } of spots) {
       if (added >= want) break;
       const s0 = track.s[i];
-      if (this.ramps.some((r) => Math.abs(r.s0 - s0) < 120) || this.padNear(s0 - 15, FLIGHT + 15) ||
+      if (this.ramps.some((r) => Math.abs(r.s0 - s0) < 120) || this.padNear(s0 - 15, this.flight + 15) ||
           this.tunnelNear(s0 - 30, RAMP_LEN + 70) || !free(s0 - 30, RAMP_LEN + 70)) continue;
       this.ramps.push({ start: i, s0 });
       added += 1;

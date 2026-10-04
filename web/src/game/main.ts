@@ -310,8 +310,7 @@ class Game {
     const mu = this.sound.music;
     if (["pause", "results", "boot", "standings", "podium"].includes(this.mode)) mu.stop();
     else if (this.mode === "race" || this.mode === "dreaming") {
-      const id = this.race?.setup.theme.id ?? "valley";
-      mu.play(id);
+      if (this.race) mu.play(this.race.setup.theme.id); // (until the race is set out, what was playing goes on)
     } else mu.play("title");
   }
 
@@ -369,14 +368,14 @@ class Game {
   private raceAgain(): void {
     const r = this.race;
     if (!r) return;
-    const replay = r.track.locked ? Float64Array.from(r.track.points) : r.setup.replay;
+    const replay = r.track.locked ? r.layout() : r.setup.replay;
     void this.startRace(undefined, { ...r.setup, replay, build: this.build });
   }
 
   /** A circuit the player dreamed has locked: keep it as a map (the newest first, MY_MAPS of them). */
   private keepMap(race: Race): void {
     this.dreams += 1;
-    const points = Float64Array.from(race.track.points);
+    const points = race.layout();
     this.myMaps = [{ name: `MY DREAM ${this.dreams}`, type: race.type.id, world: race.setup.theme.name, mine: true, points },
                    ...this.myMaps].slice(0, MY_MAPS);
     this.settings.circuit = 0;
@@ -419,14 +418,20 @@ class Game {
     };
     if (!again) this.surprised = !replay && choice === "surprise";
     this.seed = setup.seed;
-    const race = new Race(setup, this.designer, (sp) => this.banner(sp));
-    this.race = race;
-    this.sky = new Sky(setup.theme, this.cam.horizon, this.seed + 3);
+    // the dreaming screen first: setting out a race (painting its ground) takes a moment, more on
+    // the moon's bigger ground, and the menu must not sit frozen meanwhile
+    this.race = null;
     this.hud.banners = [];
     this.flash = 0;
     this.sound.setEngine(0, false, false);
     this.go("dreaming");
     this.sound.ensure();
+    await new Promise<void>((done) => requestAnimationFrame(() => setTimeout(done, 0)));
+    if (this.mode !== "dreaming" || this.race) return; // backed out, or another race started
+    const race = new Race(setup, this.designer, (sp) => this.banner(sp));
+    this.race = race;
+    this.sky = new Sky(setup.theme, this.cam.horizon, this.seed + 3);
+    this.music(); // the world's own song
     try {
       await race.prepare();
     } catch (e) {
@@ -524,8 +529,9 @@ class Game {
     cam.x = p.x - Math.cos(cam.heading) * back;
     cam.y = p.y - Math.sin(cam.heading) * back;
     cam.heading += jitter;
-    // ride up onto bridges with the kart; on a jump, rise only partway for a sense of air
-    const lift = p.ground + (p.elev - p.ground) * 0.55;
+    // ride up onto bridges with the kart; on a jump, rise only partway for a sense of air (no more
+    // than at the top of a jump at home: the moon's flights go twice as high, out of the picture)
+    const lift = p.elev - Math.min((p.elev - p.ground) * 0.45, 1.8);
     cam.lift += (lift - cam.lift) * (1 - Math.exp(-dt * (p.air ? 5 : 9)));
     cam.height = BASE_HEIGHT + cam.lift;
     // speed: a wider view and speed lines while boosting (and much more as a rocket)
@@ -852,7 +858,7 @@ class Game {
     const painter = { cam, scr, fog: race.setup.theme.fog, faces };
     landformFaces(painter, race.scenery.landforms, theme);
     bridgeFaces(painter, t, race.setup.theme);
-    hillFaces(painter, t, theme);
+    hillFaces(painter, t, theme, race.features.pads, now);
     tunnelFaces(painter, t, race.features, theme);
     rampFaces(painter, t, race.features, race.setup.theme);
     padFaces(painter, t, race.features, now);

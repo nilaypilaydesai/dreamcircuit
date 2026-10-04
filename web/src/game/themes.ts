@@ -48,6 +48,7 @@ export interface Theme {
   // out), crater walls with lava falls all around, embers in the air
   wall?: number; // the low walls along a climb (default: grey stone)
   gravity?: number; // how strong gravity is, relative to the usual (the moon's is weak)
+  scale?: number; // how much bigger than usual its circuits are drawn (the moon's: a jump carries a kart far)
   hills?: HillRule; // climbs set along the road as it is dreamed (any track type)
   hillStyle?: HillStyle; // what climbs are built as when the rule does not say (default: earth)
   tunnels?: "rock" | "frame"; // tunnels on long straights: through rock, or a building's steel frame
@@ -153,8 +154,9 @@ export const THEMES: Theme[] = [
     wall: hex("#ff8a1f"), relief: 2.5, landforms: ["spoil"], hazard: "pit",
   },
   {
-    // the moon: low gravity (a fast kart floats over every crater's rim), the Earth up in a
-    // black sky, a helmet on every driver
+    // the moon: low gravity (a fast kart floats over every crater's rim, and a jump carries it
+    // three times as far, so its circuits are drawn 1.6 times the size), the Earth up in a black
+    // sky, a helmet on every driver
     id: "moon", name: "MOON BASE",
     blurb: "LOW GRAVITY: FLOAT OVER THE CRATERS, THE EARTH OVERHEAD",
     skyTop: hex("#000000"), skyHorizon: hex("#0b0d18"), fog: hex("#1a1c26"), sun: 0, stars: true,
@@ -165,7 +167,7 @@ export const THEMES: Theme[] = [
     grid: 0,
     near: ["boulder", "boulder", "dish", "habitat", "boulder", "lander"],
     far: ["boulder", "lander", "dish", "habitat", "rover", "boulder", "boulder"],
-    gravity: 0.3, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
+    gravity: 0.3, scale: 1.6, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
     wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"], hazard: "chasm",
   },
 ];

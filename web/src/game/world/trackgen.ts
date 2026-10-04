@@ -276,8 +276,10 @@ export class LiveCircuit {
   private readonly scale: number;
   private readonly styleScale: [number, number];
 
+  /** ``worldScale``: how much bigger than the designer's own the road is laid out (the moon's
+   * circuits are bigger); the designer dreams and every check runs at its own size. */
   constructor(private readonly designer: Designer, private readonly rng: Rand,
-              readonly layout: Layout = "any") {
+              readonly layout: Layout = "any", readonly worldScale = 1) {
     this.scale = designer.scale ?? STEP_SCALE;
     this.styleScale = designer.styleScale ?? STYLE_SCALE;
     const [a, b] = INITIAL;
@@ -343,7 +345,7 @@ export class LiveCircuit {
       const sample = await this.designer.sample({
         mask, known, style: this.style, layout: this.layout, seed: this.rng.int(1, 2 ** 31),
         onStep: (x0, frac) => {
-          this.preview = toGame(fromSteps(x0, this.known, this.mask, this.scale));
+          this.preview = this.laidOut(fromSteps(x0, this.known, this.mask, this.scale));
           this.denoise = frac;
         },
       });
@@ -376,6 +378,13 @@ export class LiveCircuit {
     }
   }
 
+  /** Model meters -> where the road goes in the world (game meters, at the world's scale). */
+  private laidOut(u: ArrayLike<number>): Float64Array {
+    const g = toGame(u);
+    if (this.worldScale !== 1) for (let k = 0; k < g.length; k++) g[k] *= this.worldScale;
+    return g;
+  }
+
   private measured(lap: Float64Array, style: number): Float64Array {
     this.styles.push(style);
     return lap;
@@ -389,8 +398,8 @@ export class LiveCircuit {
       this.known[N + k] = c[N + k];
       this.mask[k] = 1;
     }
-    this.preview = toGame(c);
-    const [from, to] = this.track.addKnown(arc, toGame(this.known));
+    this.preview = this.laidOut(c);
+    const [from, to] = this.track.addKnown(arc, this.laidOut(this.known));
     if (this.track.raised) this.onRaise?.(this.track.raised[0], this.track.raised[1]);
     if (to > from) this.onCommit?.(from, to);
     if (this.track.locked) this.onLock?.();
@@ -399,7 +408,7 @@ export class LiveCircuit {
   /** The designer failed repeatedly: finish the lap from its last whole-circuit guess. */
   private closeFromGuess(): void {
     const rest = this.arcs.splice(0).flat();
-    const guess = this.preview ? toModel(this.preview) : new Float64Array(2 * N);
+    const guess = this.preview ? toModel(this.preview.map((v) => v / this.worldScale)) : new Float64Array(2 * N);
     const u = Float64Array.from(this.known);
     for (const j of rest) {
       u[j] = guess[j];
