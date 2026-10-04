@@ -103,7 +103,15 @@ Gaussian (sigma = 1 point, new arc only) and checked **in context**: the arc plu
 guess for the still-unknown rest must form a valid circuit under the architect's rules.
 Checking the arc with the guess for the rest catches an arc that would make closing the lap
 impossible while it can still be dreamed again. A failing arc is resampled up to 3 times; after
-that a sigma = 2 smoothing of the last sample is kept, so the race always goes on.
+that a sigma = 2 smoothing of the last sample is kept, so the race always goes on. An arc that
+passes but has a corner tighter than 20 m (in game meters: the architect allows 12.4 m, a hairpin
+a kart takes at about 16 m/s, and players found the dreamed laps too tight) is dreamed again too,
+on the same retries; if every try has one, the try with the widest corner is kept (an arc asked to
+be wild, a Technical track's, may bend to 16 m). Smoothing the tight corners wider was tried first
+and made them worse: a Gaussian pulls a round bend's points in toward its middle and closer
+together (4.1 m apart became 2.5 m), so the same turn happens in less road, and on one test circuit
+the tightest bend went from 15.7 m to 11.4 m. Smoothing irons out kinks; only the designer can draw
+a wider corner.
 
 **The style signal.** The race keeps exponential averages, over about eight seconds, of the
 player's speed as a share of the class's top speed, the share of time spent drifting, off the
@@ -250,7 +258,14 @@ pillars placed clear of the road underneath. Crossings are found with a spatial 
 is committed; road that was already built is lifted after the fact, its texture repainted and
 its scenery moved. Karts have a height: the ground under a kart is the deck, a ramp or the
 plain road, the guard rails keep it on the deck, and two karts only collide if they are at the
-same level, so traffic passes over and under freely.
+same level, so traffic passes over and under freely. The height under a kart is read between the
+two road points either side of it (and a jump ramp's wedge by the kart's exact place along it):
+read at the nearest point alone, the road rose in steps of a point, 0.6 m apart, one or two a frame
+(0.11, then 0.22, then 0.11 m), and a kart shuddered up every ramp and bridge. A kart on raised road
+is drawn over the road it stands on, and only what is on the ground under a bridge's deck is drawn
+before the deck when the camera is up on it (that rule once applied to anything low whenever the
+camera was high, and a kart coming down a ramp under a camera still up on the deck vanished into
+it).
 
 **Sprites.** Karts are tiny voxel models (body, wheels, driver, helmet in each livery's colors)
 rendered from 16 directions at load time. The renderer picks the view from the angle between the
@@ -271,8 +286,8 @@ shadows and drift sparks. Nothing is a bitmap file.
 and rocks scatter near new road as it is committed (never on it), chevron boards go on the
 outside of tight corners, and the distant landscape is placed once the circuit locks.
 
-**Karts and rivals.** Arcade handling: acceleration toward a class top speed (Rookie 24, Pro 28,
-Legend 32 m/s), slower surfaces off the asphalt (kerb, shoulder, grass), yaw rate limited by
+**Karts and rivals.** Arcade handling: acceleration toward a class top speed (Rookie 24,
+Intermediate 26, Pro 28, Legend 32 m/s), slower surfaces off the asphalt (kerb, shoulder, grass), yaw rate limited by
 grip over speed, and drifting: hold drift while steering to slide with a stronger turn, charge blue (0.7 s)
 and orange (1.6 s) sparks, and release for a mini-turbo. Rivals follow a racing line that cuts
 the inside of corners with pure pursuit, brake for a friction-limited speed profile with
@@ -320,8 +335,8 @@ top speed within 8%, acceleration within 25%, cornering grip within 12%, the spe
 shoulder and the grass, a mini-turbo that charges sooner and fires up to 35% longer, and weight,
 which splits each bump's push and impulse by mass. The classic kart is exactly neutral, so the
 race physics (and its tests) are unchanged for it. Rivals draw 24 random builds, rank them by a
-racing score (speed and mini-turbo count most) and take one from the bottom third on Rookie, the
-middle on Pro and the top on Legend. Each kart is assembled as a voxel model from its parts (a
+racing score (speed and mini-turbo count most) and take one from the bottom on Rookie, the lower
+middle on Intermediate, the upper middle on Pro and the top on Legend. Each kart is assembled as a voxel model from its parts (a
 shell sampled from a width and roof-height profile along the car, a carved cockpit, lights,
 intakes, stripes; wheels with rims painted on their outer faces; the spoiler and pipes mounted
 where the body says) and baked into its 16 views once per build; the garage's turntable splats
@@ -426,6 +441,29 @@ in strata, lit red toward their foot, with lava pouring down them from notches i
 embers rise through the air; the scenery is basalt columns, obsidian shards, smoking vents, magma
 boulders and spires of rock standing in the lava, and nobody sits in a grandstand out there.
 
+**Maps.** Quick Race races a fresh dream, or a map: the last eight circuits the player dreamed
+(saved on the device, in decimeters, with their track type and world, named MY DREAM 1, 2, ...) or
+eight showcase circuits the designer dreamed (the ones the trailer was filmed on, shipped with the
+game). A map is raced as it is, with no dreaming, by its own track type's rules, and the setup
+screen draws its layout beside the hint. While a map is picked, the TRACK row shows the map's own
+type, dimmed and locked, so the screen never claims a type the race won't use.
+
+**The rescue drone, in every world.** The volcano's rescue works anywhere. When the lap locks, each
+other world sets out up to seven hazards of its own kind (`world/hazards.ts`): ponds in Dream
+Valley, holes in Neon Night's grid, quicksand in Sunset Mesa, a trench in the reef, crevasses in
+the mountains, dug-out pits on the building site and chasms on the moon. Each is an ellipse on the
+outside of a bend (the tightest bends first, where karts run wide), wholly 10.3 m or more from every
+road point (past the road and its shoulder), clear of the start and of each other, painted into the
+ground (and painted again after any repaint of that ground) with nothing left standing in it. A kart
+on the ground in one goes in as into the lava: it sinks out of sight in a splash of the hazard's
+colours, the screen darkens to the hazard's colour, and the drone sets it back on the road it left.
+A kart can also fall off raised road: flying over the open edge of a bridge, the skyway, a girder,
+scaffolding, a foundation, a mesa's wall, a basalt causeway or the drop side of a cliff ledge, there
+is nothing under it but the ground far below, and once it has dropped 1.5 m under the deck the drone
+comes for it and lifts it back onto the deck. Over an embankment's slope (a meadow's, a dune's, a
+crater's rim) a kart just lands on the road again, as before. Rivals keep to their racing lines and
+seldom go in.
+
 **The Grand Prix.** A cup (`race/cup.ts`) runs one race in every world, back to back. The rivals
 keep the same karts throughout (their builds come from the cup's seed, not each race's), and each
 race pays points by finishing place, 15, 12, 10, 8, 6, 4, 2 and 1; the standings rank by points,
@@ -445,7 +483,8 @@ the way to the side it drifts (with hysteresis, so a drift does not flicker off 
 pulled back, straight or on a diagonal, it brakes and then reverses, steering as it backs up. The
 gas is automatic once the race is on, so steering and drifting take one thumb; before GO the
 engine revs only while the thumb is on the stick, which keeps the rocket start a matter of
-timing. DRIFT (hops and tricks too) and ITEM sit under the right thumb. On every device the brake
+timing. DRIFT (hops and tricks too), ITEM and BACK (the item thrown behind: R on a keyboard, X on
+a pad) sit under the right thumb. On every device the brake
 wins over the gas, and held at a standstill it backs the kart up at up to 7 m/s; the grass slows
 a reversing kart's top speed but no longer drags it to a halt (it once cancelled all but 1 m/s^2
 of the reverse thrust, and reversing is how a kart gets out of the grass). HOW TO PLAY on the main menu is
@@ -457,7 +496,7 @@ shortly after the start, none in the last 70 m before the line), with lines of c
 boxes appear as the road is dreamed. Driving through one gives an item; the player's slot spins for
 1.2 s first. There are 22 (`race/items.ts`), as many as Mario Kart 8 Deluxe has, each doing the job
 of one of its items, with original names and art. Turbo, Triple Turbo and Gold Turbo (a boost on
-every press for 7.5 s); Oil Slick and Triple Oil, dropped behind; Puck and Triple Puck, which slide
+every press for 7.5 s); Oil Slick and Triple Oil, dropped behind (a slick is 4.6 m across, a third of the road); Puck and Triple Puck, which slide
 along the aimed arrow, bounce off the road's edges up to six times and spin the first kart they
 meet, their thrower too; Dream Orb and Triple Orb, which travel up the centerline at the shooter's
 speed plus 12 m/s, ease toward the target's lane and home in directly within 22 m; Comet, which flies
@@ -476,10 +515,21 @@ boost with each bite; Horn, a ring of sound that spins karts within 7 m and knoc
 Coin, two coins (every coin, up to ten, adds 0.6% to top speed, and a spin costs three); and
 Phantom, see-through and untouchable for 5 s, which steals an item from someone ahead.
 
-Thrown items are aimed with two presses: an arrow on the road in front of the kart sweeps left and
-right (up to 43 degrees either way), the first press locks it (it turns blue, and a bomb or a puck
-rides out behind the kart as a shield meanwhile), and the second throws along it; rivals aim at the
-nearest kart in the arc and press twice, two frames apart. Items meet as they do in the classic:
+Thrown items are aimed with two presses, ahead (E) or behind (R): an arrow on the road in front of
+the kart sweeps left and right (up to 43 degrees either way) and a second sweeps behind it, mirrored
+(on the same side of the kart); the first press locks one (it turns blue, and a bomb or a puck rides
+out behind the kart as a shield meanwhile), and the second throws along it; rivals aim at the
+nearest kart in the arc and press twice, two frames apart, and throw back at a kart on their tail
+when there is nobody to hit ahead. The chase camera, 6.2 m behind the kart and 2.9 m up, cannot see
+the road behind it (the ground is in view only from about a meter behind the kart, under the kart's
+own sprite), so while the player holds something that can go back, a rear-view mirror sits at the
+top of the screen: the world drawn a second time into a small framebuffer (the renderers read the
+screen's size as they draw, so it is swapped for the mirror's for the call), from 2.5 m ahead of the
+kart and 3.4 m up, looking back over it (the kart itself is not drawn), the sky remapped to the
+mirror's field of view, then flipped as a mirror is, so what is on the kart's left shows on the
+left; the arrow behind is drawn 1.6 times larger there. Thrown back, an item goes back down the road
+at its own speed (thrown ahead it carries the kart's): a puck slides and bounces, an orb goes
+straight back like one (no homing), a bomb lands behind and waits, a boomerang goes out and home. Items meet as they do in the classic:
 two projectiles, or a projectile and a slick, take each other out; a projectile into a waiting bomb
 sets it off; an item held out behind a kart blocks one hit from behind, and every puck or orb of a
 triple circling a kart blocks one; a prism or a rocket shrugs everything off and a phantom lets it
