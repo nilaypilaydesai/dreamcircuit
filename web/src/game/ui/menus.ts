@@ -15,6 +15,7 @@ export interface MenuItem {
   action?: () => void;
   hint?: string | (() => string);
   preview?: () => ArrayLike<number> | null; // a circuit's road points (x0, y0, ...): drawn beside the hint
+  fixed?: () => boolean; // its value is set by another row for now: shown dim, without arrows, and left/right do nothing
 }
 
 const PANEL = hex("#0c0a1d");
@@ -53,19 +54,20 @@ export class Menu {
 
   handle(ev: MenuEvent, sound: Sound): "back" | null {
     const it = this.items[this.index];
+    const fixed = it.fixed?.() ?? false;
     if (ev === "up" || ev === "down") {
       this.index = (this.index + (ev === "up" ? -1 : 1) + this.items.length) % this.items.length;
       sound.move();
-    } else if (ev === "left" && it.left) {
+    } else if (ev === "left" && it.left && !fixed) {
       it.left();
       sound.move();
-    } else if (ev === "right" && it.right) {
+    } else if (ev === "right" && it.right && !fixed) {
       it.right();
       sound.move();
     } else if (ev === "confirm") {
       sound.select();
       if (it.action) it.action();
-      else if (it.right) it.right();
+      else if (it.right && !fixed) it.right();
     } else if (ev === "back" || ev === "cancel") {
       return "back";
     }
@@ -80,6 +82,7 @@ export class Menu {
     this.index = i;
     const it = this.items[i];
     sound.select();
+    if (it.fixed?.()) return;
     const onLeft = this.stacked ? x < rx + rw * 0.4 : x < rx + rw * 0.5 && x > rx + rw * 0.3;
     if (it.value && it.left && onLeft) it.left();
     else if (it.action) it.action();
@@ -111,9 +114,11 @@ export class Menu {
       f.draw(scr, it.label, x + 24, y, { color: on ? TEXT : DIM });
       if (it.value) {
         const v = it.value();
-        const arrows = it.left || it.right;
-        if (this.stacked) f.draw(scr, arrows && on ? `< ${v} >` : v, x + 24, y + 9, { color: on ? HOT : DIM });
-        else f.draw(scr, arrows ? `< ${v} >` : v, x + width - 12, y, { color: on ? HOT : DIM, align: "right" });
+        const fixed = it.fixed?.() ?? false;
+        const arrows = (it.left || it.right) && !fixed;
+        const color = on && !fixed ? HOT : DIM;
+        if (this.stacked) f.draw(scr, arrows && on ? `< ${v} >` : v, x + 24, y + 9, { color });
+        else f.draw(scr, arrows ? `< ${v} >` : v, x + width - 12, y, { color, align: "right" });
       }
     });
     const raw = this.items[this.index]?.hint;

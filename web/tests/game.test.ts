@@ -30,6 +30,7 @@ import {
   tightestBend, toModel, toSteps,
 } from "../src/game/world/trackgen";
 import { BANK_EDGE } from "../src/game/world/texture";
+import { SHOWCASE } from "../src/game/world/maps";
 import circuits from "./circuits.json";
 
 // Every race allocates a 35 MB ground texture outside the JS heap, which a lazy collector lets pile
@@ -161,6 +162,14 @@ describe("drivability checks", () => {
     expect(checkLap(figure8(), all(), "figure8", true).ok).toBe(true);
     expect(checkLap(figure8(), all(), "loop").reason).toBe("crossings");
     expect(checkLap(twisty(), all(), "figure8").reason).toBe("crossings");
+  });
+
+  it("pass every showcase map Quick Race offers, each a whole lap of its type's layout", () => {
+    expect(new Set(SHOWCASE.map((m) => m.name)).size).toBe(SHOWCASE.length);
+    for (const m of SHOWCASE) {
+      expect(m.points.length, m.name).toBe(2 * N);
+      expect(checkLap(m.points, all(), trackType(m.type).layout, true).ok, m.name).toBe(true);
+    }
   });
 
   it("reject a kink and a lap that is too small", () => {
