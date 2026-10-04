@@ -24,6 +24,7 @@ interface Kart {
   place: number; dist: number; isPlayer: boolean; finished: boolean; drifting: boolean; boostLevel: number;
   offset: number; fall: number; dropX: number; dropY: number; dropZ: number; // (the volcano's lava)
   slope: number; // how the road climbs under it
+  staticT: number; // s left with a rival's static over its screen
 }
 interface Hill { s0: number; len: number; h: number; style?: string; side?: number }
 interface Track {
@@ -39,7 +40,7 @@ interface Race {
   features: { ramps: { start: number }[]; tunnels: { s0: number }[] };
   items: { blasts: unknown[]; rowS: number[]; comets: { phase: string; x: number; y: number; z: number; target: Kart | null }[] };
   aimPhase: number; // the player's aiming arrow (where it is in its sweep)
-  obstacles: { list: { kind: string; state: number; t: number; wait: number; s: number; offset: number; idx: number }[] };
+  obstacles: { list: { kind: string; state: number; t: number; wait: number; s: number; offset: number; idx: number; x: number; y: number }[] };
 }
 interface Game {
   race: Race | null;
@@ -235,7 +236,12 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     if (r.phase !== "countdown") return ["auto", "noitems", ...extra];
     return r.countdown <= 1.35 ? ["gas"] : [];
   };
-  const advance = (steps: number, extra: string[] = []) => dc.step(steps, keys(extra), false);
+  const advance = (steps: number, extra: string[] = []) => {
+    dc.step(steps, keys(extra), false);
+    // (the player is never filmed under a rival's static: it fills the screen, and the autopilot
+    // would drive half blind)
+    race().player.staticT = 0;
+  };
   const until = async (done: () => boolean, limit: number) => {
     for (let guard = 0; !done() && guard < limit; guard++) {
       advance(1);
@@ -244,7 +250,13 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   };
   const start = async (points: number[], theme: number, rivals: number, type = "classic") => {
     dc.race(points, theme, rivals, type);
-    for (let i = 0; i < 4000 && !(dc.state().mode === "race" && race().phase === "countdown"); i++) await tick();
+    // (the game shows its dreaming screen for a frame before it sets the race out: wait by the
+    // clock, since a count of ticks, each far quicker than a frame, could run out before it came)
+    const t0 = performance.now();
+    while (!(dc.state().mode === "race" && dc.game.race?.phase === "countdown")) {
+      if (performance.now() - t0 > 120_000) throw new Error("the race was never set out");
+      await new Promise((r) => setTimeout(r, 4));
+    }
   };
   const heading = (i: number) => {
     const [tx, ty] = race().track.tangent(i);
@@ -607,15 +619,32 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       dc.shot({ x: k.x - ex * 12, y: k.y - ey * 12, heading: toEarth, height: k.ground + 1.7, focal: 250, fx: 0, clear: 3 });
     });
   }
-  // A meteor: the red ring on the road ahead, and the rock coming down onto it at a slant.
+  // A meteor: the red ring on the road ahead, and the rock coming down onto it at a slant. Filmed
+  // from behind the kart while it is on the ground (a flight here carries it out of the picture),
+  // when no crest stands between it and the ring, the camera turned to the ring.
   {
     const rock = () => race().obstacles.list.find((q) => {
-      if (q.kind !== "meteor" || q.state !== METEOR_FALL || q.t > 0.35) return false;
-      const t = race().track, d = (q.s - t.s[race().player.idx] + t.length) % t.length;
-      return d > 40 && d < 110;
+      const k = race().player, t = race().track;
+      if (q.kind !== "meteor" || q.state !== METEOR_FALL || q.t > 0.35 || k.air) return false;
+      const d = (q.s - t.s[k.idx] + t.length) % t.length;
+      if (d < 45 || d > 85) return false;
+      const z0 = t.elev[k.idx] ?? 0, z1 = t.elev[q.idx] ?? 0;
+      for (let i = k.idx, n = 0; n < 400; n++, i = t.wrap(i + 4)) {
+        const m = (t.s[i] - t.s[k.idx] + t.length) % t.length;
+        if (m >= d) break;
+        if ((t.elev[i] ?? 0) > z0 + (z1 - z0) * (m / d) + 0.6) return false; // (a crest in the way)
+      }
+      return true;
     });
     await until(() => !!rock(), 60 * 200);
-    if (rock()) await film("l_meteor", 2.8, () => dc.shot({ height: 5.5 + race().player.ground, clear: 2.5 }));
+    const m = rock();
+    if (m) {
+      await film("l_meteor", 2.8, () => {
+        const k = race().player, c = Math.cos(k.heading), sn = Math.sin(k.heading);
+        const x = k.x - c * 10, y = k.y - sn * 10;
+        dc.shot({ x, y, heading: Math.atan2(m.y - y, m.x - x), height: k.ground + 4.5, focal: 330, fx: 0, clear: 2.5 });
+      });
+    }
   }
 
   // ---------------------------------------------------------------- Volcano Core
