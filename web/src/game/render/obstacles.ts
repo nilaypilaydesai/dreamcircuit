@@ -88,9 +88,13 @@ export function obstacleSprites(obs: Obstacles, track: Track, cam: Camera, now: 
         if (o.state === GEYSER_BLOW) out.push({ x: o.x, y: o.y, art: g.column[Math.floor(now * 14) % 3], base });
         break;
       }
-      case "wrecker":
+      case "wrecker": {
+        // (not when it swings right through the camera: it filled the screen for a frame)
+        const dx = o.x - cam.x, dy = o.y - cam.y, ahead = dx * fx + dy * fy;
+        if (!cam.basis && ahead < 2.5 && Math.abs(dx * rx + dy * ry) < 2.5) break;
         out.push({ x: o.x, y: o.y, art: art.ball, base, lift: Math.max(0, o.z - 1.3) });
         break;
+      }
       case "meteor": {
         if (o.state === METEOR_FALL) {
           // in at a slant from behind one side: (x, y) is where it will land
@@ -136,8 +140,11 @@ function crane(p: Painter, track: Track, i: number, side: number, ballOff: numbe
   const reach = -side * 3.5, jz = z0 + WRECKER_PIVOT + 0.4;
   face(p, [P(0, mast, jz), P(0, reach, jz), P(0, reach, jz + 0.9), P(0, mast, jz + 0.9)], CRANE, null, 0.04);
   face(p, [P(0, mast, jz + 1.3), P(0, reach, jz + 0.9), P(0, reach, jz + 1.05), P(0, mast, jz + 1.45)], CRANE_DARK, null, 0.04);
-  // the cable, a thin strip from the pivot to the top of the ball
-  const pz = z0 + WRECKER_PIVOT, bz = z0 + ballZ + 1.1;
+  // the cable, a thin strip from the pivot to the top of the ball (but not when the camera rides
+  // right through it: a few centimeters off, the strip filled half the screen for a frame)
+  const pz = z0 + WRECKER_PIVOT, bz = z0 + ballZ + 1.1, cz = p.cam.height;
+  const u = Math.max(0, Math.min(1, (pz - cz) / Math.max(0.01, pz - bz))), near = P(0, ballOff * u, cz);
+  if (Math.hypot(near[0] - p.cam.x, near[1] - p.cam.y) < 2.5) return;
   face(p, [P(-0.07, 0, pz), P(0.07, 0, pz), P(0.07, ballOff, bz), P(-0.07, ballOff, bz)], CABLE, null, -0.02);
   face(p, [P(0, -0.07, pz), P(0, 0.07, pz), P(0, ballOff + 0.07, bz), P(0, ballOff - 0.07, bz)], CABLE, null, -0.02);
 }

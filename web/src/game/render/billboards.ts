@@ -169,7 +169,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : heat > 0 ? heat : fogAt(p.z);
     // on raised road (a deck, a climb, a ramp) a kart is drawn over the road it stands on
     const bias = k.ground > 0.05 || k.elev > 1 ? -0.5 : lowAt(k.x, k.y, k.elev);
-    // (the kart itself is drawn turned with the tube; its shadow, projected for itself, is not)
+    // (round the tube, the kart and its shadow are drawn turned with the surface they are on)
     const body = () => {
       const top = p.gy - h * KART_ANCHOR + bounce;
       scr.blitScaled(s, p.sx - w / 2, top, w, h, false, k.phantom > 0 ? hex("#c9b8ff") : tint,
@@ -183,7 +183,8 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       ...p,
       z: p.z + bias,
       draw: () => {
-        if (!sinking && !falling) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
+        // (in the tube, the shadow lies turned with the surface under it, as the kart is)
+        if (!sinking && !falling) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink, ps.rot ?? 0);
         turn(p, body)();
       },
     });
@@ -347,8 +348,20 @@ function puff(scr: Screen, cx: number, cy: number, r: number, alpha: number): vo
   }
 }
 
-function shadow(scr: Screen, cx: number, cy: number, rx: number, ry: number): void {
+function shadow(scr: Screen, cx: number, cy: number, rx: number, ry: number, a = 0): void {
   const buf = scr.buf;
+  if (a) { // turned on the screen with the surface it lies on (round the tube)
+    const c = Math.cos(a), sn = Math.sin(a), R = Math.max(rx, ry);
+    for (let y = Math.floor(cy - R); y <= cy + R; y++) {
+      if (y < 0 || y >= H) continue;
+      for (let x = Math.floor(cx - R); x <= cx + R; x++) {
+        if (x < 0 || x >= W) continue;
+        const dx = x - cx, dy = y - cy, u = dx * c + dy * sn, v = dy * c - dx * sn;
+        if ((u / rx) ** 2 + (v / ry) ** 2 <= 1) buf[y * W + x] = mix(buf[y * W + x], 0xff000000, 0.35);
+      }
+    }
+    return;
+  }
   for (let y = Math.floor(cy - ry); y <= cy + ry; y++) {
     if (y < 0 || y >= H) continue;
     const half = rx * Math.sqrt(Math.max(0, 1 - ((y - cy) / ry) ** 2));

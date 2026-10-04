@@ -338,6 +338,18 @@ export class Track {
    * on each stretch of the lap), so counting them off as SPACING each falls short, by up to a
    * meter in ten. */
   stepAlong(i: number, meters: number): { i: number; w: number } {
+    if (meters < 0) { // back down the road
+      let k = i, done = 0;
+      for (let guard = 0; guard < this.count; guard++) {
+        const j = this.wrap(k - 1);
+        if (j === k) break; // (the start of the road)
+        const gap = this.between(j, k);
+        if (done + gap >= -meters) return { i: j, w: gap > 0 ? 1 - (-meters - done) / gap : 0 };
+        done += gap;
+        k = j;
+      }
+      return { i: k, w: 0 };
+    }
     let k = i, done = 0;
     for (let guard = 0; guard < this.count; guard++) {
       const j = this.wrap(k + 1);

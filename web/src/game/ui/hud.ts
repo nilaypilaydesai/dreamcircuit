@@ -23,6 +23,9 @@ const BRONZE = hex("#e8955a");
 const DREAM = hex("#c79bff");
 const RED = hex("#ff4d4d");
 const GREEN = hex("#5dff7a");
+// warnings (the police on the player's tail, too slow for the tube's wall) go up in the sky, under
+// where the rear-view mirror hangs: at the foot of the screen they were printed over the kart
+const WARN_Y = 50;
 
 export function formatTime(t: number): string {
   const m = Math.floor(t / 60), s = Math.floor(t % 60), c = Math.floor((t * 100) % 100);
@@ -131,7 +134,7 @@ export class Hud {
         color: loop ? (Math.floor(now * 6) % 2 ? hex("#ff2bd6") : WHITE) : hex("#5a5470"), outline: INK,
       });
       if (p.slipping && Math.floor(now * 5) % 2 === 0) {
-        f.draw(scr, "TOO SLOW!", W / 2, H - 36, { color: hex("#ff6b6b"), outline: INK, align: "center" });
+        f.draw(scr, "TOO SLOW!", W / 2, WARN_Y, { color: hex("#ff6b6b"), outline: INK, align: "center" });
       }
     }
 
@@ -145,10 +148,10 @@ export class Hud {
       f.draw(scr, q.text, W / 2, mid + 34 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
     }
     this.itemSlot(scr, p, now);
-    // a police car after the player: red and blue flashing at the foot of the screen
+    // a police car after the player: red and blue flashing at the top of the screen
     if (race.obstacles.chasing) {
       const red = Math.floor(now * 4) % 2 === 0;
-      f.draw(scr, "POLICE", W / 2, H - 22, { color: red ? hex("#ff2a2a") : hex("#4a8cff"), outline: INK, align: "center" });
+      f.draw(scr, "POLICE", W / 2, WARN_Y, { color: red ? hex("#ff2a2a") : hex("#4a8cff"), outline: INK, align: "center" });
     }
     if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / ROCKET_TIME, hex("#ff8a1f"));
     else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));

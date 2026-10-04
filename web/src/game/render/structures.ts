@@ -864,7 +864,8 @@ function frameTunnel(p: Painter, track: Track, tn: Tunnel): void {
 /** Jump ramps: a wedge in yellow and black stripes from its foot to its lip, measured along the
  * road the way the race measures it, so a kart drives up exactly the wedge it is seen on. */
 export function rampFaces(p: Painter, track: Track, f: Features, theme: Theme): void {
-  const hw = HALF_WIDTH, stripes = 9, len = RAMP_LEN / stripes;
+  // (seven stripes, each about 1.6 m: narrower ones strobed as a kart drove over them at speed)
+  const hw = HALF_WIDTH, stripes = 7, len = RAMP_LEN / stripes;
   for (const r of f.ramps) {
     if (!near(p, track, r.start)) continue;
     const P = (u: number, off: number, z: number) => alongPoint(track, r.start, u, off, z);

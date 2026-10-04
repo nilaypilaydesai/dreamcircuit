@@ -10,7 +10,7 @@
 // floor, and on the upper half of the tube it needs TUBE_LOOP_SPEED to stay on, or it peels off
 // and slides back down fast. Fast enough, it can go right round over the ceiling.
 
-import { HALF_WIDTH } from "./track";
+import { HALF_WIDTH, type Track } from "./track";
 
 export const TUBE_FLOOR = HALF_WIDTH; // m: half the floor's width (and the ceiling's)
 export const TUBE_R = 4.5; // m: the walls' radius (the tube is 9 m tall)
@@ -40,6 +40,36 @@ export function tubeAt(u: number): { lat: number; z: number; tilt: number } {
   }
   return { lat: sg * (TUBE_FLOOR - (a - WALL_END)), z: 2 * TUBE_R, tilt: sg * Math.PI };
 }
+
+/** How far the race's flat terms carry the road's length ``u`` m out from its middle by road point
+ * i, for every meter of the middle: 1 on a straight, more round the outside of a bend, less round
+ * the inside, and nothing or less where the inside of a bend tighter than that folds them over. */
+export function flatStretch(track: Track, i: number, u: number): number {
+  const j = track.wrap(i + 1);
+  if (j === i) return 1;
+  const [ax, ay] = track.tangent(i), [bx, by] = track.tangent(j), gap = track.between(i, j);
+  if (gap <= 0) return 1;
+  const dx = track.xs[j] - by * u - (track.xs[i] - ay * u), dy = track.ys[j] + bx * u - (track.ys[i] + ax * u);
+  return (dx * ax + dy * ay) / gap;
+}
+
+/** How much further a kart ``u`` m round the tube by road point i moves along the road in the
+ * race's flat terms than it really goes along the tube. 1 on the floor, where the two are the
+ * same; but on a bend the flat terms stretch the road's length away from its middle (more round
+ * the outside, less round the inside), and up the walls and over the ceiling the tube itself is
+ * nowhere near that far from the middle, so unmeasured a kart up there sped up or slowed to a
+ * crawl through every bend, two and a half times over on a ceiling. */
+export function tubeStretch(track: Track, i: number, u: number): number {
+  const lat = tubeAt(u).lat;
+  if (lat === u) return 1;
+  const real = flatStretch(track, i, lat);
+  return real > 1e-6 ? Math.max(TUBE_SQUEEZE / 2, flatStretch(track, i, u)) / real : 1;
+}
+
+/** Where the flat terms carry the road's length less than this far up a wall or over the ceiling
+ * (round the inside of a tight bend, near where they fold over), a kart cannot hold on there and
+ * slides back down: in the folds, a kart on the ceiling jumped about the tube. */
+export const TUBE_SQUEEZE = 0.3;
 
 /** The speed a kart needs to stay where it is on the tube (0 on the floor): a little up a wall,
  * more higher up, and TUBE_LOOP_SPEED anywhere on the upper half. */

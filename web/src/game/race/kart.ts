@@ -5,7 +5,7 @@
 
 import type { FallKind } from "../world/hazards";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
-import { TUBE_HALF, TUBE_LOOP_SPEED, holdSpeed, wrapTube } from "../world/tube";
+import { TUBE_HALF, TUBE_LOOP_SPEED, TUBE_SQUEEZE, flatStretch, holdSpeed, tubeStretch, wrapTube } from "../world/tube";
 import type { ItemKind } from "./odds";
 import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "./parts";
 
@@ -378,16 +378,29 @@ export class Kart {
     const slipTarget = this.drifting ? this.driftDir * 0.32 : 0;
     this.slip += (slipTarget - this.slip) * Math.min(1, dt * 6);
     const dir = this.heading - this.slip * 0.55;
-    this.x += Math.cos(dir) * this.v * dt;
-    this.y += Math.sin(dir) * this.v * dt;
+    let vx = Math.cos(dir) * this.v, vy = Math.sin(dir) * this.v;
+    if (this.tube) {
+      // round the tube, along the road at the tube's own measure: up a wall or over the ceiling on
+      // a bend, the flat terms the race runs in stretch the road's length (world/tube.ts)
+      const m = tubeStretch(track, this.idx, this.offset);
+      if (m !== 1) {
+        const [tx, ty] = track.tangent(this.idx), along = (vx * tx + vy * ty) * (m - 1);
+        vx += tx * along;
+        vy += ty * along;
+      }
+    }
+    this.x += vx * dt;
+    this.y += vy * dt;
 
     // in the tube, too slow for where it is on the wall: it slides back down toward the floor (fast
     // off the upper half, where it peels off)
     if (this.tube && !this.air) {
       const need = holdSpeed(this.offset), speed = Math.abs(this.v);
-      this.slipping = need > 0 && speed < need;
+      // (nor can it hold on round the inside of a tight bend, high up, at any speed)
+      const squeezed = need > 0 && flatStretch(track, this.idx, this.offset) < TUBE_SQUEEZE;
+      this.slipping = (need > 0 && speed < need) || squeezed;
       if (this.slipping) {
-        const upper = need >= TUBE_LOOP_SPEED, slide = (upper ? 9 : 3) + (need - speed) * (upper ? 0.6 : 0.5);
+        const upper = need >= TUBE_LOOP_SPEED, slide = (upper ? 9 : 3) + Math.max(0, need - speed) * (upper ? 0.6 : 0.5);
         const [tx, ty] = track.tangent(this.idx), d = -Math.sign(this.offset) * Math.min(slide * dt, Math.abs(this.offset));
         this.x -= ty * d;
         this.y += tx * d;

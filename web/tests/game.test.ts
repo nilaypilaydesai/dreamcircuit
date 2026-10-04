@@ -31,7 +31,7 @@ import {
 } from "../src/game/world/trackgen";
 import { BANK_EDGE, worldHalf } from "../src/game/world/texture";
 import { SHOWCASE } from "../src/game/world/maps";
-import { TUBE_HALF, TUBE_LOOP_SPEED, TUBE_R, TUBE_WALL_SPEED, holdSpeed, tubeAt } from "../src/game/world/tube";
+import { TUBE_HALF, TUBE_LOOP_SPEED, TUBE_R, TUBE_SQUEEZE, TUBE_WALL_SPEED, flatStretch, holdSpeed, tubeAt } from "../src/game/world/tube";
 import {
   COW_GRAZE, COW_WALK, GEYSER_BLOW, GEYSER_WARN, METEOR_BURST, METEOR_FALL, type Obstacle, Obstacles, WRECKER_PERIOD,
 } from "../src/game/race/obstacles";
@@ -2545,6 +2545,74 @@ describe("the neon tunnel", () => {
     expect(most).toBeGreaterThan(TUBE_HALF - 1);
     expect(wrapped).toBe(true);
     expect(Math.abs(k.offset)).toBeLessThan(HALF_WIDTH); // all the way round, back on the floor
+  });
+
+  it("moves a kart up a wall or over the ceiling as fast as it says, through the tightest bend", async () => {
+    // (the race's flat terms stretch the road's length away from its middle on a bend: unmeasured,
+    // a kart on the ceiling went two and a half times as fast round the inside of a bend)
+    const { tubeSpot } = await import("../src/game/render/tube");
+    const t = Track.fromPoints(calm().map((v) => v * 3.5)); // (bends wide enough to loop round inside)
+    let i = 0, worst = 0;
+    for (let k = 0; k < t.count; k++) {
+      const c = Math.abs(t.curvature(k));
+      if (c > worst) { worst = c; i = k; }
+    }
+    for (const u of [0, HALF_WIDTH + 6, TUBE_HALF - 3, -(HALF_WIDTH + 6), -(TUBE_HALF - 3)]) {
+      const k = new Kart(0, "K", 0, true);
+      k.tube = true;
+      k.placeOn(t, t.wrap(i - 20), u);
+      k.v = 25;
+      let went = 0, said = 0, prev = tubeSpot(t, k.x, k.y, k.elev, k.idx).p;
+      for (let n = 0; n < 30; n++) {
+        said += k.v / 60;
+        k.update(1 / 60, { steer: 0, throttle: 0, brake: 0, drift: false }, t, CLASSES.legend);
+        const q = tubeSpot(t, k.x, k.y, k.elev, k.idx).p;
+        went += Math.hypot(q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]);
+        prev = q;
+      }
+      expect(went / said, `at ${u.toFixed(1)} m round`).toBeGreaterThan(0.93);
+      expect(went / said, `at ${u.toFixed(1)} m round`).toBeLessThan(1.07);
+    }
+  });
+
+  it("lets no kart hold on high up round the inside of a bend too tight for it", () => {
+    // (there the race's flat terms fold over themselves, and a kart on the ceiling jumped about;
+    // a circuit drawn twice the size has a bend that tight, but not so tight it has folded yet)
+    const t = Track.fromPoints(calm().map((v) => v * 2));
+    let i = 0, worst = 0;
+    for (let k = 0; k < t.count; k++) {
+      const c = Math.abs(t.curvature(k));
+      if (c > worst) { worst = c; i = k; }
+    }
+    const u = [TUBE_HALF - 3, -(TUBE_HALF - 3)].find((v) => flatStretch(t, i, v) < TUBE_SQUEEZE)!;
+    expect(u).toBeDefined();
+    const k = new Kart(0, "K", 0, true);
+    k.tube = true;
+    k.placeOn(t, i, u);
+    k.v = TUBE_LOOP_SPEED + 8; // (fast enough to hold on anywhere else)
+    k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false }, t, CLASSES.legend);
+    expect(k.slipping).toBe(true);
+  });
+
+  it("places what is in it between road points, so it glides along rather than stepping", async () => {
+    // (snapped to the nearest road point, half a meter apart, every kart in the tube shook)
+    const { tubeSpot } = await import("../src/game/render/tube");
+    const t = Track.fromPoints(calm());
+    const i = 400, [tx, ty] = t.tangent(i);
+    for (const u of [2, HALF_WIDTH + 5, TUBE_HALF - 2]) {
+      let prev: number[] | null = null, most = 0, least = Infinity;
+      for (let m = 0; m < 3; m += 0.05) {
+        const q = tubeSpot(t, t.xs[i] + tx * m - ty * u, t.ys[i] + ty * m + tx * u, 0, i).p;
+        if (prev) {
+          const d = Math.hypot(q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]);
+          most = Math.max(most, d);
+          least = Math.min(least, d);
+        }
+        prev = q;
+      }
+      expect(most, `at ${u} m round`).toBeLessThan(0.15);
+      expect(least, `at ${u} m round`).toBeGreaterThan(0.01);
+    }
   });
 
   it("puts pads up its walls and on its ceiling, traffic on its floor, and rivals race it to the end", async () => {

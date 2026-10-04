@@ -9,7 +9,7 @@ import { RAMP_LEN, type Features } from "../race/features";
 import type { Slick } from "../race/items";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import { type P3, type Painter, face, toCamera } from "./poly";
-import { normalAt, tubePoint } from "./tube";
+import { normalAt, tubeBetween, tubePlace } from "./tube";
 
 const R = 2.3; // m: a slick's size, about a third of the road across (it spins out karts within 2.1 m)
 const PUDDLE = hex("#15131d"), RIM = hex("#2e2a3b"), SHINE = hex("#8d8fa8");
@@ -57,8 +57,8 @@ export function slickDecal(p: Painter, track: Track, f: Features, sl: Slick, t: 
   let at: (x: number, y: number) => P3, normal: P3;
   if (tube) {
     at = (x, y) => {
-      const i = track.nearest(x, y, i0, 8);
-      return tubePoint(track, i, track.offset(x, y, i), 0.04).p;
+      const q = tubePlace(track, x, y, i0);
+      return tubeBetween(track, q.i, q.w, q.u, 0.04).p;
     };
     normal = normalAt(track, i0, track.offset(sl.x, sl.y, i0));
   } else {
