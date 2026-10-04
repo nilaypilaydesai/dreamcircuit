@@ -1216,28 +1216,6 @@ export function meteorArts(): { rock: SceneryArt; trail: SceneryArt } {
   return { rock: { sprite: s, height: 1.5, solid: false }, trail: { sprite: t, height: 1.1, solid: false } };
 }
 
-/** An alley in Tokyo, where police cars wait: two buildings' corners with a narrow dark gap between
- * them (a light at its far end), a vertical sign glowing on one, bins at the foot. */
-export function alleyArt(): SceneryArt {
-  const s = makeSprite(48, 70);
-  const wall = hex("#1f2330"), wall2 = hex("#262a38");
-  rect(s, 0, 4, 19, 70, wall);
-  rect(s, 29, 0, 48, 70, wall2);
-  rect(s, 19, 10, 29, 70, hex("#07080c")); // the gap
-  rect(s, 22, 58, 26, 66, hex("#ffd98a")); // a light at its far end
-  for (let y = 8; y < 64; y += 6) {
-    for (let x = 2; x < 17; x += 5) rect(s, x, y, x + 3, y + 3, (x * 7 + y) % 3 ? hex("#ffd98a") : hex("#141722"));
-    for (let x = 31; x < 46; x += 5) rect(s, x, y, x + 3, y + 3, (x + y * 5) % 4 ? hex("#dfe8ff") : hex("#141722"));
-  }
-  rect(s, 15, 14, 19, 44, hex("#ff3fa4")); // the vertical sign
-  rect(s, 16, 15, 18, 43, hex("#2a0f22"));
-  for (let y = 17; y < 41; y += 6) rect(s, 16, y, 18, y + 3, hex("#ffb0d0"));
-  rect(s, 20, 63, 25, 70, hex("#3a5a3a")); // bins
-  rect(s, 24, 65, 28, 70, hex("#5a5e66"));
-  outline(s, hex("#050608"));
-  return { sprite: s, height: 16, solid: true };
-}
-
 // ---------------------------------------------------------------------------------- the volcano
 
 const HOT = [hex("#ffd86a"), hex("#ff8a1f"), hex("#e0400e")];

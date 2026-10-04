@@ -87,7 +87,7 @@ export const VARIANTS: Variant[] = [
 // the aiming arrow's sweep (race/items.ts)
 const AIM_MAX = 0.75, AIM_RATE = 3.1;
 const THEME = { valley: 0, tunnel: 1, mesa: 2, reef: 3, tokyo: 4, volcano: 5, construction: 6, moon: 7 };
-const COW_WALK = 1, POLICE_CHASE = 1, GEYSER_QUIET = 0, METEOR_FALL = 0; // (race/obstacles.ts)
+const COW_WALK = 1, POLICE_CHASE = 1, POLICE_LUNGE = 4, GEYSER_QUIET = 0, METEOR_FALL = 0; // (race/obstacles.ts)
 const FALL_SWAP = 0.72, FALL_RELEASE = 2.0; // into the lava: lifted out, let go (race/kart.ts)
 const PAN = 1536, FRAME_W = 384; // the sky's panorama for a full turn, and the film's width (render/sky.ts)
 
@@ -518,14 +518,16 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   // 14. The police on the player's tail: out of an alley and after them, lights flashing; filmed
   // from ahead, looking back down the street at the chase.
   {
-    const cop = () => race().obstacles.list.find((q) => q.kind === "police" && q.state === POLICE_CHASE);
+    const cop = () => race().obstacles.list.find((q) => q.kind === "police" && (q.state === POLICE_CHASE || q.state === POLICE_LUNGE));
     const behind = () => {
       const c = cop();
       if (!c) return -1;
       const t = race().track;
       return (t.s[race().player.idx] - c.s + t.length) % t.length;
     };
-    await until(() => { const d = behind(); return d > 6 && d < 26; }, 60 * 240);
+    // (right on the player's tail: it gains on them only slowly now, and filmed from 26 m back it
+    // was a small car far down the street)
+    await until(() => { const d = behind(); return d > 5 && d < 13; }, 60 * 240);
     if (cop()) {
       await film("e_police", 3.4, () => {
         const k = race().player, c = Math.cos(k.heading), sn = Math.sin(k.heading);

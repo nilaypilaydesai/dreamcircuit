@@ -33,7 +33,8 @@ import { BANK_EDGE, worldHalf } from "../src/game/world/texture";
 import { SHOWCASE } from "../src/game/world/maps";
 import { TUBE_FLOOR, TUBE_HALF, TUBE_LOOP_SPEED, TUBE_R, TUBE_SQUEEZE, TUBE_WALL_SPEED, flatStretch, holdSpeed, tubeAt } from "../src/game/world/tube";
 import {
-  COW_GRAZE, COW_WALK, GEYSER_BLOW, GEYSER_WARN, METEOR_BURST, METEOR_FALL, type Obstacle, Obstacles, WRECKER_PERIOD,
+  COW_GRAZE, COW_WALK, GEYSER_BLOW, GEYSER_WARN, METEOR_BURST, METEOR_FALL, type Obstacle, Obstacles, POLICE_CHASE, POLICE_SPUN,
+  WRECKER_PERIOD,
 } from "../src/game/race/obstacles";
 import circuits from "./circuits.json";
 
@@ -1479,6 +1480,72 @@ describe("Tokyo's climbs", () => {
   });
 });
 
+describe("buildings beside the road", () => {
+  type Fp = { s0: number; len: number; side: number; inner: number; outer: number };
+  type Inside = { buildingsNear(s: number): Fp[]; holdOffBuildings(k: Kart, px: number, py: number): void; inWayOf(fp: Fp, from: number, to: number): boolean };
+
+  it("keep karts out of them from every side: the road, the land behind, either end", async () => {
+    // (only a street's front held: a kart on the pavement drove into the buildings Tokyo's tunnels
+    // run under and into the police alleys, and one coming round the end of a street was snapped
+    // back through its wall onto the road)
+    const tokyo = THEMES.find((th) => th.id === "tokyo")!;
+    const race = new Race({ rivals: 1, difficulty: "pro", theme: tokyo, seed: 4, replay: calm() }, null, () => {});
+    await race.prepare();
+    const t = race.track, r = race as unknown as Inside;
+    expect(race.features.banks.length).toBeGreaterThan(0);
+    expect(race.features.tunnels.length).toBeGreaterThan(0);
+    expect(race.obstacles.sites.length).toBeGreaterThan(0);
+    expect(race.scenery.stand).not.toBeNull(); // (and the grandstand by the start)
+    const seen = new Map<string, Fp>();
+    for (let s = 0; s < t.length; s += 20) for (const fp of r.buildingsNear(s)) seen.set(`${fp.s0.toFixed(1)}/${fp.side}`, fp);
+    expect(seen.size).toBeGreaterThan(4);
+    const idx = (s: number) => {
+      let lo = 0, hi = t.count - 1;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (t.s[m] < s) lo = m + 1; else hi = m; }
+      return lo;
+    };
+    const spot = (s: number, off: number) => {
+      const i = idx(((s % t.length) + t.length) % t.length), [tx, ty] = t.tangent(i);
+      return { i, x: t.xs[i] - ty * off, y: t.ys[i] + tx * off };
+    };
+    let tries = 0;
+    for (const fp of seen.values()) {
+      const mid = (fp.inner + fp.outer) / 2, half = fp.len / 2;
+      const ways: [number, number, number, number][] = [ // (from u, o, to u, o: along it and out from the road)
+        [half, fp.inner - 1.6, half, fp.inner + 1], [half, fp.outer + 1.6, half, fp.outer - 1],
+        [-1.6, mid, 1, mid], [fp.len + 1.6, mid, fp.len - 1, mid]];
+      for (const [u0, o0, u1, o1] of ways) {
+        const a = spot(fp.s0 + u0, o0 * fp.side), b = spot(fp.s0 + u1, o1 * fp.side);
+        const k = new Kart(1, "K", 1, false);
+        k.placeOn(t, a.i, o0 * fp.side);
+        k.x = b.x;
+        k.y = b.y;
+        r.holdOffBuildings(k, a.x, a.y);
+        const i = t.nearest(k.x, k.y, a.i), su = t.s[i] + t.along(k.x, k.y, i) - fp.s0, so = t.offset(k.x, k.y, i) * fp.side;
+        const u = ((su % t.length) + t.length * 1.5) % t.length - t.length / 2;
+        expect(u <= -0.4 || u >= fp.len + 0.4 || so <= fp.inner - 0.4 || so >= fp.outer + 0.4, `into ${JSON.stringify(fp)} from ${u0},${o0}`).toBe(true);
+        tries++;
+      }
+      expect(r.inWayOf(fp, 0, t.count), "another stretch of road runs into it").toBe(false);
+    }
+    expect(tries).toBeGreaterThan(16);
+  });
+
+  it("are not set out where another stretch of road would run into them", async () => {
+    const race = new Race({ rivals: 1, difficulty: "pro", theme: THEMES.find((th) => th.id === "tokyo")!, seed: 2, replay: figure8() },
+      null, () => {});
+    await race.prepare();
+    const t = race.track, r = race as unknown as Inside, b = t.bridges[0];
+    expect(b).toBeDefined();
+    // a street's wall beside the road under the bridge: the bridge's road runs right across its land
+    const under = t.s[b.lower];
+    expect([1, -1].some((side) => r.inWayOf({ s0: under - 15, len: 30, side, inner: 8.9, outer: 12.9 }, 0, t.count))).toBe(true);
+    // and one out on a stretch of its own does not
+    const far = (under + t.length / 4) % t.length;
+    expect(r.inWayOf({ s0: far, len: 30, side: 1, inner: 8.9, outer: 12.9 }, 0, t.count)).toBe(false);
+  });
+});
+
 describe("the soundtrack", () => {
   it("has a song of its own for every world, every bar of it whole", async () => {
     const { SONGS, chord, midi } = await import("../src/game/core/music");
@@ -2411,6 +2478,94 @@ describe("what gets in the way", () => {
     expect(seen).toBe(true);
     expect(rammed).toBeGreaterThan(0);
     expect(gaveUp).toBe(true);
+  });
+
+  it("lets a player shake the police off: outrun at full speed, dodged with a sidestep, spun out by oil", () => {
+    // (it was always faster than the player and moved across the road as fast as they did: every
+    // chase ended in two rams, whatever the player did)
+    const t = Track.fromPoints(calm());
+    /** A player gliding along the road at ``v`` m/s, ``off`` m left of the middle (no pilot). */
+    let from = 0, gone = 0;
+    const glide = (k: Kart, v: number, off: number) => {
+      gone += v / 60;
+      const q = t.stepAlong(from, gone), j = t.wrap(q.i + 1), [tx, ty] = t.tangent(q.i);
+      k.idx = q.i;
+      k.offset = off;
+      k.x = t.xs[q.i] + (t.xs[j] - t.xs[q.i]) * q.w - ty * off;
+      k.y = t.ys[q.i] + (t.ys[j] - t.ys[q.i]) * q.w + tx * off;
+      k.heading = Math.atan2(ty, tx);
+      k.v = v;
+      k.spin = Math.max(0, k.spin - 1 / 60); // (a spin wears off, as in Kart.update)
+    };
+    const chase = (v: number, secs: number, each: (ob: Obstacles, k: Kart) => number | void) => {
+      const ob = new Obstacles("police", new Rand(3));
+      ob.pace = { vmax: CLASSES.pro.vmax, grip: CLASSES.pro.grip };
+      ob.place(t, t.count, () => true);
+      const k = kartBefore(t, ob.sites[0].idx, 40);
+      from = k.idx;
+      gone = 0;
+      let off = 0, seen = 0;
+      const heard: string[] = [];
+      for (let i = 0; i < 60 * secs; i++) {
+        off = each(ob, k) ?? off;
+        glide(k, v, off);
+        ob.update(1 / 60, t, [k], k, true);
+        if (ob.chasing) seen++;
+        for (const e of ob.events) heard.push(e.sound);
+        ob.events = [];
+      }
+      return { seen, heard };
+    };
+    // boosting away at a fifth over a stock kart's top speed: never rammed, and it gives up
+    const away = chase(CLASSES.pro.vmax * 1.2, 50, () => undefined);
+    expect(away.seen).toBeGreaterThan(60);
+    expect(away.heard).not.toContain("ram");
+    expect(away.heard).toContain("shaken");
+    // slower, it catches up; but a sidestep each time it goes for the ram dodges every one
+    let lunges = 0, was = false, side = 1, shift = 0;
+    const dodged = chase(22, 40, (ob) => {
+      if (ob.lunging && !was) { lunges++; side = -side; shift = 0.35; }
+      was = ob.lunging;
+      if (shift > 0) { shift -= 1 / 60; return side * 3; }
+      return undefined;
+    });
+    expect(lunges).toBeGreaterThan(0);
+    expect(dodged.heard).not.toContain("ram");
+    // and not dodging, it is rammed (two rams and it gives up)
+    const caught = chase(22, 40, () => undefined);
+    expect(caught.heard.filter((e) => e === "ram").length).toBe(2);
+    // oil dropped in its way spins it out, and the oil is gone
+    const items = new Items(new Rand(1));
+    let spun = false;
+    chase(22, 30, (ob, k) => {
+      const cop = ob.list.find((o) => o.kind === "police");
+      ob.strike = (x, y, z) => items.hitsCar(x, y, z);
+      if (cop && cop.state === POLICE_CHASE && !items.slicks.length && !spun) {
+        const [tx, ty] = t.tangent(cop.idx);
+        items.slicks.push({ x: cop.x + tx * 4, y: cop.y + ty * 4, elev: cop.z, idx: cop.idx, ttl: 30, owner: k, armed: 0 });
+      }
+      if (cop?.state === POLICE_SPUN) spun = true;
+    });
+    expect(spun).toBe(true);
+    expect(items.slicks.length).toBe(0);
+  });
+
+  it("never rams a kart that is stopped", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("police", new Rand(3));
+    ob.place(t, t.count, () => true);
+    const k = kartBefore(t, ob.sites[0].idx, -20);
+    let seen = false, rams = 0;
+    for (let i = 0; i < 60 * 3; i++) ob.update(1 / 60, t, [k], kartBefore(t, ob.sites[0].idx, -10), true); // (pulls out)
+    for (let i = 0; i < 60 * 12; i++) {
+      k.v = 0;
+      ob.update(1 / 60, t, [k], k, true);
+      if (ob.chasing) seen = true;
+      rams += ob.events.filter((e) => e.sound === "ram").length;
+      ob.events = [];
+    }
+    expect(seen).toBe(true); // (it did come out after the kart)
+    expect(rams).toBe(0);
   });
 
   it("swings a wrecking ball from side to side of the road, low enough to hit only at the bottom", () => {

@@ -5,7 +5,7 @@
 
 import { Rand, type Sprite } from "../core/gfx";
 import type { Theme } from "../themes";
-import { BANK_AT, BANK_LEAN } from "../world/banks";
+import { BANK_AT, BANK_LEAN, type Bank } from "../world/banks";
 import { type FallKind, type Hazard, inHazard, placeHazards } from "../world/hazards";
 import { Scenery } from "../world/scenery";
 import { WorldTexture } from "../world/texture";
@@ -14,7 +14,7 @@ import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "./features";
 import { AIMED, AIM_MAX, AIM_RATE, type Field, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
-import { type ObstacleSound, Obstacles } from "./obstacles";
+import { ALLEY_AT, ALLEY_DEPTH, type ObstacleSite, type ObstacleSound, Obstacles, alleyBlocks } from "./obstacles";
 import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, collideKarts } from "./kart";
 import type { Standing } from "./odds";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
@@ -87,6 +87,47 @@ export function takesControls(phase: Race["phase"]): boolean {
   return phase === "racing" || phase === "countdown";
 }
 
+/** A building beside the road, in road terms: along arc lengths [s0, s0 + len), from ``inner`` to
+ * ``outer`` m out from the middle of the road on ``side`` (1 the left, -1 the right). */
+interface Footprint { s0: number; len: number; side: number; inner: number; outer: number }
+const KART_R = 0.5; // m: how near a building's face a kart's middle comes
+/** A cutting's walls: from their foot to the back of their top. */
+const bankFootprint = (b: Bank): Footprint => ({ s0: b.s0, len: b.len, side: b.side, inner: BANK_AT, outer: BANK_AT + BANK_LEAN[b.style] * b.h + 4 });
+/** The building a Tokyo tunnel runs under, on one side: from just past the tunnel's walls (inside,
+ * they hold a kart) out to its outer walls (render/structures.ts). */
+const tunnelFootprint = (s0: number, side: number): Footprint => ({ s0, len: TUNNEL_LEN, side, inner: HALF_WIDTH + 2, outer: HALF_WIDTH + 9.4 });
+/** A police alley's two buildings and the alley between them (race/obstacles.ts). */
+const alleyFootprint = (st: ObstacleSite): Footprint => {
+  const a = alleyBlocks(st);
+  return { s0: st.s + a.a0, len: a.b1 - a.a0, side: st.side, inner: ALLEY_AT, outer: ALLEY_AT + ALLEY_DEPTH };
+};
+
+/** The road point at arc length ``s`` or just past it. */
+function indexAtS(t: Track, s: number): number {
+  const L = t.locked ? t.length : 0, x = L ? ((s % L) + L) % L : s;
+  let lo = 0, hi = t.count - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (t.s[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Whether arc length ``s``, ``off`` m left of the middle of the road, is within ``m`` m of building
+ * ``fp``. */
+function inside(t: Track, fp: Footprint, s: number, off: number, m: number): boolean {
+  const u = alongLap(t, fp.s0, s), o = off * fp.side;
+  return u > -m && u < fp.len + m && o > fp.inner - m && o < fp.outer + m;
+}
+
+/** How far along the road arc length ``s`` is past ``s0`` (round the lap, once it is locked: within
+ * half a lap either way). */
+function alongLap(t: Track, s0: number, s: number): number {
+  const d = s - s0, L = t.locked ? t.length : 0;
+  return L ? ((((d + L / 2) % L) + L) % L) - L / 2 : d;
+}
+
 export class Race {
   phase: "dreaming" | "countdown" | "racing" | "done" = "dreaming";
   readonly track: Track;
@@ -115,6 +156,7 @@ export class Race {
   private hillScan = 1; // the first dense index no climb has been decided for
   private bankScan = 1; // the first dense index no cutting has been decided for
   private nextBank = 160; // m of road before the next cutting may start
+  private standAt: Footprint | null = null; // the grandstand by the start, in road terms (once it stands)
   private readonly bankRng: Rand;
   private cranes: number[] = []; // m along the lap of girders' middles not yet dreamed (a crane goes up there)
   private readonly hillRng: Rand;
@@ -142,9 +184,11 @@ export class Race {
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
-    this.scenery.inWall = (x, y) => this.inWall(x, y, 1.5);
+    this.scenery.inWall = (x, y) => this.inBuilding(x, y, 1.5);
     this.items = new Items(new Rand(setup.seed + 3));
     this.obstacles = new Obstacles(setup.theme.obstacle ?? null, new Rand(setup.seed + 41));
+    this.obstacles.pace = { vmax: this.cls.vmax, grip: this.cls.grip };
+    this.obstacles.strike = (x, y, z) => this.items.hitsCar(x, y, z);
     this.obstacles.wallAt = (s, side) => !!this.features.bankAt(s, side);
     this.items.gravity = GRAVITY * (setup.theme.gravity ?? 1);
     // a map is a layout: each world draws it at its own scale (the moon's are bigger)
@@ -216,9 +260,15 @@ export class Race {
     const blocked = (s: number, len: number) => this.blocked(s, len);
     this.tex.paintRoad(t, from, to);
     this.scenery.onCommit(t, from, to);
+    this.giveWay(from, to);
     this.items.onCommit(t, from, to);
     const tunnels = this.features.tunnels.length;
     this.features.onCommit(t, from, to, blocked, () => this.rng.next());
+    // (nor a building a new tunnel runs under where road dreamed before passes it)
+    if (this.setup.theme.tunnels === "city") {
+      this.features.tunnels = this.features.tunnels.filter((tn, n) => n < tunnels ||
+        ![1, -1].some((side) => this.inWayOf(tunnelFootprint(tn.s0, side), 0, t.count)));
+    }
     // nothing grows inside a new tunnel's rock
     for (const tn of this.features.tunnels.slice(tunnels)) this.scenery.clearAlong(t, tn.start, tn.start + tn.n, HALF_WIDTH + 10);
     while (this.bridgesSeen < t.bridges.length) {
@@ -255,8 +305,26 @@ export class Race {
     this.raiseCranes(to);
     // what gets in the way (cows, geysers, police alleys...), and the cuttings, on road whose
     // climbs are decided
-    this.obstacles.place(t, t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING), this.roadFree);
+    this.placeObstacles(t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING));
     this.placeBanks(t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING));
+  }
+
+  /** What gets in the way, on road up to ``upto``: and no police alley's buildings where another
+   * stretch of road passes them. */
+  private placeObstacles(upto: number): void {
+    const before = new Set(this.obstacles.sites);
+    this.obstacles.place(this.track, upto, this.roadFree);
+    if (this.obstacles.kind === "police") {
+      this.obstacles.dropSites((st) => !before.has(st) && this.inWayOf(alleyFootprint(st), 0, this.track.count));
+      // (nothing grows inside a new alley's buildings)
+      const t = this.track, fresh = this.obstacles.sites.filter((st) => !before.has(st));
+      if (fresh.length) {
+        this.scenery.items = this.scenery.items.filter((it) => !fresh.some((st) => {
+          const i = t.nearest(it.x, it.y, st.idx), s = t.s[i] + t.along(it.x, it.y, i), off = t.offset(it.x, it.y, i);
+          return inside(t, alleyFootprint(st), s, off, 1.5);
+        }));
+      }
+    }
   }
 
   /** A tower crane beside each girder's middle, once the road there has been dreamed. */
@@ -355,36 +423,119 @@ export class Race {
         continue;
       }
       const h = rng.range(rule.h[0], rule.h[1]), first: 1 | -1 = rng.next() < 0.5 ? 1 : -1;
-      for (const side of rng.next() < rule.both ? [1, -1] as const : [first]) {
-        f.banks.push({ s0: s, len, side, h: h * rng.range(0.85, 1.15), style: rule.style });
+      const sides = rng.next() < rule.both ? [1, -1] as const : [first];
+      // (and its walls' land clear of every other stretch of road)
+      if (sides.some((side) => this.inWayOf(bankFootprint({ s0: s, len, side, h: h * 1.15, style: rule.style }), 0, t.count))) {
+        this.nextBank = s + 20;
+        continue;
       }
+      for (const side of sides) f.banks.push({ s0: s, len, side, h: h * rng.range(0.85, 1.15), style: rule.style });
       this.scenery.clearAlong(t, i, Math.min(end, t.count - 1), BANK_AT + 10);
       this.nextBank = s + len + rng.range(rule.gap[0], rule.gap[1]);
     }
   }
 
-  /** Whether (x, y) is within ``m`` m of the land a cutting's wall stands on (from its foot to the
-   * back of its top). */
-  private inWall(x: number, y: number, m: number): boolean {
-    const t = this.track, f = this.features;
-    if (!f.banks.length) return false;
-    const i = t.nearest(x, y, 0), off = t.offset(x, y, i), a = Math.abs(off);
-    return !!f.banks.find((b) => b.side === Math.sign(off) && t.s[i] > b.s0 - m && t.s[i] < b.s0 + b.len + m &&
-      a > BANK_AT - m && a < BANK_AT + BANK_LEAN[b.style] * b.h + 4 + m);
+  /** Whether (x, y) is within ``m`` m of a building beside the road: the land a cutting's wall
+   * stands on (from its foot to the back of its top), a building a Tokyo tunnel runs under, a police
+   * alley's buildings. */
+  private inBuilding(x: number, y: number, m: number): boolean {
+    const t = this.track, i = t.nearest(x, y, 0), s = t.s[i] + t.along(x, y, i), off = t.offset(x, y, i);
+    return this.buildingsNear(s).some((fp) => inside(t, fp, s, off, m));
   }
 
-  /** A cutting's wall keeps a kart on the road and the shoulder beside it. */
-  private holdToBanks(k: Kart): void {
-    const lim = BANK_AT - 0.5;
-    if (!this.features.banks.length || Math.abs(k.offset) <= lim) return;
-    const side = k.offset > 0 ? 1 : -1;
-    if (!this.features.bankAt(this.track.s[k.idx], side)) return;
-    const [tx, ty] = this.track.tangent(k.idx), d = side * lim - k.offset;
-    k.x -= ty * d;
-    k.y += tx * d;
-    k.offset = side * lim;
-    k.v *= 0.97;
-    k.bumpTime = 0.2;
+  /** New road [from, to) was dreamed: the world gives way to it. A cutting's walls, a building a
+   * tunnel runs under or a police alley set out beside road dreamed before, that the new road would
+   * run into, is taken away (as the scenery it would run over is: world/scenery.ts). */
+  private giveWay(from: number, to: number): void {
+    const f = this.features, inWay = (fp: Footprint) => this.inWayOf(fp, from, to);
+    f.banks = f.banks.filter((b) => !inWay(bankFootprint(b)));
+    if (this.setup.theme.tunnels === "city") f.tunnels = f.tunnels.filter((tn) => ![1, -1].some((side) => inWay(tunnelFootprint(tn.s0, side))));
+    if (this.obstacles.kind === "police") this.obstacles.dropSites((st) => inWay(alleyFootprint(st)));
+  }
+
+  /** Whether road points [from, to), on another stretch of road than its own, run into building
+   * ``fp`` (or come within half a road's width of it). */
+  private inWayOf(fp: Footprint, from: number, to: number): boolean {
+    const t = this.track, m = HALF_WIDTH + 1;
+    for (let j = from; j < to; j += 2) {
+      if (Math.abs(alongLap(t, fp.s0 + fp.len / 2, t.s[j])) < fp.len / 2 + 60) continue; // (its own stretch)
+      for (let s = fp.s0; s <= fp.s0 + fp.len; s += 2) {
+        const i = indexAtS(t, s), [tx, ty] = t.tangent(i), dx = t.xs[j] - t.xs[i], dy = t.ys[j] - t.ys[i];
+        const u = dx * tx + dy * ty, o = (dy * tx - dx * ty) * fp.side;
+        if (Math.abs(u) < 1.5 && o > fp.inner - m && o < fp.outer + m) return true;
+      }
+    }
+    return false;
+  }
+
+  /** The buildings beside the road near arc length ``s``, in road terms: a cutting's walls (from
+   * their foot to the back of their top), the buildings Tokyo's tunnels run under (out past their
+   * walls; inside, the tunnel's own walls hold a kart), the police alleys' buildings. */
+  private buildingsNear(s: number): Footprint[] {
+    const t = this.track, f = this.features, out: Footprint[] = [];
+    const near = (s0: number, len: number) => { const u = alongLap(t, s0, s); return u > -25 && u < len + 25; };
+    for (const b of f.banks) if (near(b.s0, b.len)) out.push(bankFootprint(b));
+    if (this.setup.theme.tunnels === "city") {
+      for (const tn of f.tunnels) if (near(tn.s0, TUNNEL_LEN)) out.push(tunnelFootprint(tn.s0, 1), tunnelFootprint(tn.s0, -1));
+    }
+    if (this.obstacles.kind === "police") {
+      for (const st of this.obstacles.sites) {
+        const fp = alleyFootprint(st);
+        if (near(fp.s0, fp.len)) out.push(fp);
+      }
+    }
+    // the grandstand by the start (a picture of one, as wide as it is drawn, and a few meters deep)
+    const st = this.scenery.stand;
+    if (st && !this.standAt) {
+      const i = t.nearest(st.x, st.y, Math.max(0, t.startIndex)), ss = t.s[i] + t.along(st.x, st.y, i), off = t.offset(st.x, st.y, i);
+      this.standAt = { s0: ss - st.w / 2, len: st.w, side: Math.sign(off) || 1, inner: Math.abs(off) - 1.5, outer: Math.abs(off) + 2 };
+    }
+    if (this.standAt && near(this.standAt.s0, this.standAt.len)) out.push(this.standAt);
+    return out;
+  }
+
+  /** The buildings beside the road are solid: a kart that has driven into one is put back out the
+   * way it came in, off its front onto the road (a cutting's wall keeps a kart on the road and the
+   * shoulder beside it), off its back onto the land behind, or off an end. (Only the front held: a
+   * kart on the pavement beside them drove into Tokyo's buildings, and one coming round the end
+   * of a street was snapped back through its wall onto the road.) ``px``, ``py``: where it was. */
+  private holdOffBuildings(k: Kart, px: number, py: number): void {
+    if (k.tube || k.air || k.falling || k.rocket > 0) return;
+    const t = this.track;
+    const terms = (x: number, y: number) => {
+      const i = t.nearest(x, y, k.idx);
+      return { i, s: t.s[i] + t.along(x, y, i), off: t.offset(x, y, i) };
+    };
+    let was: ReturnType<typeof terms> | null = null, knocked = false;
+    // (pushed out along the road on a bend, it can come up a little short: measured anew and again)
+    for (let pass = 0; pass < 3; pass++) {
+      const now = terms(k.x, k.y), R = KART_R;
+      const b = this.buildingsNear(now.s).find((fp) => inside(t, fp, now.s, now.off, R));
+      if (!b) return;
+      was ??= terms(px, py);
+      const u = alongLap(t, b.s0, now.s), o = now.off * b.side;
+      const wu = alongLap(t, b.s0, was.s), wo = was.off * b.side;
+      let du = 0, dO = 0;
+      if (wo <= b.inner - R) dO = b.inner - R - o;
+      else if (wo >= b.outer + R) dO = b.outer + R - o;
+      else if (wu <= -R) du = -R - u;
+      else if (wu >= b.len + R) du = b.len + R - u;
+      else { // (in it already: out by the nearest way)
+        const ways = [[0, b.inner - R - o], [0, b.outer + R - o], [-R - u, 0], [b.len + R - u, 0]];
+        [du, dO] = ways.reduce((m, w) => (Math.hypot(w[0], w[1]) < Math.hypot(m[0], m[1]) ? w : m));
+      }
+      du += Math.sign(du) * 0.02;
+      dO += Math.sign(dO) * 0.02;
+      const [tx, ty] = t.tangent(now.i);
+      k.x += tx * du - ty * dO * b.side;
+      k.y += ty * du + tx * dO * b.side;
+      k.offset = (o + dO) * b.side;
+      if (!knocked) {
+        k.v *= du !== 0 ? 0.35 : 0.97; // (into the end of one head on: most of the way to a stop)
+        k.bumpTime = 0.2;
+        knocked = true;
+      }
+    }
   }
 
   /** The lap has locked: make good the counts the track type confirms (jumps, pads, climbs) on
@@ -493,7 +644,7 @@ export class Race {
   private onLock(): void {
     this.placeHills(this.track.count);
     this.raiseCranes(this.track.count);
-    this.obstacles.place(this.track, this.track.count, this.roadFree);
+    this.placeObstacles(this.track.count);
     this.placeBanks(this.track.count);
     this.scenery.onLock(this.track);
     this.confirm();
@@ -503,7 +654,7 @@ export class Race {
       const rng = new Rand(this.setup.seed + 31), t = this.track;
       // (never where a cutting's wall stands)
       this.hazards = placeHazards(t, kind, () => rng.next(), (x, y, cap) => this.scenery.roadDistance(t, x, y, cap))
-        .filter((h) => !this.inWall(h.x, h.y, Math.max(h.rx, h.ry) + 6));
+        .filter((h) => !this.inBuilding(h.x, h.y, Math.max(h.rx, h.ry) + 6));
       this.tex.addHazards(this.hazards);
       this.scenery.clearHazards(this.hazards);
     }
@@ -559,16 +710,18 @@ export class Race {
     this.drivers.forEach((d) => {
       if (d.kart.finished && this.phase === "done") return;
       const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers);
+      const px = d.kart.x, py = d.kart.y;
       d.kart.update(dt, c, this.track, this.cls);
-      this.holdToBanks(d.kart);
+      this.holdOffBuildings(d.kart, px, py);
       this.fire(d.kart, c);
       if (!d.kart.falling && this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
     });
     const controls = this.player.finished ? { steer: 0, throttle: 0.3, brake: 0, drift: false } : playerControls;
     const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
     const wasSunk = this.player.fall >= 0 && this.player.fall < FALL_SWAP;
+    const px = this.player.x, py = this.player.y;
     const { boosted, landed } = this.player.update(dt, controls, this.track, this.cls);
-    this.holdToBanks(this.player);
+    this.holdOffBuildings(this.player, px, py);
     if (boosted) this.events.push({ kind: "boost" });
     if (!wasAir && this.player.air && !this.player.falling) this.events.push({ kind: "jump" });
     if (landed !== -1) this.events.push({ kind: "land", trick: landed });

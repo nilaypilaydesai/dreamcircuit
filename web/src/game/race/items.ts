@@ -247,6 +247,31 @@ export class Items {
     }
   }
 
+  /** Whether something thrown or dropped hits a car at (x, y), z m up (a police car after the
+   * player): oil, a puck, an orb, a flare, a boomerang, a bomb's blast or a horn's ring. Oil, pucks
+   * and orbs are used up by it. */
+  hitsCar(x: number, y: number, z: number): boolean {
+    const near = (ax: number, ay: number, r: number) => (ax - x) ** 2 + (ay - y) ** 2 < r * r;
+    const sl = this.slicks.findIndex((s) => near(s.x, s.y, SLICK_R + 0.6) && Math.abs(s.elev - z) < 1.5);
+    if (sl >= 0) {
+      this.slicks.splice(sl, 1);
+      return true;
+    }
+    const pk = this.pucks.findIndex((p) => near(p.x, p.y, PUCK_R + 1) && p.z < 2);
+    if (pk >= 0) {
+      this.pucks.splice(pk, 1);
+      return true;
+    }
+    const ob = this.orbs.findIndex((o) => near(o.x, o.y, ORB_R + 1));
+    if (ob >= 0) {
+      this.orbs.splice(ob, 1);
+      return true;
+    }
+    return this.boomerangs.some((b) => near(b.x, b.y, 2.4)) ||
+      this.blasts.some((b) => b.age < 0.15 && near(b.x, b.y, BOMB_BLAST * b.size)) ||
+      this.rings.some((r) => r.age < 0.15 && near(r.kart.x, r.kart.y, HORN_R));
+  }
+
   /** Give ``k`` an item (a box, a phantom's theft, or a test). */
   grant(k: Kart, item: ItemKind): void {
     k.item = item;

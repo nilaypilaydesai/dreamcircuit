@@ -668,6 +668,8 @@ class Game {
       case "clang": this.sound.clang(); this.shake = Math.max(this.shake, 0.4); said("WRECKED!", hex("#ffd23f")); break;
       case "impact": this.sound.explode(near); if (near) this.shake = Math.max(this.shake, 0.35); break;
       case "honk": this.sound.honk(); break;
+      case "spun": this.sound.hit(); said("GOT 'EM!", hex("#7dff9a")); break;
+      case "shaken": this.sound.lock(); said("SHAKEN OFF!", hex("#7dff9a")); break;
     }
   }
 

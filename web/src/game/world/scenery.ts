@@ -29,6 +29,8 @@ export class Scenery {
   private readonly cache = new Map<string, SceneryArt[]>(); // a few variants per kind
   private readonly rng: Rand;
   private readonly half: number; // m: the world spans [-half, half] (its ground texture's)
+  /** Where the grandstand by the start stands, if it was set out (the race keeps karts out of it). */
+  stand: { x: number; y: number; w: number } | null = null;
   /** Whether (x, y) is on a cutting's wall (world/banks.ts): nothing is set out there. */
   inWall: ((x: number, y: number) => boolean) | null = null;
   private readonly area: number; // how many times the usual world's area it has (the moon is bigger)
@@ -153,9 +155,10 @@ export class Scenery {
     const [tx, ty] = track.tangent(si);
     this.items.push({ x: track.xs[si] + tx * 0.5, y: track.ys[si] + ty * 0.5, art: gantry(this.bannerText), flip: false });
     if (t.volcano) return; // nobody sits out on the lava
-    const off = HALF_WIDTH + 9;
-    this.add(track, track.xs[si] - ty * off + tx * 25, track.ys[si] + tx * off + ty * 25, grandstand(this.rng), false,
-             HALF_WIDTH + 4);
+    const off = HALF_WIDTH + 9, x = track.xs[si] - ty * off + tx * 25, y = track.ys[si] + tx * off + ty * 25;
+    const stand = grandstand(this.rng), n = this.items.length;
+    this.add(track, x, y, stand, false, HALF_WIDTH + 4);
+    if (this.items.length > n) this.stand = { x, y, w: (stand.height * stand.sprite.w) / stand.sprite.h };
   }
 
   /** The lie of the land: up to LANDFORMS of the world's kinds, wherever there is room for one

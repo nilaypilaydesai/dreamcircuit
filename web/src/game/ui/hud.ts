@@ -147,10 +147,11 @@ export class Hud {
       f.draw(scr, q.text, W / 2, mid + 34 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
     }
     this.itemSlot(scr, p, now);
-    // a police car after the player: red and blue flashing at the top of the screen
+    // a police car after the player: red and blue flashing at the top of the screen, faster as it
+    // goes for the ram (a sidestep then dodges it)
     if (race.obstacles.chasing) {
-      const red = Math.floor(now * 4) % 2 === 0;
-      f.draw(scr, "POLICE", W / 2, WARN_Y, { color: red ? hex("#ff2a2a") : hex("#4a8cff"), outline: INK, align: "center" });
+      const lunge = race.obstacles.lunging, red = Math.floor(now * (lunge ? 10 : 4)) % 2 === 0;
+      f.draw(scr, lunge ? "DODGE!" : "POLICE", W / 2, WARN_Y, { color: red ? hex("#ff2a2a") : hex("#4a8cff"), outline: INK, align: "center" });
     }
     if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / ROCKET_TIME, hex("#ff8a1f"));
     else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));

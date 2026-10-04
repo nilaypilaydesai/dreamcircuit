@@ -33,19 +33,34 @@ export interface Obstacle {
   phase: number; // its own clock (a jellyfish's drift, a ball's swing)
   r: number; // m: how near a kart's middle must come to be hit
   hot: boolean; // whether it can hit a kart now
-  hits: number; // how many karts it has hit (a police car gives up after two)
+  hits: number; // how many karts it has hit (a police car gives up after two: rams, and spins out of its own)
+  age: number; // s since it was set out
   look: number; // which variant it is drawn as
 }
 
 /** Where things come out from: a police car's alley, a gully tumbleweeds blow out of. */
 export interface ObstacleSite { idx: number; s: number; side: number; armed: boolean }
 
-export type ObstacleSound = "moo" | "puff" | "zap" | "siren" | "ram" | "geyser" | "clang" | "impact" | "honk";
+/** A police alley: two buildings facing the road on the site's side, the alley the police cars
+ * come out of between them. Their fronts stand ALLEY_AT m out from the middle of the road and they
+ * go ALLEY_DEPTH m back; along the road (m from the site) building A runs from a0 to a1 and B from
+ * b0 to b1, ha and hb m tall: the same every time for a site. (It was a sprite, a flat picture of
+ * two buildings that turned to face the camera, and a kart drove straight through it.) */
+export const ALLEY_AT = HALF_WIDTH + 4, ALLEY_DEPTH = 11, ALLEY_MOUTH = 4.6;
+export function alleyBlocks(site: ObstacleSite): { a0: number; a1: number; b0: number; b1: number; ha: number; hb: number } {
+  const r = (salt: number) => { const v = Math.sin(site.idx * 12.9898 + salt * 78.233) * 43758.5453; return v - Math.floor(v); };
+  const m = ALLEY_MOUTH / 2;
+  return { a0: -m - 8 - 5 * r(1), a1: -m, b0: m, b1: m + 8 + 5 * r(2),
+           ha: 3.6 * (4 + Math.floor(3 * r(3))), hb: 3.6 * (4 + Math.floor(3 * r(4))) };
+}
+
+export type ObstacleSound = "moo" | "puff" | "zap" | "siren" | "ram" | "geyser" | "clang" | "impact" | "honk"
+  | "spun" | "shaken"; // (a police car spun out by an item; one that has given up the chase)
 export interface ObstacleEvent { sound: ObstacleSound; player: boolean; x: number; y: number }
 
 // states
 export const COW_GRAZE = 0, COW_WALK = 1, COW_STAND = 2, COW_STARTLED = 3;
-export const POLICE_OUT = 0, POLICE_CHASE = 1, POLICE_BACK = 2, POLICE_GONE = 3;
+export const POLICE_OUT = 0, POLICE_CHASE = 1, POLICE_BACK = 2, POLICE_GONE = 3, POLICE_LUNGE = 4, POLICE_SPUN = 5;
 export const GEYSER_QUIET = 0, GEYSER_WARN = 1, GEYSER_BLOW = 2;
 export const METEOR_FALL = 0, METEOR_BURST = 1;
 
@@ -53,6 +68,9 @@ export const WRECKER_PIVOT = 13.8, WRECKER_CABLE = 12.3, WRECKER_SWING = 1.0, WR
 export const METEOR_FALL_TIME = 1.8, METEOR_HEIGHT = 70, METEOR_BLAST = 3.4;
 export const GEYSER_WARN_TIME = 1.0, GEYSER_BLOW_TIME = 1.3, GEYSER_HEIGHT = 7.5;
 const POLICE_LEN = 4.4; // m, a police car's length (it rams from behind)
+const POLICE_STEER = 3; // m/s: the fastest a police car moves across the road onto the player's line
+const POLICE_LUNGE_AT = 9; // m behind the player: where it settles on a line and goes for the ram
+const POLICE_SHAKEN = 110; // m: this far behind the player, it has lost them and gives up
 
 /** How far apart (m along the road) a world's obstacles are set out. */
 const SPACING: Record<ObstacleKind, number> = {
@@ -72,8 +90,18 @@ export class Obstacles {
   private wreckers = 0;
   /** Whether a cutting's wall stands beside arc length ``s`` on ``side`` (set by the race). */
   wallAt: ((s: number, side: number) => boolean) | null = null;
+  /** The race's class: a police car goes no faster than a stock kart's top speed, nor round a bend
+   * faster than its grip allows (set by the race). */
+  pace = { vmax: 28, grip: 22 };
+  /** Whether an item hits a car at (x, y), z m up: oil, a puck, a bomb's blast... (set by the race). */
+  strike: ((x: number, y: number, z: number) => boolean) | null = null;
 
   constructor(readonly kind: ObstacleKind | null, private readonly rng: Rand) {}
+
+  /** Take away the sites ``gone`` says (a police alley new road would run through). */
+  dropSites(gone: (st: ObstacleSite) => boolean): void {
+    for (let k = this.sites.length - 1; k >= 0; k--) if (gone(this.sites[k])) this.sites.splice(k, 1);
+  }
 
   /** Take away what was set out where ``gone(s)`` says (road a new bridge carries or passes over). */
   clearWhere(gone: (s: number) => boolean): void {
@@ -95,7 +123,8 @@ export class Obstacles {
       const s = track.s[i];
       if (s < this.next || track.fromStart(i) < 90) continue;
       if (!free(s - 25, 50)) continue;
-      if (GROUNDED.has(kind) && !this.flat(track, i, 25)) continue;
+      // (a police alley's buildings stand on the ground beside flat road, as these do)
+      if ((GROUNDED.has(kind) || kind === "police") && !this.flat(track, i, 25)) continue;
       if (kind === "wrecker" && (this.wreckers >= 3 || !this.straight(track, i, 22))) continue;
       this.site(track, i);
       this.next = s + SPACING[kind] * this.rng.range(0.8, 1.25);
@@ -118,7 +147,7 @@ export class Obstacles {
     const o: Obstacle = {
       kind, idx, s: track.s[idx], offset, z: 0, x: 0, y: 0, heading: 0, state: 0, t: 0, wait: 0, v: 0,
       side: Math.sign(offset) || 1, target: offset, phase: this.rng.range(0, 100), r: 1, hot: false, hits: 0,
-      look: this.rng.int(0, 4),
+      age: 0, look: this.rng.int(0, 4),
     };
     this.locate(track, o);
     return o;
@@ -212,6 +241,7 @@ export class Obstacles {
     for (const o of this.list) {
       o.t += dt;
       o.phase += dt;
+      o.age += dt;
       switch (o.kind) {
         case "cow": this.cow(o, dt, track, ps); break;
         case "tumbleweed": this.tumbleweed(o, dt, track); break;
@@ -317,36 +347,62 @@ export class Obstacles {
     for (const st of this.sites) {
       const past = this.ahead(track, st.s, ps);
       if (past < -30 || past > 60) st.armed = true;
-      if (!racing || !st.armed || past < 4 || past > 30) continue;
+      // (once the player is a little way past: it came out right on their tail and rammed them
+      // before they could see it coming)
+      if (!racing || !st.armed || past < 14 || past > 40) continue;
       st.armed = false;
       if (this.cooldown > 0 || this.list.some((o) => o.kind === "police") || player.finished || this.rng.next() > 0.6) continue;
       // out of the alley: from beside the road, onto it behind the player
       const o = this.make("police", track, st.idx, st.side * (HALF_WIDTH + 6));
       o.side = st.side;
       o.v = 9;
-      o.r = 2.4;
+      o.r = 2.0; // (a kart's half width and a car's, near enough: a sidestep clears it)
       o.state = POLICE_OUT;
       this.list.push(o);
       this.events.push({ sound: "siren", player: true, x: o.x, y: o.y });
     }
   }
 
-  /** Out of the alley, then after the player at a speed that catches up, steering onto their line;
-   * a ram from behind, back off a moment, at them again; after two rams (or a long chase, or once
-   * the player is far ahead) it gives up and pulls over. */
+  /** Out of the alley, then after the player: no faster than a stock kart can go, so that at full
+   * speed the player holds it off and a boost pulls away, and gaining only on a player who is slower
+   * (off the line, off the road, after a spin); steering onto their line only so fast, and close
+   * behind, settling on a line and going for the ram, so that a sidestep then dodges it; and after
+   * two rams, or spun out twice by items, or once it has lost the player, it gives up and pulls
+   * over. (As it was, it was always faster than the player and moved across the road as fast as
+   * they did, so every chase ended in two rams, whatever the player did.) */
   private police(o: Obstacle, dt: number, track: Track, player: Kart, ps: number): void {
     const gap = this.ahead(track, o.s, ps); // m the player is ahead of it
     if (o.state === POLICE_OUT) {
       o.offset += (o.side * 2.5 - o.offset) * Math.min(1, dt * 3);
       o.v = Math.min(o.v + 14 * dt, 20);
       if (o.t > 0.9) { o.state = POLICE_CHASE; o.t = 0; }
-    } else if (o.state === POLICE_CHASE || o.state === POLICE_BACK) {
+    } else if (o.state === POLICE_SPUN) {
+      o.v = Math.max(0, o.v - 24 * dt); // (spun out by an item: it skids to a stop, then comes on again)
+      if (o.t > 1.6) { o.state = POLICE_CHASE; o.t = 0; }
+    } else if (o.state !== POLICE_GONE) {
+      // (never at a kart that is stopped or spinning: it hangs back behind it)
+      const slow = player.v < 8 || player.spin > 0 || player.falling;
+      const bend = Math.abs(track.curvature(o.idx)), top = Math.min(this.pace.vmax * 1.04,
+        bend > 1e-4 ? Math.sqrt(this.pace.grip / bend) : Infinity);
       const want = o.state === POLICE_BACK ? Math.max(4, player.v * 0.6)
-        : Math.min(43, Math.max(player.v + (gap > 12 ? 9 : 4), 16));
+        : o.state === POLICE_LUNGE ? Math.min(top + 4, Math.max(player.v + 5, 12))
+        : slow ? Math.min(top, Math.max(3, gap > 14 ? player.v + 4 : player.v - 2))
+        // (right on the player's tail it rams only as it lunges, so a ram is always seen coming)
+        : Math.min(top, gap < 5 ? player.v - 1 : Math.max(player.v + (gap > 25 ? 6 : 2), 16));
       o.v += Math.max(-18 * dt, Math.min(16 * dt, want - o.v));
-      if (gap < 30) o.offset += (player.offset - o.offset) * Math.min(1, dt * (o.state === POLICE_CHASE ? 2.2 : 0.4));
+      if (o.state !== POLICE_LUNGE && gap < 40) {
+        const d = player.offset - o.offset;
+        o.offset += Math.sign(d) * Math.min(Math.abs(d), POLICE_STEER * dt);
+      }
+      if (o.state === POLICE_CHASE && !slow && o.age > 2.5 && gap > 0 && gap < POLICE_LUNGE_AT && Math.abs(player.offset - o.offset) < 1.5) {
+        o.state = POLICE_LUNGE; // (on its line now, it goes for the ram)
+        o.t = 0;
+      }
+      if (o.state === POLICE_LUNGE && (o.t > 1.8 || gap < -2 || slow)) { o.state = POLICE_BACK; o.t = 0; } // (missed)
       if (o.state === POLICE_BACK && o.t > 2.5) { o.state = POLICE_CHASE; o.t = 0; }
-      if (o.hits >= 2 || (o.state === POLICE_CHASE && o.t > 22) || gap > 260 || player.finished) {
+      const lost = gap > POLICE_SHAKEN; // (left behind: the player has shaken it off)
+      if (o.hits >= 2 || lost || o.age > 26 || player.finished) {
+        if (lost && !player.finished) this.events.push({ sound: "shaken", player: true, x: player.x, y: player.y });
         o.state = POLICE_GONE;
         o.t = 0;
       }
@@ -359,15 +415,27 @@ export class Obstacles {
     o.idx = this.indexAt(track, o.s);
     o.z = track.elev[o.idx] ?? 0;
     const [tx, ty] = track.tangent(o.idx);
-    o.heading = Math.atan2(ty, tx);
-    o.hot = o.state !== POLICE_GONE;
+    o.heading = Math.atan2(ty, tx) + (o.state === POLICE_SPUN ? o.t * 9 : 0); // (spun out, it turns round and round)
+    o.hot = o.state === POLICE_LUNGE;
     if (o.state === POLICE_GONE) this.cooldown = 12;
     this.locate(track, o);
+    // run over the player's oil, hit by a puck, caught in a bomb's blast...: spun out
+    if ((o.state === POLICE_CHASE || o.state === POLICE_LUNGE || o.state === POLICE_BACK) && this.strike?.(o.x, o.y, o.z)) {
+      o.state = POLICE_SPUN;
+      o.t = 0;
+      o.hits += 1;
+      this.events.push({ sound: "spun", player: false, x: o.x, y: o.y });
+    }
   }
 
   /** Whether a police car is after the player right now (its siren is going). */
   get chasing(): boolean {
     return this.list.some((o) => o.kind === "police" && o.state !== POLICE_GONE);
+  }
+
+  /** Whether a police car is going for the ram right now (a sidestep dodges it). */
+  get lunging(): boolean {
+    return this.list.some((o) => o.kind === "police" && o.state === POLICE_LUNGE);
   }
 
   // ----------------------------------------------------------------------------------- geysers
@@ -476,7 +544,8 @@ export class Obstacles {
       const [tx, ty] = track.tangent(o.idx);
       const along = dx * tx + dy * ty, across = -dx * ty + dy * tx;
       if (Math.abs(along) > POLICE_LEN / 2 + 1.1 || Math.abs(across) > o.r || up > 1.2) return;
-      if (o.kind === "police" && o.state !== POLICE_CHASE) return; // (backing off, or still pulling out)
+      // (backing off, pulling out or spun out; nor at a kart that is stopped or spinning)
+      if (o.kind === "police" && (!o.hot || k.v < 6 || k.spin > 0)) return;
       k.spinOut(0.9);
       const shove = across >= 0 ? 1.4 : -1.4; // pushed off to the side it is on
       k.x += -ty * shove;
