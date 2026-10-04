@@ -33,8 +33,9 @@ export const LANDFORM_SIZE: Record<LandformKind, { r: [number, number]; h: [numb
 };
 
 /** How far a landform's foot must stay from the road: past the fence karts cannot cross (17 m out
- * from the road's edge), with a few meters to spare. */
-export const LANDFORM_CLEAR = HALF_WIDTH + 13;
+ * from the road's edge), with two meters to spare. (Set 4 m inside the fence, as it once was,
+ * the foot of a knoll or a butte stood where a kart in the grass could drive into it.) */
+export const LANDFORM_CLEAR = HALF_WIDTH + 19;
 
 /** The farthest its foot reaches from its middle. */
 export const reach = (l: Landform): number => l.r * l.stretch;

@@ -1700,6 +1700,9 @@ describe("the lie of the land", () => {
 
   it("sets out landforms beyond the fence, with nothing growing inside them", { timeout: 60000 }, async () => {
     const { LANDFORM_CLEAR, onLandform, reach } = await import("../src/game/world/landforms");
+    // (the fence karts cannot cross stands 17 m out from the road's edge; a landform's foot inside
+    // it is somewhere a kart in the grass can drive into)
+    expect(LANDFORM_CLEAR).toBeGreaterThan(HALF_WIDTH + 17 + 1);
     for (const theme of THEMES.filter((th) => th.landforms?.length)) { // (inside the tube there is no land)
       const race = new Race({ rivals: 0, difficulty: "pro", theme, seed: 5, replay: twisty() }, null, () => {});
       await race.prepare();
