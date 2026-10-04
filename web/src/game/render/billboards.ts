@@ -26,6 +26,7 @@ export interface WorldSprite {
   base?: number; // m, height of that surface (a bridge deck)
   flip?: boolean; // mirrored (a fish swimming the other way)
   draw?: (sx: number, gy: number, ppm: number) => void; // drawn by hand instead (a horn's ring)
+  idx?: number; // the road point it is by (in the tube, which pass of a figure-eight it is on)
 }
 
 /** How to draw each kart: its 16 views, its drift sparks, and what it carries. */
@@ -39,10 +40,10 @@ export interface KartLook {
   underDeck?: (x: number, y: number) => boolean; // whether a spot on the ground is under a bridge's deck
   hide?: Kart; // a kart not to draw (the player's own, seen past in the rear-view mirror)
   drone?: SceneryArt[]; // the rescue drone's frames (the volcano)
-  /** Inside the neon tunnel's tube: where a point given in the race's flat terms (x, y, and h m up)
+  /** Inside the tunnel's tube: where a point given in the race's flat terms (x, y, and h m up)
    * really is, round the tube, and how far its surface is turned (``hint``: a road point near it). */
-  tube?: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; n: [number, number, number] };
-  viewFrom?: { x: number; y: number }; // where the camera is in the race's flat terms (in the tube), to pick each kart's view
+  tube?: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; n: [number, number, number] } | null;
+  viewOf?: (k: Kart) => number; // in the tube: which way the camera sees kart k from (an angle in flat terms), to pick its view
 }
 
 interface Item {
@@ -50,10 +51,11 @@ interface Item {
   sx: number;
   gy: number;
   ppm: number; // pixels per meter at this depth
-  rot?: number; // radians it is drawn turned (up a wall of the neon tunnel's tube, from the camera's)
+  rot?: number; // radians it is drawn turned (up a wall of the tunnel's tube, from the camera's)
   draw: () => void;
 }
 
+const NEAR_SEEN = 4, NEAR_GONE = 2.2; // m from the camera in the tunnel: a sprite nearer is drawn see-through, or not at all
 const RAINBOW = ["#ff5fa2", "#ffd23f", "#5dff7a", "#63c8ff", "#c79bff"].map(hex);
 
 export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], karts: Kart[], look: KartLook,
@@ -66,7 +68,9 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   const project = (x: number, y: number, h = 0, hint?: number): Projected | null => {
     if (tube) {
       // round the tube, seen by a camera turned with it: a sprite there is drawn turned as much
-      const q = tube(x, y, h, hint), [z, lat, up] = toCamera(cam, q.X, q.Y, q.Z);
+      const q = tube(x, y, h, hint);
+      if (!q) return null; // (on the other pass of a crossing, whose tube is not drawn)
+      const [z, lat, up] = toCamera(cam, q.X, q.Y, q.Z);
       if (z < 1.2 || z > cam.far) return null;
       const ppm = cam.focal / z, sx = W / 2 + lat * ppm;
       if (sx < -200 || sx > W + 200) return null;
@@ -96,9 +100,11 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   const fogAt = (z: number) => (z > cam.far * 0.45 ? Math.min(1, (z - cam.far * 0.45) / (cam.far * 0.55)) ** 1.5 : 0);
   /** A floating sprite at (x, y), ``lift`` m over a surface at height ``base``. */
   const billboard = (art: SceneryArt, x: number, y: number, base: number, lift: number, bias: number, shadowed = true,
-                     size = 1, flip = false) => {
-    const p = project(x, y, base);
-    if (!p) return;
+                     size = 1, flip = false, hint?: number) => {
+    const p = project(x, y, base, hint);
+    // (in the tunnel, going by close to the camera, behind the kart it follows: drawn see-through,
+    // and right by it not at all, or riding a wall past the traffic, a car swept across the screen)
+    if (!p || (tube && p.z < NEAR_GONE)) return;
     const h = art.height * size * p.ppm;
     if (h < 1) return;
     const w = (h * art.sprite.w) / art.sprite.h;
@@ -107,8 +113,8 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       ...p,
       z: p.z + bias,
       draw: turn(p, () => {
-        if (up > 0 && shadowed) shadow(scr, p.sx, p.gy, w * 0.42, Math.max(1, w * 0.12));
-        scr.blitScaled(art.sprite, p.sx - w / 2, p.gy - h - up, w, h, flip, fog, fogAt(p.z));
+        if (up > 0 && shadowed) shadow(scr, p.sx, p.gy, w * 0.42, Math.max(1, w * 0.12), p.rot ?? 0);
+        scr.blitScaled(art.sprite, p.sx - w / 2, p.gy - h - up, w, h, flip, fog, fogAt(p.z), H, !!tube && p.z < NEAR_SEEN);
       }),
     });
   };
@@ -126,11 +132,11 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const base = it.base ?? 0;
     const draw = it.draw;
     if (draw) {
-      const p = project(it.x, it.y, base + (it.lift ?? 0));
+      const p = project(it.x, it.y, base + (it.lift ?? 0), it.idx);
       if (p) items.push({ ...p, z: p.z + (base > 1 ? -0.5 : lowAt(it.x, it.y, base)), draw: turn(p, () => draw(p.sx, p.gy, p.ppm)) });
       continue;
     }
-    billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowAt(it.x, it.y, base), true, 1, it.flip);
+    billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowAt(it.x, it.y, base), true, 1, it.flip, it.idx);
   }
   for (const k of karts) {
     if (k === look.hide) continue;
@@ -146,8 +152,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const ps = project(k.x, k.y, falling ? 0 : k.ground, k.idx);
     if (!p || !ps) continue;
     const sprites = look.sprites(k);
-    const eye = look.viewFrom ?? cam;
-    const view = Math.atan2(k.y - eye.y, k.x - eye.x); // camera -> kart, world frame
+    const view = look.viewOf?.(k) ?? Math.atan2(k.y - cam.y, k.x - cam.x); // camera -> kart, world frame
     let rel = view - (k.heading + k.slip + k.visualSpin);
     if (k.isPlayer) rel -= k.steer * 0.18; // lean into the steer
     const vi = (((Math.round((rel / (Math.PI * 2)) * KART_VIEWS) % KART_VIEWS) + KART_VIEWS) % KART_VIEWS);
@@ -193,7 +198,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const flames = k.rocket > 0 ? 3 : k.boostTime > 0 ? (k.build.exhaust === "flame" ? 2 : 1) : 0;
     if (flames) {
       const back = k.rocket > 0 ? 2.6 : 1.3;
-      const q = project(k.x - c * back, k.y - sn * back, k.elev + (k.rocket > 0 ? 0.55 : 0.3));
+      const q = project(k.x - c * back, k.y - sn * back, k.elev + (k.rocket > 0 ? 0.55 : 0.3), k.idx);
       if (q) items.push({ ...q, z: q.z + bias - 0.05, draw: turn(q, () => drawFlames(scr, q.sx, q.gy, q.ppm, flames)) });
     }
     // what it carries: the item it will use next floats over the driver's head, spare shots (a
@@ -205,7 +210,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       for (let n = 0; n < count; n++) {
         const ang = now * 1.6 + k.id + (n / count) * Math.PI * 2;
         billboard(a, k.x + Math.cos(ang) * 1.8 * small, k.y + Math.sin(ang) * 1.8 * small, k.elev, at * small, bias - 0.01,
-                  false, size * small);
+                  false, size * small, false, k.idx);
       }
     };
     if (k.jackpot.length && look.art && k.rocket <= 0 && !k.falling) {
@@ -214,7 +219,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       k.jackpot.forEach((item, n) => {
         const ang = now * 1.6 + k.id + (n / count) * Math.PI * 2;
         billboard(look.art!(item), k.x + Math.cos(ang) * 2 * small, k.y + Math.sin(ang) * 2 * small, k.elev, 0.55 * small,
-                  bias - 0.01, false, 0.55 * small);
+                  bias - 0.01, false, 0.55 * small, false, k.idx);
       });
     } else if (art && k.rocket <= 0 && !k.falling && k.item) {
       if (ORBITS.has(k.item)) {
@@ -222,13 +227,13 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       } else if (k.item === "oil3") {
         for (let n = 0; n < k.uses; n++) { // three barrels trailing in a line
           const back = 1.7 + n * 1.1;
-          billboard(art, k.x - c * back, k.y - sn * back, k.elev, 0.03, bias - 0.02 + n * 0.01, false, 0.7 * small);
+          billboard(art, k.x - c * back, k.y - sn * back, k.elev, 0.03, bias - 0.02 + n * 0.01, false, 0.7 * small, false, k.idx);
         }
       } else if (k.trailing) {
-        billboard(art, k.x - c * 1.7, k.y - sn * 1.7, k.elev, 0.03, bias - 0.02, false, 0.8 * small);
+        billboard(art, k.x - c * 1.7, k.y - sn * 1.7, k.elev, 0.03, bias - 0.02, false, 0.8 * small, false, k.idx);
       } else {
         // (a kart is about 0.8 m tall to the top of the helmet)
-        billboard(art, k.x, k.y, k.elev, (1.0 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.8 * small);
+        billboard(art, k.x, k.y, k.elev, (1.0 + 0.05 * Math.sin(now * 4 + k.id)) * small, bias - 0.03, false, 0.8 * small, false, k.idx);
         if (k.item === "triple") circle(art, Math.max(0, k.uses - 1), 0.6, 0.64);
         if (k.item === "boomerang") circle(art, Math.max(0, k.uses - 1), 0.6, 0.64);
       }
@@ -238,7 +243,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       const lunge = k.bite > 0 ? Math.sin((k.bite / 0.3) * Math.PI) * 1.6 : 0;
       const frame = k.bite > 0.15 ? 1 : k.bite > 0 ? 2 : 0;
       const ahead = (1.9 + lunge) * small;
-      billboard(look.grabber[frame], k.x + c * ahead, k.y + sn * ahead, k.elev, 0.25 * small, bias - 0.04, false, small);
+      billboard(look.grabber[frame], k.x + c * ahead, k.y + sn * ahead, k.elev, 0.25 * small, bias - 0.04, false, small, false, k.idx);
     }
   }
   const all: { z: number; draw: () => void }[] = [...items, ...faces];

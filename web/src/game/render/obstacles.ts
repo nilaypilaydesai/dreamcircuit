@@ -80,7 +80,7 @@ export function obstacleSprites(obs: Obstacles, track: Track, cam: Camera, now: 
         break;
       }
       case "traffic":
-        out.push({ x: o.x, y: o.y, art: art.traffic[o.look % art.traffic.length], base });
+        out.push({ x: o.x, y: o.y, art: art.traffic[o.look % art.traffic.length], base, idx: o.idx });
         break;
       case "geyser": {
         const g = art.geyser;

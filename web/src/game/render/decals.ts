@@ -1,7 +1,7 @@
 // Things that lie flat on the road, painted into the ground while the Mode-7 renderer draws it, so
 // they sit in perspective under the karts that drive over them. Oil slicks: a dark, glossy
 // puddle with a wobbly edge, a rainbow film that swirls slowly, and the sky shining in it. Where
-// the road is not the ground (a deck, a climb, a jump ramp, the neon tunnel's tube) the same
+// the road is not the ground (a deck, a climb, a jump ramp, the tunnel's tube) the same
 // puddle is laid on it as faces instead.
 
 import { hex, mix } from "../core/gfx";

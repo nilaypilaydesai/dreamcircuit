@@ -22,7 +22,7 @@ import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./ren
 import type { Face, P3 } from "./render/poly";
 import { aimArrow, bankFaces, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
 import { type ObstacleArt, obstacleArt, obstacleFaces, obstacleSprites } from "./render/obstacles";
-import { elevBetween, tubeBetween, tubeFaces, tubeFrame, tubePlace, tubeSpot } from "./render/tube";
+import { elevBetween, kartPlace, tubeBetween, tubeFaces, tubeFrame, tubeHides, tubePlace, tubeView } from "./render/tube";
 import type { ObstacleSound } from "./race/obstacles";
 import { landformFaces } from "./render/landforms";
 import { Sky } from "./render/sky";
@@ -69,6 +69,13 @@ function trackHint(i: number): string {
 const BASE_HEIGHT = 2.9; // m, camera over the player's kart
 const BASE_FOCAL = 250;
 const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+const SWING = 0.45; // s for the chase camera in the tunnel to swing round behind a kart turned round
+
+/** A chase camera's ride in the tunnel's tube: which way down the tube it looks (``dir``), how far
+ * it turns from there toward where the kart heads (``yaw``), how high it rides with the kart off the
+ * tube (up a jump's ramp, partway into the air: ``lift``), and, the kart turned round, how far it
+ * has still to swing round behind it (``swing``, from ``from`` over ``swung`` of SWING s). */
+interface TubeRide { dir: number; yaw: number; lift: number; swing: number; from: number; swung: number }
 const ENGINE_LEVELS = [{ label: "LOW", level: 0.18 }, { label: "OFF", level: 0 }];
 const SAVE = "dreamcircuit.v3"; // the garage build and the engine setting (this browser only)
 
@@ -822,59 +829,82 @@ class Game {
   // ----------------------------------------------------------------------------------------
   // rendering
 
-  /** Each chase camera's ride in the neon tunnel's tube (the game's own, the attract race's): how far
-   * it turns off the tube's axis toward where the kart heads, and how high it rides with the kart
-   * off the tube (up a jump's ramp, partway into the air). */
-  private readonly tubeChase = new WeakMap<Camera, { yaw: number; lift: number }>();
+  /** Each chase camera's ride in the tunnel's tube (the game's own, the attract race's). */
+  private readonly tubeChase = new WeakMap<Camera, TubeRide>();
 
   /** Where the player's kart is along the road in the tube: the road point before it and how far on. */
   private kartSpot(race: Race): [number, number] {
-    const q = tubePlace(race.track, race.player.x, race.player.y, race.player.idx);
+    const q = kartPlace(race.track, race.player);
     return [q.i, q.w];
   }
 
-  /** The chase camera's ride in the tube, as it follows the kart: it turns only a little toward where
-   * the kart heads, so that looking down the tube from straight behind the kart it always shows the
-   * way on (turned well round toward a kart crossing the tube, it swung round the curve of the wall,
-   * close in, and lost the kart off the foot of the screen); and it rises with the kart up a jump's
-   * ramp and partway into the air. (Where it is round the tube is the kart's own place, exactly:
-   * following behind, even closely, it lagged a meter and more round the tube when the kart crossed
-   * it fast, and drew the kart off to one side, tipped over.) */
+  /** The chase camera's ride in the tube, as it follows the kart. It looks down the tube the way the
+   * kart is going (and turns round when the kart does: left looking the other way, a kart turned
+   * round drove off where the camera could not see), and turns only a little from there toward where
+   * the kart heads, so that from straight behind the kart it always shows the way on (turned well
+   * round toward a kart crossing the tube, it swung round the curve of the wall, close in, and lost
+   * the kart off the foot of the screen); and it rises with the kart up a jump's ramp and partway
+   * into the air. (Where it is round the tube is the kart's own place, exactly: following behind,
+   * even closely, it lagged a meter and more round the tube when the kart crossed it fast, and drew
+   * the kart off to one side, tipped over.) */
   private chaseTube(cam: Camera, race: Race, dt: number): void {
     const p = race.player, [tx, ty] = race.track.tangent(p.idx);
     const rel = wrapAngle(p.heading + p.slip * 0.45 - Math.atan2(ty, tx));
-    const want = Math.max(-0.15, Math.min(0.15, rel * 0.25));
     // (rising with the kart up a jump's ramp, and partway into the air; easing to it, so the
     // camera does not drop at the lip, where the ramp under the kart gives way to air)
     const ground = elevBetween(race.track, ...this.kartSpot(race)), ramp = Math.max(0, p.ground - ground);
     const air = Math.max(0, p.elev - p.ground), lift = ramp + air - Math.min(air * 0.45, 1.8);
-    const st = this.tubeChase.get(cam);
+    let st = this.tubeChase.get(cam);
     if (!st) {
-      this.tubeChase.set(cam, { yaw: want, lift });
-      return;
+      st = { dir: Math.cos(rel) >= 0 ? 1 : -1, yaw: 0, lift, swing: 0, from: 0, swung: SWING };
+      this.tubeChase.set(cam, st);
     }
+    // which way down the tube: turned round past 115 degrees from it, the other way, swinging round
+    // behind the kart the way it turned (at a cut, the whole tube turned about in a frame)
+    const off = st.dir > 0 ? rel : wrapAngle(rel - Math.PI);
+    if (Math.abs(off) > (115 * Math.PI) / 180) {
+      const was = (st.dir > 0 ? 0 : Math.PI) + st.yaw + st.swing; // (where it looks, off the way along)
+      st.dir = -st.dir;
+      st.yaw = 0;
+      const kart = st.dir > 0 ? rel : wrapAngle(rel - Math.PI);
+      let from = wrapAngle(was - (st.dir > 0 ? 0 : Math.PI));
+      if (Math.abs(kart) > 0.05 && Math.sign(from) !== Math.sign(kart)) from -= Math.sign(from) * 2 * Math.PI;
+      st.from = from;
+      st.swung = 0;
+    }
+    st.swung = Math.min(SWING, st.swung + dt);
+    const e = st.swung / SWING;
+    st.swing = st.from * (1 - e * e * (3 - 2 * e));
+    const want = Math.max(-0.15, Math.min(0.15, (st.dir > 0 ? rel : wrapAngle(rel - Math.PI)) * 0.25));
     st.yaw += (want - st.yaw) * (1 - Math.exp(-dt * 6.5));
     st.lift += (lift - st.lift) * (1 - Math.exp(-dt * (p.air ? 5 : 9)));
     st.lift = Math.min(st.lift, ramp + air + 0.3);
   }
 
-  /** Inside the neon tunnel's tube: where the camera really is and which way it looks; the road point
+  /** Inside the tunnel's tube: where the camera really is and which way it looks; the road point
    * it is at; where a point of the race's flat terms seen by it is, in those terms (to pick which
-   * side of each kart is seen); and where anything given in flat terms really is round the tube.
-   * The chase camera (``chase``, its ride) rides behind the kart along the tube at the kart's place
-   * round it, turned with the kart's surface: so the kart stays upright at the foot of the screen and
-   * the tube turns about it as it climbs a wall or loops over the ceiling (put where its flat terms
-   * said, behind the kart as the flat terms measure it, the camera lagged far round the tube, looked
-   * at walls and saw the kart turned every which way). The rear-view mirror (``mirror``) rides just
-   * ahead of the kart looking back, and any other camera (a film's) goes where its flat terms say. */
-  private tubeCamera(race: Race, flat: Camera, chase?: { yaw: number; lift: number }, mirror = false): {
-    cam: Camera; idx: number; back: boolean; eye: { x: number; y: number };
-    at: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; n: [number, number, number] };
+   * side of each kart is seen); and where anything given in flat terms really is round the tube (or
+   * null, where the tube is left out at a crossing). The chase camera (``chase``, its ride) rides
+   * behind the kart along the tube at the kart's place round it, turned with the kart's surface: so
+   * the kart stays upright at the foot of the screen and the tube turns about it as it climbs a
+   * wall or loops over the ceiling (put where its flat terms said, behind the kart as the flat terms
+   * measure it, the camera lagged far round the tube, looked at walls and saw the kart turned every
+   * which way). The rear-view mirror (``mirror``) rides just ahead of the kart looking back, and any
+   * other camera (a film's) goes where its flat terms say. */
+  private tubeCamera(race: Race, flat: Camera, chase?: TubeRide, mirror = false): {
+    cam: Camera; idx: number; back: boolean; behind: number; view: (k: Kart) => number;
+    at: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; n: [number, number, number] } | null;
   } {
     const t = race.track, p = race.player;
+    let hides: (s: number) => boolean = () => false;
     const at = (x: number, y: number, h: number, hint?: number) => {
-      const q = tubeSpot(t, x, y, h, hint ?? p.idx);
-      return { X: q.p[0], Y: q.p[1], Z: q.p[2], n: q.n };
+      // (a kart by its own place round the tube: found again from its place in flat terms, it
+      // could come out meters off, round the inside of a tight bend high up, where they fold over)
+      const k = race.karts.find((o) => o.x === x && o.y === y);
+      const q = k ? kartPlace(t, k) : tubePlace(t, x, y, hint ?? p.idx);
+      if (hides(q.s)) return null;
+      const r = tubeBetween(t, q.i, q.w, q.u, h - elevBetween(t, q.i, q.w));
+      return { X: r.p[0], Y: r.p[1], Z: r.p[2], n: r.n };
     };
     const look = (fr: { along: P3; round: P3; up: P3 }, ahead: number, round: number): { f: P3; r: P3; u: P3 } => {
       const up = fr.up, g: P3 = [fr.along[0] * ahead + fr.round[0] * round, fr.along[1] * ahead + fr.round[1] * round,
@@ -888,25 +918,33 @@ class Game {
       // kart keeps its place on the screen however the tube turns, climbs or dips under it (set on
       // the tube's surface behind the kart, the camera tipped with the road where it was, not where
       // the kart was, and over a crest lost the kart off the foot of the screen); and where the kart
-      // really is round the tube (its offset is a step behind when it is shoved)
-      const k = tubePlace(t, p.x, p.y, p.idx), uK = k.u;
-      const yaw = mirror ? 0 : chase.yaw, back = mirror ? -2.5 : Math.hypot(flat.x - p.x, flat.y - p.y) || 6.2;
-      const h = (mirror ? 3.4 : BASE_HEIGHT) + chase.lift; // (as high off the tube as over the road at home)
-      const basis = look(tubeFrame(t, k.i, k.w, uK), mirror ? -1 : Math.cos(yaw), Math.sin(yaw));
+      // really is round the tube (its offset is a step behind when it is shoved). The mirror looks
+      // back from just ahead of the kart, the other way from the camera.
+      const k = kartPlace(t, p), uK = k.u;
+      const way = mirror ? -chase.dir : chase.dir, yaw = mirror ? 0 : chase.yaw + chase.swing;
+      const ahead = way * Math.cos(yaw), round = way * Math.sin(yaw);
+      // (swinging round, closer in and lower, so the kart keeps its place on the screen: 6.2 m to
+      // the side of a kart up a wall, the camera would be out through it)
+      const near = mirror ? 1 : 1 - 0.6 * Math.sin(chase.swing) ** 2;
+      const back = mirror ? 2.5 : (Math.hypot(flat.x - p.x, flat.y - p.y) || 6.2) * near;
+      const h = ((mirror ? 3.4 : BASE_HEIGHT) + chase.lift) * near; // (as high off the tube as over the road at home)
+      const basis = look(tubeFrame(t, k.i, k.w, uK), ahead, round);
       const at0 = tubeBetween(t, k.i, k.w, uK, 0).p, f = basis.f, up = basis.u;
       const pos: P3 = [at0[0] - f[0] * back + up[0] * h, at0[1] - f[1] * back + up[1] * h, at0[2] - f[2] * back + up[2] * h];
-      // the road point it is at, and where it is in the race's flat terms (to pick each kart's side seen)
-      const c = t.stepAlong(k.i, k.w * t.between(k.i, t.wrap(k.i + 1)) - back * Math.cos(yaw));
-      const uC = uK - back * Math.sin(yaw), j = t.wrap(c.i + 1), [tx, ty] = t.tangent(c.i);
-      const ex = t.xs[c.i] + (t.xs[j] - t.xs[c.i]) * c.w - ty * uC, ey = t.ys[c.i] + (t.ys[j] - t.ys[c.i]) * c.w + tx * uC;
-      return { cam: { ...flat, x: pos[0], y: pos[1], height: pos[2], basis }, idx: c.i, back: mirror, eye: { x: ex, y: ey }, at };
+      // the road point it is at, and where it is round the tube (to pick each kart's side seen)
+      const c = t.stepAlong(k.i, k.w * t.between(k.i, t.wrap(k.i + 1)) - back * ahead);
+      const sC = t.s[c.i] + c.w * t.between(c.i, t.wrap(c.i + 1)), uC = uK - back * round;
+      hides = tubeHides(t, t.s[c.i]);
+      return { cam: { ...flat, x: pos[0], y: pos[1], height: pos[2], basis }, idx: c.i, back: ahead < 0,
+               behind: Math.abs(ahead) < 0.75 ? 80 : 20, view: (o: Kart) => tubeView(t, sC, uC, o), at }; // (side on, the tube both ways)
     }
     const q = tubePlace(t, flat.x, flat.y, p.idx);
     const pos = tubeBetween(t, q.i, q.w, q.u, flat.height - elevBetween(t, q.i, q.w)).p;
     const [tx, ty] = t.tangent(q.i), psi = wrapAngle(flat.heading - Math.atan2(ty, tx));
     const basis = look(tubeFrame(t, q.i, q.w, q.u), Math.cos(psi), Math.sin(psi));
+    hides = tubeHides(t, t.s[q.i]);
     return { cam: { ...flat, x: pos[0], y: pos[1], height: pos[2], basis }, idx: q.i, back: Math.abs(psi) > Math.PI / 2,
-             eye: { x: flat.x, y: flat.y }, at };
+             behind: Math.abs(Math.cos(psi)) < 0.75 ? 80 : 20, view: (o: Kart) => tubeView(t, q.s, q.u, o), at };
   }
 
   /** Draw the world from ``cam`` into ``scr`` (the screen, or with ``mirror`` a rear-view mirror:
@@ -914,7 +952,7 @@ class Game {
   private drawWorld(race: Race, sky: Sky, flat: Camera, scr: Screen = this.scr,
                     mirror?: { ratio: number; fullW: number }): void {
     const t = race.track;
-    // inside the neon tunnel's tube there is no sky and no ground, only the tube: the camera (given
+    // inside the tunnel's tube there is no sky and no ground, only the tube: the camera (given
     // in the race's flat terms) is put where it really is round the tube, turned to match
     const inTube = race.setup.theme.tube
       ? this.tubeCamera(race, flat, this.tubeChase.get(mirror ? this.cam : flat), !!mirror) : null;
@@ -948,17 +986,17 @@ class Game {
     it.boxes.forEach((b, i) => {
       if (b.respawn > 0) return;
       const art = this.boxArt[(Math.floor(now * 10) + i * 3) % this.boxArt.length];
-      extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i), base: b.elev });
+      extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i), base: b.elev, idx: b.idx });
     });
     for (const o of it.orbs) {
-      extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: t.elev[o.idx] ?? 0 });
+      extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: t.elev[o.idx] ?? 0, idx: o.idx });
     }
     for (const b of it.boomerangs) {
-      extras.push({ x: b.x, y: b.y, art: this.boomArt[Math.floor(now * 24) % this.boomArt.length], lift: 0.4, base: b.z - 0.9 });
+      extras.push({ x: b.x, y: b.y, art: this.boomArt[Math.floor(now * 24) % this.boomArt.length], lift: 0.4, base: b.z - 0.9, idx: b.idx });
     }
     for (const b of it.bombs) {
       const ground = t.elev[b.idx] ?? 0;
-      extras.push({ x: b.x, y: b.y, art: this.bombArt[Math.floor(now * 8) % 2], lift: Math.max(0, b.z - ground), base: ground });
+      extras.push({ x: b.x, y: b.y, art: this.bombArt[Math.floor(now * 8) % 2], lift: Math.max(0, b.z - ground), base: ground, idx: b.idx });
     }
     for (const b of it.blasts) {
       const set = b.size > 1.05 ? this.bigBlastArt : this.blastArt;
@@ -969,32 +1007,32 @@ class Game {
       const ground = t.elev[p.idx] ?? 0;
       const art = p.kind === "puck" ? this.puckArt[Math.floor(now * 14 + p.t * 9) % this.puckArt.length]
         : p.kind === "orb" ? this.orbArt : this.flareArt[Math.floor(now * 12) % this.flareArt.length];
-      extras.push({ x: p.x, y: p.y, art, base: ground, lift: p.kind === "flare" ? Math.max(0.05, p.z - ground) : p.kind === "orb" ? 0.45 : 0.02 });
+      extras.push({ x: p.x, y: p.y, art, base: ground, lift: p.kind === "flare" ? Math.max(0.05, p.z - ground) : p.kind === "orb" ? 0.45 : 0.02, idx: p.idx });
     }
     for (const c of it.comets) {
       const ground = t.elev[c.idx] ?? 0;
-      extras.push({ x: c.x, y: c.y, art: this.cometArt, base: ground, lift: c.z - ground });
+      extras.push({ x: c.x, y: c.y, art: this.cometArt, base: ground, lift: c.z - ground, idx: c.idx });
       if (c.phase === "fly") { // its tail, streaming back down the road
         for (let j = 1; j <= 6; j++) {
           const i = t.wrap(c.idx - j * 5);
-          extras.push({ x: t.xs[i], y: t.ys[i], art: this.trailArt, base: t.elev[i] ?? 0, lift: c.z - ground + 0.3 * Math.sin(now * 20 + j) });
+          extras.push({ x: t.xs[i], y: t.ys[i], art: this.trailArt, base: t.elev[i] ?? 0, lift: c.z - ground + 0.3 * Math.sin(now * 20 + j), idx: i });
         }
       }
     }
     it.coins.forEach((c, i) => {
       if (c.respawn > 0) return;
       const art = this.coinArt[(Math.floor(now * 10) + i) % this.coinArt.length];
-      extras.push({ x: c.x, y: c.y, art, lift: 0.3 + 0.08 * Math.sin(now * 4 + i), base: c.elev });
+      extras.push({ x: c.x, y: c.y, art, lift: 0.3 + 0.08 * Math.sin(now * 4 + i), base: c.elev, idx: c.idx });
     });
     for (const r of it.rings) {
       const u = r.age / RING_TIME, k = r.kart;
-      extras.push({ x: k.x, y: k.y, art: this.trailArt, base: k.ground, draw: (sx, gy, ppm) => hornRing(scr, sx, gy, ppm, u) });
+      extras.push({ x: k.x, y: k.y, art: this.trailArt, base: k.ground, draw: (sx, gy, ppm) => hornRing(scr, sx, gy, ppm, u), idx: k.idx });
     }
     if (theme.underwater) extras.push(...fishSprites(this.schools(race), now, cam.heading));
     const faces: Face[] = [];
     const painter = { cam, scr, fog: race.setup.theme.fog, faces };
     if (inTube) {
-      tubeFaces(painter, t, theme, inTube.idx, race.features, now, inTube.back);
+      tubeFaces(painter, t, theme, inTube.idx, race.features, now, inTube.back, inTube.behind);
       rampFaces(painter, t, race.features, race.setup.theme);
     } else {
       landformFaces(painter, race.scenery.landforms, theme);
@@ -1036,7 +1074,7 @@ class Game {
         : (x: number, y: number) => t.bridges.some((b) => (x - t.xs[b.lower]) ** 2 + (y - t.ys[b.lower]) ** 2 < 24 * 24),
       hide: mirror ? race.player : undefined,
       tube: inTube?.at,
-      viewFrom: inTube?.eye,
+      viewOf: inTube?.view,
     }, theme.fog, extras, faces);
     if (mirror) return; // (the screen's own overlays are not seen in the mirror)
     if (theme.underwater) waterOverlay(this.scr, now);

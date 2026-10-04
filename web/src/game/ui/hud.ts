@@ -122,17 +122,16 @@ export class Hud {
       const c = p.boostLevel === 2 ? hex("#ffb347") : p.boostLevel === 1 ? hex("#63c8ff") : SILVER;
       f.draw(scr, p.boostLevel ? "BOOST READY" : "DRIFT", 108, H - 12, { color: c, outline: INK });
     }
-    // in the neon tunnel's tube: how fast is fast enough, to hold onto a wall and to loop right
+    // in the tunnel's tube: how fast is fast enough, to hold onto a wall and to loop right
     // round over the ceiling (ticks on the speed bar, words that light up), and a warning when the
     // kart is sliding back down
     if (race.setup.theme.tube) {
       const v = Math.abs(p.v), top = race.cls.vmax * 1.28;
       for (const need of [TUBE_WALL_SPEED, TUBE_LOOP_SPEED]) scr.fillRect(11 + Math.round((90 * need) / top), H - 14, 1, 7, WHITE);
-      f.draw(scr, "WALL", 104, H - 22, { color: v >= TUBE_WALL_SPEED ? hex("#2de2e6") : hex("#5a5470"), outline: INK });
-      const loop = v >= TUBE_LOOP_SPEED;
-      f.draw(scr, "LOOP", 144, H - 22, {
-        color: loop ? (Math.floor(now * 6) % 2 ? hex("#ff2bd6") : WHITE) : hex("#5a5470"), outline: INK,
-      });
+      // (lit, steady: flashing whenever the kart was fast enough to loop, which is most of a race,
+      // it never stopped)
+      f.draw(scr, "WALL", 104, H - 22, { color: v >= TUBE_WALL_SPEED ? GOLD : hex("#5e5e66"), outline: INK });
+      f.draw(scr, "LOOP", 144, H - 22, { color: v >= TUBE_LOOP_SPEED ? GOLD : hex("#5e5e66"), outline: INK });
       if (p.slipping && Math.floor(now * 5) % 2 === 0) {
         f.draw(scr, "TOO SLOW!", W / 2, WARN_Y, { color: hex("#ff6b6b"), outline: INK, align: "center" });
       }

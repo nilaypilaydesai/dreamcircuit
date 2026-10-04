@@ -86,7 +86,7 @@ export class Screen {
   /** A pinned size (the film tool records at exactly 384x216), or null to follow the window. */
   private pinned: [number, number] | null = null;
   /** While set, sprites and rectangles are drawn turned ``a`` radians (clockwise) about (x, y): a
-   * kart up the wall of the neon tunnel's tube, seen from the floor. */
+   * kart up the wall of the tunnel's tube, seen from the floor. */
   pivot: { x: number; y: number; a: number } | null = null;
 
   /** Where (x, y) goes, turned about the pivot. */

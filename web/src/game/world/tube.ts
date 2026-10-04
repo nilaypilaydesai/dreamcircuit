@@ -1,4 +1,4 @@
-// The neon tunnel's tube. The road runs inside it: a flat floor as wide as any road, walls that
+// The harbor tunnel's tube. The road runs inside it: a flat floor as wide as any road, walls that
 // curve up in half circles to a flat ceiling, the whole way round. A kart's offset (m left of the
 // centerline, as everywhere) is how far round the tube it has gone from the middle of the floor:
 // past the floor's edge it is up a wall, past the wall it is on the ceiling, and on round it

@@ -66,7 +66,7 @@ export class Features {
    * gravity is weaker (the ramp itself is no longer). */
   readonly flight: number;
   private readonly straightFor: number; // m of straight road that earns a jump (room for the flight too)
-  private readonly tube: boolean; // in the neon tunnel's tube: pads go on its walls and ceiling too
+  private readonly tube: boolean; // in the tunnel's tube: pads go on its walls and ceiling too
 
   /** ``rules``: what to build (true/false: the defaults, with or without tunnels). */
   constructor(rules: Partial<FeatureRules> | boolean = {}) {

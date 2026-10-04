@@ -38,7 +38,7 @@ export function bridgeLift(ds: number): number {
   return BRIDGE_HEIGHT * (1 - u * u * (3 - 2 * u));
 }
 
-/** What a climb is built as: an earth embankment (or, in the neon tunnel, the tube rising), a
+/** What a climb is built as: an earth embankment (or, in the tunnel, the tube rising), a
  * concrete foundation, a steel girder (a crane's arm), scaffolding, a crater's rim, a grassy rise
  * in a meadow, a mesa, a sand dune, a ridge of coral, a causeway of basalt, an elevated expressway
  * on concrete piers, or the ramp of a parking garage. */
@@ -292,6 +292,26 @@ export class Track {
       }
     }
     return best;
+  }
+
+  /** The road point that (x, y) is level with: the last one it is not behind, so that it lies
+   * between that point's normal and the next one's. Near the road that is the nearest point or the
+   * one before it; far off it (round the tunnel's tube, on the inside of a bend) the nearest point
+   * can be many points away, and a kart going round over the middle of the tunnel's roof was put
+   * 5 to 20 m on along the tunnel in a frame. */
+  foot(x: number, y: number, hint: number): number {
+    let i = this.nearest(x, y, hint);
+    for (let k = 0; k < 120 && this.along(x, y, i) < 0; k++) {
+      const j = this.wrap(i - 1);
+      if (j === i) break;
+      i = j;
+    }
+    for (let k = 0; k < 120; k++) {
+      const j = this.wrap(i + 1);
+      if (j === i || this.along(x, y, j) < 0) break;
+      i = j;
+    }
+    return i;
   }
 
   /** How far (x, y) is along the road past point i, in m (negative: before it). */

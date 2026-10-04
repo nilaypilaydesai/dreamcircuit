@@ -5,9 +5,13 @@
 
 import type { FallKind } from "../world/hazards";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
-import { TUBE_HALF, TUBE_LOOP_SPEED, TUBE_SQUEEZE, flatStretch, holdSpeed, tubeStretch, wrapTube } from "../world/tube";
+import { TUBE_FLOOR, TUBE_LOOP_SPEED, TUBE_SQUEEZE, flatStretch, holdSpeed, tubeAt, wrapTube } from "../world/tube";
 import type { ItemKind } from "./odds";
 import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "./parts";
+
+/** Up a tunnel's wall or on its roof, how far a kart can turn off the way along it (radians). */
+export const WALL_TURN = Math.PI / 4;
+const turnOf = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a)); // (an angle, wrapped to -pi..pi)
 
 export type Difficulty = "rookie" | "intermediate" | "pro" | "legend";
 
@@ -69,9 +73,12 @@ export class Kart {
   v = 0;
   slip = 0; // visual drift angle
   yawRate = 0;
+  private wallAxis: number | null = null; // up a tunnel's wall: the way along the tube under it last frame
   steer = 0; // smoothed input, also picks the leaning sprite
   idx = 0; // nearest centerline point
   offset = 0;
+  tubeW = 0; // in the tunnel's tube: how far on it is from road point idx to the next (0..1)
+  private tubeFix: { x: number; y: number; idx: number } | null = null; // in the tube: where its place put it, in flat terms
   surface: Surface = "road";
   drifting = false;
   driftDir = 0;
@@ -130,7 +137,7 @@ export class Kart {
   slope = 0; // dz/ds of the road under the kart (set by the race)
   bend = 0; // d2z/ds2 of the road under it: how sharply it crests (< 0) or dips (set by the race)
   walled = false; // in a tunnel, between its walls (set by the race)
-  tube = false; // racing inside the neon tunnel's tube: its offset is how far round the tube it is (world/tube.ts)
+  tube = false; // racing inside the tunnel's tube: its offset is how far round the tube it is (world/tube.ts)
   slipping = false; // in the tube, too slow to hold on where it is: sliding back down the wall
   trick: TrickGrade = 0; // pending: paid out as a boost on landing
   burnout = 0; // s of wheelspin after a too-early start
@@ -216,6 +223,8 @@ export class Kart {
     this.y = track.ys[idx] + tx * lateral;
     this.heading = Math.atan2(ty, tx);
     this.idx = this.safeIdx = idx;
+    this.tubeW = 0;
+    this.tubeFix = null;
     this.v = 0;
     this.ground = this.elev = track.elev[idx] ?? 0;
     this.air = false;
@@ -248,14 +257,10 @@ export class Kart {
       c = { steer: 0, throttle: 0, brake: 0, drift: false };
       if (this.spin <= 0) this.spinAngle = 0;
     }
-    this.idx = track.nearest(this.x, this.y, this.idx);
-    this.offset = track.offset(this.x, this.y, this.idx);
-    if (this.tube && Math.abs(this.offset) > TUBE_HALF) {
-      // round over the middle of the ceiling: on round, from the other edge of the unrolled tube
-      const [tx, ty] = track.tangent(this.idx), d = wrapTube(this.offset) - this.offset;
-      this.x -= ty * d;
-      this.y += tx * d;
-      this.offset += d;
+    if (this.tube) this.fromFlat(track);
+    else {
+      this.idx = track.nearest(this.x, this.y, this.idx);
+      this.offset = track.offset(this.x, this.y, this.idx);
     }
     const a = Math.abs(this.offset);
     this.surface = this.tube ? "road"
@@ -374,23 +379,48 @@ export class Kart {
     }
     const turn = Math.min(1.9 * P.turn, (cls.grip * P.turn) / Math.max(speed, 1)) * yawGain * (this.air ? 0.35 : 1);
     this.yawRate = steerEff * turn * Math.min(1, speed / 3.5) * Math.sign(this.v || 1);
+    // up a wall or on the roof a kart keeps to the way of the tube, give or take: it turns no more
+    // than 45 degrees off it, so a loop is a spiral on down the tube; and let go of the steering
+    // and it straightens out along the tube, riding the wall (free to turn, a kart drove straight
+    // round and round the tube, seen side on, with the whole tube spinning past it)
+    const onWall = this.tube && !this.air && Math.abs(this.offset) > TUBE_FLOOR;
+    let way = 0; // (the way along the tube nearer the kart's own: backward, for a kart going the wrong way)
+    if (onWall) {
+      const [tx, ty] = track.tangent(this.idx), axis = Math.atan2(ty, tx);
+      // the wall carries it round the tube's bends (left to go straight on, it would turn off its
+      // way up or down the wall as the tube bent away under it)
+      const bent = this.wallAxis === null ? 0 : turnOf(axis - this.wallAxis);
+      if (Math.abs(bent) < 0.3) this.heading += bent;
+      this.wallAxis = axis;
+      way = axis + (Math.abs(turnOf(this.heading - axis)) > Math.PI / 2 ? Math.PI : 0);
+      const rel = turnOf(this.heading - way);
+      if (Math.abs(rel) >= WALL_TURN && Math.sign(this.yawRate) === Math.sign(rel)) this.yawRate = 0;
+    }
     this.heading += this.yawRate * dt;
+    if (onWall) {
+      let rel = turnOf(this.heading - way);
+      if (Math.abs(c.steer) < 0.15) rel *= Math.exp(-dt * 1.6);
+      // (came up off the floor further round than that: turned in to it, quickly but not at a snap)
+      const over = Math.abs(rel) - WALL_TURN;
+      if (over > 0) rel = Math.sign(rel) * (WALL_TURN + Math.max(0, over * Math.exp(-dt * 8) - dt * 0.6));
+      this.heading += turnOf(way + rel - this.heading);
+    } else this.wallAxis = null;
     const slipTarget = this.drifting ? this.driftDir * 0.32 : 0;
     this.slip += (slipTarget - this.slip) * Math.min(1, dt * 6);
     const dir = this.heading - this.slip * 0.55;
     let vx = Math.cos(dir) * this.v, vy = Math.sin(dir) * this.v;
     if (this.tube) {
-      // round the tube, along the road at the tube's own measure: up a wall or over the ceiling on
-      // a bend, the flat terms the race runs in stretch the road's length (world/tube.ts)
-      const m = tubeStretch(track, this.idx, this.offset);
-      if (m !== 1) {
-        const [tx, ty] = track.tangent(this.idx), along = (vx * tx + vy * ty) * (m - 1);
-        vx += tx * along;
-        vy += ty * along;
-      }
+      // round the tube it moves in the tube's own terms, how far along the road and how far round,
+      // and along the road at the tube's own measure (up a wall or over the roof on a bend, the
+      // flat terms stretch the road's length away from its middle, round the outside, and squeeze
+      // it round the inside, where high up they fold over themselves: moved in them, a kart sped
+      // up and slowed to a crawl through every bend, and jumped about the tube, 5 to 40 m in a frame)
+      const [tx, ty] = track.tangent(this.idx), real = flatStretch(track, this.idx, tubeAt(this.offset).lat);
+      this.moveInTube(track, ((vx * tx + vy * ty) / Math.max(0.2, real)) * dt, (vy * tx - vx * ty) * dt);
+    } else {
+      this.x += vx * dt;
+      this.y += vy * dt;
     }
-    this.x += vx * dt;
-    this.y += vy * dt;
 
     // in the tube, too slow for where it is on the wall: it slides back down toward the floor (fast
     // off the upper half, where it peels off)
@@ -401,9 +431,7 @@ export class Kart {
       this.slipping = (need > 0 && speed < need) || squeezed;
       if (this.slipping) {
         const upper = need >= TUBE_LOOP_SPEED, slide = (upper ? 9 : 3) + Math.max(0, need - speed) * (upper ? 0.6 : 0.5);
-        const [tx, ty] = track.tangent(this.idx), d = -Math.sign(this.offset) * Math.min(slide * dt, Math.abs(this.offset));
-        this.x -= ty * d;
-        this.y += tx * d;
+        this.moveInTube(track, 0, -Math.sign(this.offset) * Math.min(slide * dt, Math.abs(this.offset)));
       }
     }
     // soft outer fence
@@ -416,6 +444,50 @@ export class Kart {
     }
     if (this.bumpTime > 0) this.bumpTime -= dt;
     return { boosted, landed };
+  }
+
+  /** In the tunnel's tube a kart's place is how far along the road it is (its road point and how
+   * far on to the next) and how far round the tube (its offset): it moves in those terms, and its
+   * place in the race's flat terms, which the rest of the race goes by, follows from them. (The
+   * flat terms are no way to tell where a kart is up a wall or on the roof: round the inside of a
+   * tight bend they fold over themselves, the same flat place for meters of tube.) */
+  private moveInTube(track: Track, along: number, round: number): void {
+    const q = track.stepAlong(this.idx, this.tubeW * track.between(this.idx, track.wrap(this.idx + 1)) + along);
+    this.idx = q.i;
+    this.tubeW = q.w;
+    // (round over the middle of the roof: on round, from the other edge of the unrolled tube, at
+    // the same place along it; moved straight across in flat terms, a kart came out up to 20 m on)
+    this.offset = wrapTube(this.offset + round);
+    const i = this.idx, j = track.wrap(i + 1), u = this.offset, w = this.tubeW;
+    const [ax, ay] = track.tangent(i), [bx, by] = track.tangent(j);
+    const x0 = track.xs[i] - ay * u, y0 = track.ys[i] + ax * u;
+    this.x = x0 + (track.xs[j] - by * u - x0) * w;
+    this.y = y0 + (track.ys[j] + bx * u - y0) * w;
+    this.tubeFix = { x: this.x, y: this.y, idx: i };
+  }
+
+  /** In the tube, after anything else has moved the kart in the race's flat terms: a nudge (a
+   * bump, a shove) moves its place round the tube as far; put somewhere new, it is found there. */
+  private fromFlat(track: Track): void {
+    const f = this.tubeFix;
+    if (f && f.idx === this.idx && f.x === this.x && f.y === this.y) return; // (where it was put)
+    const dx = this.x - (f?.x ?? 0), dy = this.y - (f?.y ?? 0);
+    if (f && f.idx === this.idx && Math.hypot(dx, dy) < 4) {
+      const [tx, ty] = track.tangent(this.idx), m = Math.max(TUBE_SQUEEZE, flatStretch(track, this.idx, this.offset));
+      this.moveInTube(track, (dx * tx + dy * ty) / m, dy * tx - dx * ty);
+      return;
+    }
+    const i = track.foot(this.x, this.y, this.idx), u = track.offset(this.x, this.y, i), j = track.wrap(i + 1);
+    let w = 0;
+    if (j !== i) {
+      const [ax, ay] = track.tangent(i), [bx, by] = track.tangent(j);
+      const span = Math.hypot(track.xs[j] - by * u - (track.xs[i] - ay * u), track.ys[j] + bx * u - (track.ys[i] + ax * u));
+      w = Math.max(0, Math.min(1, track.along(this.x, this.y, i) / (span || SPACING)));
+    }
+    this.idx = i;
+    this.tubeW = w;
+    this.offset = u;
+    this.moveInTube(track, 0, 0);
   }
 
   /** In the lava: sink, then (in the dark) out at the last road point the kart was on, hanging
@@ -473,6 +545,10 @@ export class Kart {
     const [tx, ty] = track.tangent(this.idx);
     this.x = track.xs[this.idx] - ty * this.offset;
     this.y = track.ys[this.idx] + tx * this.offset;
+    if (this.tube) { // (its place round the tube: at the road point, as far round)
+      this.tubeW = 0;
+      this.tubeFix = { x: this.x, y: this.y, idx: this.idx };
+    }
     const d = Math.atan2(Math.sin(Math.atan2(ty, tx) - this.heading), Math.cos(Math.atan2(ty, tx) - this.heading));
     this.heading += d * Math.min(1, dt * 10);
     this.steer += (Math.max(-1, Math.min(1, d * 4)) - this.steer) * Math.min(1, dt * 9);

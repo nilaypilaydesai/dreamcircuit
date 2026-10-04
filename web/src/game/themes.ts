@@ -81,16 +81,19 @@ export const THEMES: Theme[] = [
     banks: { style: "grass", len: [50, 110], h: [3.5, 6.5], gap: [120, 260], both: 0.35 },
   },
   {
-    // the neon tunnel: the whole race inside a tube of light (world/tube.ts). Ride up its walls,
-    // and fast enough right round over its ceiling; boost pads on the walls and the ceiling;
-    // traffic on the floor to weave through or ride the walls past. Its circuits are drawn bigger,
-    // and dreamed calmer, so the bends are wide enough to drive round the inside of
-    id: "neon", name: "NEON TUNNEL", blurb: "A TUBE OF LIGHT: RIDE THE WALLS, LOOP THE CEILING, PASS THE TRAFFIC",
-    skyTop: hex("#0b0420"), skyHorizon: hex("#6d1b7b"), fog: hex("#2a0838"), sun: 0, stars: false,
-    farHills: hex("#2a0f4a"), nearHills: hex("#16082e"), clouds: 0,
-    ground: [hex("#1c0f3a"), hex("#25144b")], groundSpeck: hex("#24123f"),
-    shoulder: hex("#2b1748"), road: hex("#15121f"), roadSpeck: hex("#2b2938"),
-    edge: hex("#2de2e6"), kerb: [hex("#ff2bd6"), hex("#2de2e6")], barrier: hex("#ff2bd6"),
+    // a road tunnel under a harbor, as they are built: the whole race inside it (world/tube.ts), an
+    // asphalt road in three lanes between concrete walkways, walls faced with pale tiles to head
+    // height and bare concrete above and over the roof, a row of lights along the roof (render/
+    // tube.ts). Ride up its walls, and fast enough right round over its roof; boost pads on the
+    // walls and the roof; traffic in the lanes to weave through or ride the walls past. Its
+    // circuits are drawn bigger, and dreamed calmer, so the bends are wide enough to drive round
+    // the inside of
+    id: "tunnel", name: "HARBOR TUNNEL", blurb: "UNDER THE HARBOR: RIDE THE WALLS, LOOP THE ROOF, PASS THE TRAFFIC",
+    skyTop: hex("#101114"), skyHorizon: hex("#26272b"), fog: hex("#121317"), sun: 0, stars: false,
+    farHills: hex("#1c1d21"), nearHills: hex("#141518"), clouds: 0,
+    ground: [hex("#5d5f63"), hex("#55575b")], groundSpeck: hex("#4c4e52"),
+    shoulder: hex("#7d7d78"), road: hex("#3a3c41"), roadSpeck: hex("#45474c"),
+    edge: hex("#e9e8e1"), kerb: [hex("#d6d2c4"), hex("#2a2c30")], barrier: hex("#7d7d78"),
     near: [], far: [],
     tube: true, smooth: true, scale: 1.6, hills: TUBE_HILLS, hillStyle: "earth", obstacle: "traffic",
   },

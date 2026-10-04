@@ -234,10 +234,19 @@ export class Race {
       this.features.pads = this.features.pads.filter((pd) =>
         Math.abs(pd.s0 - under) > UNDER_CLEAR && Math.abs(pd.s0 - b.centerS) > BRIDGE_CLEAR);
       // and a climb where the bridge, or the road under it, goes would leave no headroom: flatten it
-      for (const [s0, s1] of [[b.centerS - BRIDGE_CLEAR, b.centerS + BRIDGE_CLEAR], [under - UNDER_CLEAR, under + UNDER_CLEAR]]) {
+      // (and bring the item boxes and coins on it down with it: left where they were, they hung in
+      // the air over the flattened road); a cutting's walls there, or anything standing beside the
+      // road or coming in from its side (a cow, an alley, a crane's mast, a vent), would stand
+      // through the deck
+      const cleared = [[b.centerS - BRIDGE_CLEAR, b.centerS + BRIDGE_CLEAR], [under - UNDER_CLEAR, under + UNDER_CLEAR]];
+      for (const [s0, s1] of cleared) {
         const r = t.removeHills(s0, s1);
         if (r) this.tex.repaint(t, r[0], r[1]);
       }
+      this.items.relift(t);
+      const there = (s0: number, s1: number) => cleared.some(([a, z]) => s0 < z && s1 > a);
+      this.features.banks = this.features.banks.filter((bk) => !there(bk.s0, bk.s0 + bk.len));
+      this.obstacles.clearWhere((s) => there(s - 10, s + 10));
       this.events.push({ kind: "bridge" });
     }
     // climbs, decided once the road a stretch past them is known and its jumps are placed (a
@@ -447,9 +456,11 @@ export class Race {
     return added;
   }
 
-  /** A bridge's approach ramp was lifted after it had been painted as ground road. */
+  /** A bridge's approach ramp was lifted after it had been painted as ground road (and the item boxes
+   * and coins on it go up with it: left on the ground, they were buried in the ramp). */
   private onRaise(from: number, to: number): void {
     this.tex.repaint(this.track, from, to);
+    this.items.relift(this.track);
   }
 
   /** The style asked of arc ``arc``: the track type's program, given what the driving asks for. */
@@ -462,7 +473,7 @@ export class Race {
   styleWanted(): number {
     const d = this.driving;
     // Legend leans wild and Rookie calm (Intermediate a little calm); Tokyo's streets wind more, and
-    // the neon tunnel's bends are wide (to drive round the inside of the tube)
+    // the tunnel's bends are wide (to drive round the inside of the tube)
     const bias = { rookie: -0.1, intermediate: -0.05, pro: 0, legend: 0.1 }[this.setup.difficulty] +
       (this.setup.theme.winding ? 0.12 : 0) + (this.setup.theme.smooth ? -0.22 : 0);
     // (centred a little calm: dreamed laps had too many hairpins)

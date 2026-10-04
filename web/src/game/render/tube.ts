@@ -1,11 +1,14 @@
-// The neon tunnel, drawn: the tube round the road (world/tube.ts) as rings of panels, a dark floor
-// with a dashed middle line, walls and ceiling in panels of deep violet, glowing strips along the
-// floor's edges, the middle of each wall and the ceiling's edges, rings of light every few meters
-// sweeping past (fading as they near the camera), the start line's checks on the floor, and boost
-// pads wherever they lie round the tube (the floor, a wall, the ceiling). Only the stretch of tube
-// ahead of the camera is drawn, and where the circuit crosses itself the other stretch is left out
-// (from inside the tube it is never seen, and drawn it would show through the walls). Everything is
-// placed between road points where it lies, not snapped to the nearest one.
+// The harbor tunnel, drawn as road tunnels are built: the tube round the road (world/tube.ts) as
+// rings of panels in sections of lining, an asphalt road in three lanes with white edge lines,
+// dashed lane lines and amber cat's eyes, a concrete walkway along each side, the walls faced with
+// pale tiles to head height under a dark cable tray and bare concrete above, a concrete roof with
+// a row of lights down its middle (each throwing a pool of light on the road below), lane signals
+// on the roof and green emergency-phone niches in the right-hand wall now and then, the start
+// line's checks on the road, and boost pads wherever they lie round the tube (the road, a wall,
+// the roof). Only the stretch of tube ahead of the camera is drawn, and where the circuit crosses
+// itself the other stretch is left out (from inside the tube it is never seen, and drawn it would
+// show through the walls). Everything is placed between road points where it lies, not snapped
+// to the nearest one.
 
 import { hex, mix, shade } from "../core/gfx";
 import { PAD_HALF, PAD_LEN, type Features } from "../race/features";
@@ -14,25 +17,33 @@ import { SPACING, type Track } from "../world/track";
 import { TUBE_FLOOR, TUBE_HALF, TUBE_R, TUBE_ROUND, tubeAt, wrapTube } from "../world/tube";
 import { type P3, type Painter, face } from "./poly";
 
-const WALL_END = TUBE_FLOOR + Math.PI * TUBE_R;
-const MID_WALL = TUBE_FLOOR + (Math.PI * TUBE_R) / 2;
-/** The ring's corners, m round the tube from the floor's middle (rising past TUBE_HALF: on round). */
+const ARC = Math.PI * TUBE_R; // m round each wall, from the road's edge to the roof
+const WALL_END = TUBE_FLOOR + ARC;
+const WALK = 0.7; // m of walkway along each side of the road
+const EDGE = TUBE_FLOOR - WALK - 0.3; // m from the middle to each edge line
+const LANE = 1.9; // m from the middle to each lane line (three lanes)
+const TILED = 2; // of each wall's six facets, how many from the walkway up are tiled
+const TILE_TOP = TUBE_FLOOR + (TILED / 6) * ARC;
+/** How far round from the road's middle the roof is right over a point ``lat`` m left of it. */
+const roofOver = (lat: number) => (lat >= 0 ? 1 : -1) * (WALL_END + TUBE_FLOOR - Math.abs(lat));
+/** The ring's corners, m round the tube from the road's middle (rising past TUBE_HALF: on round). */
 const RING: number[] = (() => {
-  const half = [0, TUBE_FLOOR / 2, TUBE_FLOOR];
-  for (let k = 1; k <= 6; k++) half.push(TUBE_FLOOR + (k / 6) * Math.PI * TUBE_R);
+  const half = [0, 2, TUBE_FLOOR - WALK, TUBE_FLOOR];
+  for (let k = 1; k <= 6; k++) half.push(TUBE_FLOOR + (k / 6) * ARC);
   half.push((WALL_END + TUBE_HALF) / 2, TUBE_HALF);
   const back = half.slice(0, -1).reverse().map((u) => TUBE_ROUND - u); // down the other side, round to the start
   return [...half, ...back];
 })();
-const RING_GAP = 10.8; // m between rings of light
-const SEEN = 230; // m of tube drawn ahead of the camera
+const LAMP = hex("#fff2cc"), EYE = hex("#ffb52e"), SIGNAL = hex("#141518"), ARROW = hex("#3be27a");
+const NICHE = hex("#1d7a3d"), PHONE = hex("#f2f2ec");
+const SEEN = 260; // m of tube drawn ahead of the camera (past the far plane, where the fog is whole: drawn
+// short of it, the far end of a straight showed as a dark disc with an edge)
 // (the panels are the backdrop to all else in the tube: sorted 7 m deeper than they are, so a
-// panel goes down before a kart, a pad or a strip of light lying on it, even one the length of a
-// pad; anything a bend's wall really hides is much further behind it than that)
+// panel goes down before a kart, a pad or a line lying on it, even one the length of a pad;
+// anything a bend's wall really hides is much further behind it than that)
 const BACKDROP = 7;
-// (the strips of light, the dashes and the rings lying on the panels: sorted 2 m nearer than the
-// panels, so one never swaps places with the panel under it as the camera moves; a tenth of a
-// meter apart, a strip along the floor's edge blinked as the wall's panel beside it went over it)
+// (the lines, lights and signs lying on the panels: a tenth of a meter nearer; a margin of 2 m let
+// lines on a far wall show through the nearer wall of a bend)
 const MARKS = BACKDROP - 0.1;
 
 /** Where the point ``u`` m round the tube at road point i is, ``h`` m in off its surface, and how
@@ -72,7 +83,7 @@ export function tubeBetween(track: Track, i: number, w: number, u: number, h = 0
  * tube shook as it moved). The road point before it and how far on from it (``w``), its arc
  * length, and how far round the tube it is. */
 export function tubePlace(track: Track, x: number, y: number, hint: number): { i: number; w: number; s: number; u: number } {
-  const i = track.nearest(x, y, hint), u = track.offset(x, y, i), a = track.along(x, y, i);
+  const i = track.foot(x, y, hint), u = track.offset(x, y, i), a = track.along(x, y, i);
   const j = track.wrap(a >= 0 ? i + 1 : i - 1);
   let lo = i, w = 0;
   if (j !== i) {
@@ -85,6 +96,21 @@ export function tubePlace(track: Track, x: number, y: number, hint: number): { i
     else { lo = j; w = 1 - f; }
   }
   return { i: lo, w, s: wrapS(track, track.s[lo] + w * track.between(lo, track.wrap(lo + 1))), u };
+}
+
+/** Where a kart is round the tube, by its own place (its road point, how far on, how far round;
+ * race/kart.ts), as tubePlace says where a point of the flat terms is. */
+export function kartPlace(track: Track, k: { idx: number; tubeW: number; offset: number }): { i: number; w: number; s: number; u: number } {
+  return { i: k.idx, w: k.tubeW, s: wrapS(track, track.s[k.idx] + k.tubeW * track.between(k.idx, track.wrap(k.idx + 1))), u: k.offset };
+}
+
+/** Which way a camera ``s`` m along the road and ``u`` m round the tube sees kart ``k`` from, as an
+ * angle in the race's flat terms (as the kart's heading is), worked out round the tube: from
+ * where the camera is in flat terms, a kart crossing the middle of the roof on a bend was seen
+ * from the wrong side for a frame (behind the camera, round the inside, the flat terms fold over). */
+export function tubeView(track: Track, s: number, u: number, k: { idx: number; tubeW: number; offset: number }): number {
+  const q = kartPlace(track, k), [tx, ty] = track.tangent(q.i);
+  return Math.atan2(ty, tx) + Math.atan2(wrapTube(q.u - u), around(track, s, q.s));
 }
 
 /** The road's height ``w`` of the way on from road point i. */
@@ -121,16 +147,25 @@ const unit = (v: P3): P3 => {
 };
 
 /** Arc lengths around which the tube is not drawn while the camera is at ``s``: the other pass of
- * each crossing the camera is near. */
+ * each crossing within sight (only within 140 m of it, the two tubes were drawn cutting through
+ * each other further off, up to the far end of the tube drawn). */
 function hidden(track: Track, s: number): [number, number][] {
   const out: [number, number][] = [];
-  const near = (a: number) => Math.abs(around(track, s, a)) < 140;
+  // (the pass the camera is not on, as far off as the tube is drawn; deciding by which pass it is
+  // nearer to along the road, so it never leaves out the road ahead of it, the other pass's turn)
   for (const b of track.bridges) {
-    const lo = track.s[b.lower], hi = b.centerS;
-    if (near(lo)) out.push([hi - 48, hi + 48]);
-    if (near(hi)) out.push([lo - 48, lo + 48]);
+    const lo = track.s[b.lower], hi = b.centerS, dLo = Math.abs(around(track, s, lo)), dHi = Math.abs(around(track, s, hi));
+    if (dLo <= dHi && dLo < SEEN + 50) out.push([hi - 48, hi + 48]);
+    if (dHi < dLo && dHi < SEEN + 50) out.push([lo - 48, lo + 48]);
   }
   return out;
+}
+
+/** Whether arc length ``s`` lies in the tube left out while the camera is at ``s0`` (what is there,
+ * a kart, a box, is not drawn either: it would hang in the camera's own tube). */
+export function tubeHides(track: Track, s0: number): (s: number) => boolean {
+  const skip = hidden(track, s0);
+  return (s) => skip.some(([a, b]) => around(track, a, s) >= 0 && around(track, s, b) >= 0);
 }
 
 /** m from arc length ``a`` forward to ``b`` (around a locked lap, either way). */
@@ -141,19 +176,21 @@ function around(track: Track, a: number, b: number): number {
 }
 
 /** The tube around road point ``from`` (where the camera is), drawn the way the camera looks: on up
- * the road, or (``back``, the rear-view mirror, a drone looking back at the grid) back down it. */
-export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, f: Features, now: number, back = false): void {
+ * the road, or (``back``, the rear-view mirror, a drone looking back at the grid) back down it; and
+ * ``behind`` road points the other way (more for a camera looking across the tube). */
+export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, f: Features, now: number, back = false,
+                          behind = 20): void {
   if (track.count < 2) return;
   const s0 = track.s[from], dir = back ? -1 : 1;
   const skip = hidden(track, s0);
   const out = (s: number) => skip.some(([a, b]) => around(track, a, s) >= 0 && around(track, s, b) >= 0);
-  const panel = [theme.ground[0], theme.ground[1]], floor = theme.road, ceiling = shade(theme.ground[1], 0.78);
-  const ringCols = [theme.kerb[0], theme.kerb[1]], strip = theme.edge, line = mix(theme.edge, hex("#ffffff"), 0.5);
+  const road = theme.road, walkway = theme.shoulder, concrete = theme.ground, tile = theme.kerb[0], tray = theme.kerb[1];
+  const roof = shade(theme.ground[1], 0.88), line = theme.edge;
   // pieces on a grid of road points (3 long near the camera, 6 further off, 12 far off), each
-  // starting at a whole multiple of its length, and shaded in bands 12 road points long, so a
-  // piece's edges and its shade stay put as the camera moves through (laid from wherever the camera
-  // was, they slid along with it, and the floor's checks and the rings of light shimmered)
-  let i = track.wrap(from - dir * 20);
+  // starting at a whole multiple of its length, and shaded in sections of lining 12 road points
+  // long, so a piece's edges and its shade stay put as the camera moves through (laid from
+  // wherever the camera was, they slid along with it and shimmered)
+  let i = track.wrap(from - dir * behind);
   for (let guard = 0; guard < 2000; guard++) {
     const ahead = dir * around(track, s0, track.s[i]);
     if (ahead > SEEN) break;
@@ -171,33 +208,36 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
   startLine(p, track, s0);
 
   function piece(i: number, j: number, ahead: number): void {
-    const band = Math.floor(i / 12) & 1;
+    const section = Math.floor(i / 12) & 1;
     for (let k = 0; k < RING.length - 1; k++) {
       const u0 = RING[k], u1 = RING[k + 1], um = (u0 + u1) / 2, a = Math.abs(wrapTube(um));
-      const color = a <= TUBE_FLOOR ? shade(floor, band ? 1 : 1.07)
-        : a >= WALL_END ? shade(ceiling, (k + band) & 1 ? 1 : 1.1)
-        : shade(panel[k & 1], band ? 1 : 1.06);
+      const color = a < TUBE_FLOOR - WALK ? shade(road, section ? 1 : 1.04)
+        : a < TUBE_FLOOR ? walkway
+        : a < TILE_TOP ? shade(tile, section ? 1 : 0.95)
+        : a < WALL_END ? concrete[section]
+        : shade(roof, section ? 1 : 1.06);
       face(p, [tubePoint(track, i, u0).p, tubePoint(track, j, u0).p, tubePoint(track, j, u1).p, tubePoint(track, i, u1).p],
            color, normalAt(track, i, um), BACKDROP);
     }
     if (ahead > 140) return;
-    // glowing strips along the floor's edges, the middle of each wall and the ceiling's edges
-    for (const [u, w, c] of [[TUBE_FLOOR, 0.16, strip], [-TUBE_FLOOR, 0.16, strip], [MID_WALL, 0.2, ringCols[0]],
-                             [-MID_WALL, 0.2, ringCols[0]], [WALL_END, 0.16, ringCols[1]], [-WALL_END, 0.16, ringCols[1]]]) {
+    // the edge lines, and the cable tray along the top of the tiles
+    for (const [u, w, c] of [[EDGE, 0.08, line], [-EDGE, 0.08, line], [TILE_TOP, 0.12, tray], [-TILE_TOP, 0.12, tray]]) {
       face(p, [tubePoint(track, i, u - w, 0.02).p, tubePoint(track, j, u - w, 0.02).p, tubePoint(track, j, u + w, 0.02).p,
                tubePoint(track, i, u + w, 0.02).p], c, normalAt(track, i, u), MARKS);
     }
   }
 
-  /** The middle line's dashes and the rings of light, each where it falls along the road (drawn
+  /** The lane lines' dashes, the cat's eyes, the lights down the roof (and the pools of light they
+   * throw), the lane signals and the emergency niches, each where it falls along the road (drawn
    * with whichever piece they fell in, they jumped about as the pieces did). */
   function marks(): void {
+    const rear = behind * 0.6; // (m)
     const near = (s: number) => {
       const d = dir * around(track, s0, s);
-      return d > -12 && d < 140 && !out(s);
+      return d > -rear && d < 140 && !out(s);
     };
     const at = (s: number) => track.stepAlong(from, around(track, s0, s));
-    const lo = dir > 0 ? s0 - 12 : s0 - 140, hi = dir > 0 ? s0 + 140 : s0 + 12;
+    const lo = dir > 0 ? s0 - rear : s0 - 140, hi = dir > 0 ? s0 + 140 : s0 + rear;
     /** Every ``period`` m from the lap's first road point, in [lo, hi] (on a locked lap, counted
      * afresh each lap round, so a mark near the line is the same mark from either side of it). */
     const each = (period: number, fn: (s: number, k: number) => void) => {
@@ -210,26 +250,45 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
         }
       }
     };
-    each(3.6, (sa) => {
+    /** A patch on the tube from ``s`` for ``len`` m, ``u0`` to ``u1`` round it, ``h`` m off it. */
+    const patch = (s: number, len: number, u0: number, u1: number, c: number, h = 0.02, alpha = 1, bias = MARKS) => {
+      const a = at(s), b = at(wrapS(track, s + len)), n = normalAt(track, a.i, (u0 + u1) / 2);
+      face(p, [tubeBetween(track, a.i, a.w, u0, h).p, tubeBetween(track, b.i, b.w, u0, h).p,
+               tubeBetween(track, b.i, b.w, u1, h).p, tubeBetween(track, a.i, a.w, u1, h).p], c, n, bias, alpha);
+    };
+    // dashed lane lines, 3 m on and 9 m off, and cat's eyes along the edge lines
+    each(12, (sa) => {
       if (!near(sa)) return;
-      const a = at(sa), b = at(wrapS(track, sa + 1.8)), n = normalAt(track, a.i, 0);
-      face(p, [tubeBetween(track, a.i, a.w, -0.12, 0.02).p, tubeBetween(track, b.i, b.w, -0.12, 0.02).p,
-               tubeBetween(track, b.i, b.w, 0.12, 0.02).p, tubeBetween(track, a.i, a.w, 0.12, 0.02).p], line, n, MARKS);
+      for (const u of [-LANE, LANE]) patch(sa, 3, u - 0.07, u + 0.07, line);
     });
-    each(RING_GAP, (sr, r) => {
-      if (!near(sr)) return;
-      // (fading out as it comes within a few meters of the camera: that close, a ring half a meter
-      // deep swept across half the screen in a frame or two, a flash rather than a ring going by)
-      const fade = Math.min(1, Math.max(0, (dir * around(track, s0, sr) - 8) / 8));
-      if (fade <= 0) return;
-      const a = at(sr), b = at(wrapS(track, sr + 0.9));
-      const c = shade(ringCols[r & 1], 0.85 + 0.15 * Math.sin(now * 4 + r));
-      for (let k = 0; k < RING.length - 1; k++) {
-        const u0 = RING[k], u1 = RING[k + 1];
-        face(p, [tubeBetween(track, a.i, a.w, u0, 0.03).p, tubeBetween(track, b.i, b.w, u0, 0.03).p,
-                 tubeBetween(track, b.i, b.w, u1, 0.03).p, tubeBetween(track, a.i, a.w, u1, 0.03).p],
-             c, normalAt(track, a.i, (u0 + u1) / 2), MARKS - 0.05, fade);
+    each(6, (sa) => {
+      if (!near(sa)) return;
+      for (const u of [-(EDGE - 0.25), EDGE - 0.25]) patch(sa, 0.16, u - 0.08, u + 0.08, EYE, 0.03);
+    });
+    // a light every 4.5 m down the middle of the roof, a glow round it, and its pool on the road
+    each(4.5, (sl) => {
+      if (!near(sl)) return;
+      patch(sl - 1.6, 3.2, -4.6, 4.6, LAMP, 0.01, 0.07, MARKS + 0.02); // the pool of light on the road
+      patch(sl - 1.2, 2.4, TUBE_HALF - 1.2, TUBE_HALF + 1.2, LAMP, 0.01, 0.22, MARKS + 0.01);
+      patch(sl - 0.6, 1.2, TUBE_HALF - 0.28, TUBE_HALF + 0.28, LAMP, 0.03);
+    });
+    // lane signals on the roof over each lane, a green arrow on each: every lane open
+    each(160, (sg) => {
+      if (!near(sg)) return;
+      for (const lat of [-3.8, 0, 3.8]) {
+        const u = lat === 0 ? TUBE_HALF : roofOver(lat);
+        patch(sg - 0.45, 0.9, u - 0.45, u + 0.45, SIGNAL, 0.02);
+        const a = at(sg - 0.3), b = at(sg + 0.3), nm = normalAt(track, a.i, u);
+        face(p, [tubeBetween(track, a.i, a.w, u - 0.3, 0.03).p, tubeBetween(track, b.i, b.w, u, 0.03).p,
+                 tubeBetween(track, a.i, a.w, u + 0.3, 0.03).p], ARROW, nm, MARKS - 0.01);
       }
+    });
+    // an emergency phone in a green niche in the right-hand wall every 96 m
+    each(96, (sn) => {
+      if (!near(sn)) return;
+      const u0 = -(TUBE_FLOOR + 0.25 * (ARC / 6)), u1 = -(TUBE_FLOOR + 1.6 * (ARC / 6));
+      patch(sn, 1.4, u1, u0, NICHE, 0.02);
+      patch(sn + 0.5, 0.4, -(TUBE_FLOOR + 1.05 * (ARC / 6)), -(TUBE_FLOOR + 0.75 * (ARC / 6)), PHONE, 0.03, 1, MARKS - 0.01);
     });
   }
 }

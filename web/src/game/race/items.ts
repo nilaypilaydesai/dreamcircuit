@@ -133,8 +133,10 @@ export function rocketPasses(place: number): number {
 export interface ItemBox { x: number; y: number; elev: number; respawn: number; idx: number }
 export interface CoinSpot { x: number; y: number; elev: number; respawn: number; idx: number }
 /** An oil slick: where it lies, how high (the road under the kart that dropped it), and the road
- * point it was dropped from (where to look for the road under it, on a deck over another road). */
-export interface Slick { x: number; y: number; elev: number; idx: number; ttl: number; owner: Kart; armed: number }
+ * point it was dropped from (where to look for the road under it, on a deck over another road);
+ * and the road's height at that point when it was last seen (``road``), so that it goes up or down
+ * with the road (relift). */
+export interface Slick { x: number; y: number; elev: number; idx: number; ttl: number; owner: Kart; armed: number; road?: number }
 export interface Orb {
   idx: number; carry: number; x: number; y: number; offset: number; v: number; ttl: number;
   owner: Kart; target: Kart | null;
@@ -233,10 +235,16 @@ export class Items {
     }
   }
 
-  /** The road under some boxes was lifted (a climb added when the lap locked): they ride on it. */
+  /** The road was lifted or lowered (a climb added or flattened, a bridge built): the boxes, coins
+   * and oil on it go with it (left where they were, they hung in the air or sank into it). */
   relift(track: Track): void {
     for (const b of this.boxes) b.elev = track.elev[b.idx] ?? b.elev;
     for (const c of this.coins) c.elev = track.elev[c.idx] ?? c.elev;
+    for (const sl of this.slicks) {
+      const now = track.elev[sl.idx] ?? 0;
+      sl.elev += now - (sl.road ?? now);
+      sl.road = now;
+    }
   }
 
   /** Give ``k`` an item (a box, a phantom's theft, or a test). */
@@ -593,6 +601,7 @@ export class Items {
 
   update(dt: number, track: Track, karts: Kart[], field: Field): void {
     for (const [i, t] of this.cooldown) this.cooldown.set(i, t - dt);
+    for (const sl of this.slicks) sl.road ??= track.elev[sl.idx] ?? 0; // (the road under a new slick)
     this.updateBoxes(dt, karts, field);
     this.updateKarts(dt, karts);
     this.updateSlicks(dt, karts);

@@ -2,7 +2,7 @@
 // valley, tumbleweeds blowing across the mesa, jellyfish drifting over the reef road, police cars
 // pulling out of the alleys in Tokyo to chase the player down, lava geysers bursting up through
 // the volcano's road, a wrecking ball swinging across the building site, meteors falling on the
-// moon (a ring on the road where each will land), and traffic in the neon tunnel. Pure logic:
+// moon (a ring on the road where each will land), and traffic in the tunnel. Pure logic:
 // where each one is, when it can hit and what a hit does; main.ts draws them, and rivals steer
 // round them (dangers()).
 
@@ -74,6 +74,16 @@ export class Obstacles {
   wallAt: ((s: number, side: number) => boolean) | null = null;
 
   constructor(readonly kind: ObstacleKind | null, private readonly rng: Rand) {}
+
+  /** Take away what was set out where ``gone(s)`` says (road a new bridge carries or passes over). */
+  clearWhere(gone: (s: number) => boolean): void {
+    this.list = this.list.filter((o) => {
+      const go = GROUNDED.has(o.kind) || o.kind === "jelly" ? gone(o.s) : false;
+      if (go && o.kind === "wrecker") this.wreckers -= 1;
+      return !go;
+    });
+    for (let k = this.sites.length - 1; k >= 0; k--) if (gone(this.sites[k].s)) this.sites.splice(k, 1);
+  }
 
   /** Set out sites on road up to ``upto`` (whose climbs are decided). ``free(s, len)``: the road
    * there has no bridge, jump, tunnel, item row or start on it. */

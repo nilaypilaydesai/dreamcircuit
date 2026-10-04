@@ -43,7 +43,7 @@ export const SONGS: Record<string, Song> = {
     arp: 8,
     drums: { kick: "x...x...x...x...", snare: "....x.......x...", hat: "x.x.x.x.x.x.x.x." },
   },
-  neon: {
+  tunnel: {
     bpm: 128,
     chords: ["Am", "F", "C", "G"],
     lead: [

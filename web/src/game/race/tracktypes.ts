@@ -78,7 +78,7 @@ export const VALLEY_HILLS: HillRule = {
   len: [100, 160], h: [2.5, 4.5], gap: [60, 120], segs: [24, 186],
   kinds: [{ style: "meadow", shape: "sine", len: [100, 160], h: [2.5, 4.5] }],
 };
-/** The neon tunnel's: the tube rising and dipping as it runs. */
+/** The harbor tunnel's: the tube rising and dipping as it runs. */
 export const TUBE_HILLS: HillRule = {
   len: [90, 150], h: [3, 5.5], gap: [60, 120], segs: [24, 186],
   kinds: [{ style: "earth", shape: "sine", len: [90, 150], h: [3, 5.5] }],

@@ -12,7 +12,7 @@ import {
 import { ROCKET_GAP, type Standing, itemOdds, pickItem, tierOf } from "../src/game/race/odds";
 import { heldArt, itemIcons } from "../src/game/render/sprites";
 import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
-import { CLASSES, COIN_SPEED, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, collideKarts } from "../src/game/race/kart";
+import { CLASSES, COIN_SPEED, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, WALL_TURN, collideKarts } from "../src/game/race/kart";
 import { CALM_BAND, TRACK_TYPES, type TrackTypeId, WILD_BAND, surpriseType, trackType } from "../src/game/race/tracktypes";
 import {
   ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, NOTE_MAX, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
@@ -31,7 +31,7 @@ import {
 } from "../src/game/world/trackgen";
 import { BANK_EDGE, worldHalf } from "../src/game/world/texture";
 import { SHOWCASE } from "../src/game/world/maps";
-import { TUBE_HALF, TUBE_LOOP_SPEED, TUBE_R, TUBE_SQUEEZE, TUBE_WALL_SPEED, flatStretch, holdSpeed, tubeAt } from "../src/game/world/tube";
+import { TUBE_FLOOR, TUBE_HALF, TUBE_LOOP_SPEED, TUBE_R, TUBE_SQUEEZE, TUBE_WALL_SPEED, flatStretch, holdSpeed, tubeAt } from "../src/game/world/tube";
 import {
   COW_GRAZE, COW_WALK, GEYSER_BLOW, GEYSER_WARN, METEOR_BURST, METEOR_FALL, type Obstacle, Obstacles, WRECKER_PERIOD,
 } from "../src/game/race/obstacles";
@@ -618,6 +618,35 @@ describe("a crowded race", () => {
       expect(fastest).toBeLessThan(1.3);
     }
   });
+
+  it("keeps item boxes, coins and oil on the road while a dreamed figure-eight bridges itself", async () => {
+    // (a bridge flattens the climbs where it goes, and lifts road already laid into its ramps: the
+    // boxes and coins on that road were left where they were, up to 5 m over it, until the next
+    // climb set them right, and oil lying there floated, or sank, out of reach of the karts)
+    for (const seed of [1, 3]) {
+      const race = new Race({ rivals: 3, difficulty: "pro", theme: THEMES[0], seed, replay: null, trackType: "coaster", layout: "figure8" },
+        fakeDesigner(() => false, figure8()), () => {});
+      await race.prepare();
+      const pilot = new RivalDriver(new Rand(2), race.player, 0);
+      let worst = 0;
+      for (let i = 0; i < 60 * 200 && !race.track.locked; i++) {
+        race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
+        race.events = [];
+        const t = race.track;
+        if (i % 90 === 0 && t.count > 10) { // (oil, now and then, anywhere on the road laid so far)
+          const j = (i * 7919) % t.count;
+          race.items.slicks.push({ x: t.xs[j], y: t.ys[j], elev: t.elev[j] ?? 0, idx: j, ttl: 999, owner: race.karts[1], armed: 0 });
+        }
+        for (const b of [...race.items.boxes, ...race.items.coins, ...race.items.slicks]) {
+          worst = Math.max(worst, Math.abs(b.elev - (t.elev[b.idx] ?? 0)));
+        }
+        if (i % 4 === 0) for (let k = 0; k < 6; k++) await Promise.resolve();
+      }
+      expect(race.track.locked).toBe(true);
+      expect(race.track.bridges.length).toBe(1);
+      expect(worst).toBeLessThan(0.01);
+    }
+  }, 60000);
 
   it("races a figure-eight over its bridge: everyone finishes, nobody falls off", async () => {
     const plain = { ...THEMES[0], hills: undefined, obstacle: undefined };
@@ -1383,7 +1412,7 @@ describe("the grand prix", () => {
 
   it("runs through every world, the reef, Tokyo, the volcano, the building site and the moon too", () => {
     const ids = THEMES.map((t) => t.id);
-    expect(ids).toEqual(["valley", "neon", "mesa", "reef", "tokyo", "volcano", "construction", "moon"]);
+    expect(ids).toEqual(["valley", "tunnel", "mesa", "reef", "tokyo", "volcano", "construction", "moon"]);
     expect(THEMES.find((t) => t.id === "reef")!.underwater).toBe(true);
     expect(THEMES.find((t) => t.id === "volcano")!.volcano).toBe(true);
     expect(THEMES.find((t) => t.id === "moon")!.gravity).toBeLessThan(0.5);
@@ -1669,7 +1698,7 @@ describe("what a track type confirms", () => {
 describe("the lie of the land", () => {
   it("gives every world climbs of its own: meadows, the tube's rises, mesas and dunes, coral, basalt", { timeout: 60000 }, async () => {
     const want: Record<string, string[]> = {
-      valley: ["meadow"], neon: ["earth"], mesa: ["dune", "mesa"], reef: ["coral"], volcano: ["basalt"],
+      valley: ["meadow"], tunnel: ["earth"], mesa: ["dune", "mesa"], reef: ["coral"], volcano: ["basalt"],
     };
     for (const [id, styles] of Object.entries(want)) {
       // (a world's kinds of climb take turns, so one lap shows them all)
@@ -1682,7 +1711,7 @@ describe("the lie of the land", () => {
 
   it("leaves the jumps their straights: climbs go elsewhere, never over a jump or where it lands", async () => {
     for (const pts of [calm, twisty]) {
-      for (const id of ["valley", "neon", "reef"]) {
+      for (const id of ["valley", "tunnel", "reef"]) {
         // the jumps the lap gets in that world with no climbs at all
         const theme = THEMES.find((t) => t.id === id)!;
         const flat = new Race({ rivals: 0, difficulty: "pro", theme: { ...theme, hills: undefined }, seed: 3, replay: pts() },
@@ -1999,7 +2028,7 @@ describe("drawing the worlds", () => {
     const t = Track.fromPoints(calm());
     t.addHill({ s0: 200, len: 160, h: 9, shape: "sine", style: "earth", side: 1 });
     const f = new Features({ tube: true }), owner = new Kart(0, "K", 0, true);
-    const neon = THEMES.find((th) => th.tube)!;
+    const tunnel = THEMES.find((th) => th.tube)!;
     const i = t.s.findIndex((s) => s >= 205), up = t.s.findIndex((s) => s >= 235);
     const { cam, scr, faces, painter } = await scene();
     look(cam, t, i);
@@ -2008,7 +2037,7 @@ describe("drawing the worlds", () => {
     slickDecal(painter, t, f, { x: t.xs[up], y: t.ys[up], elev: t.elev[up], idx: up, ttl: 9, owner, armed: 0 }, 0, cam.heading, true);
     expect(faces.length).toBeGreaterThan(30);
     faces.length = 0;
-    tubeFaces(painter, t, neon, i, f, 0);
+    tubeFaces(painter, t, tunnel, i, f, 0);
     faces.sort((a, b) => b.z - a.z);
     for (const fc of faces) fc.draw();
     // a point of the floor up there, 1.5 m left of its middle line, is drawn (taken as facing
@@ -2339,7 +2368,7 @@ describe("what gets in the way", () => {
   };
 
   it("is something of its own in every world", () => {
-    const kinds = THEMES.filter((t) => t.id !== "neon").map((t) => t.obstacle);
+    const kinds = THEMES.filter((t) => t.id !== "tunnel").map((t) => t.obstacle);
     expect(kinds.every(Boolean)).toBe(true);
     expect(new Set(kinds).size).toBe(kinds.length);
   });
@@ -2494,11 +2523,11 @@ describe("what gets in the way", () => {
   });
 });
 
-describe("the neon tunnel", () => {
-  const neon = THEMES.find((t) => t.id === "neon")!;
+describe("the tunnel", () => {
+  const tunnel = THEMES.find((t) => t.id === "tunnel")!;
 
   it("is a tube that closes on itself: a floor as wide as the road, walls, a ceiling, no seams", () => {
-    expect(neon.tube).toBe(true);
+    expect(tunnel.tube).toBe(true);
     let prev = tubeAt(-TUBE_HALF);
     for (let u = -TUBE_HALF + 0.05; u <= TUBE_HALF + 1e-9; u += 0.05) {
       const q = tubeAt(u);
@@ -2545,6 +2574,97 @@ describe("the neon tunnel", () => {
     expect(most).toBeGreaterThan(TUBE_HALF - 1);
     expect(wrapped).toBe(true);
     expect(Math.abs(k.offset)).toBeLessThan(HALF_WIDTH); // all the way round, back on the floor
+  });
+
+  it("keeps a kart up a wall or on the roof within 45 degrees of the way along it, and straightens it when let go", () => {
+    // (free to turn, a kart drove straight round and round the tube, seen side on, with the whole
+    // tube spinning past it)
+    const t = Track.fromPoints(calm());
+    const off = (k: Kart) => { // (how far it is turned off the way along, either way)
+      const [tx, ty] = t.tangent(k.idx), a = Math.atan2(ty, tx);
+      const r = Math.abs(Math.atan2(Math.sin(k.heading - a), Math.cos(k.heading - a)));
+      return Math.min(r, Math.PI - r);
+    };
+    const go = { throttle: 1, brake: 0, drift: false };
+    for (const way of [1, -1]) {
+      // steering hard up the wall at speed: round over the roof all the same, on a spiral
+      const k = new Kart(0, "K", 0, true);
+      k.tube = true;
+      k.placeOn(t, 200, way * (HALF_WIDTH + 3));
+      k.v = 30;
+      let most = 0, high = 0;
+      for (let i = 0; i < 60 * 4 && !(high > TUBE_HALF - 1 && Math.abs(k.offset) < TUBE_FLOOR); i++) {
+        k.boostTime = 1;
+        k.update(1 / 60, { ...go, steer: way }, t, CLASSES.legend);
+        if (Math.abs(k.offset) > TUBE_FLOOR && !k.air) most = Math.max(most, off(k));
+        high = Math.max(high, Math.abs(k.offset));
+      }
+      expect(most).toBeLessThan(WALL_TURN + 0.01); // (give or take the road bending under it)
+      expect(most).toBeGreaterThan(WALL_TURN - 0.05);
+      expect(high).toBeGreaterThan(TUBE_HALF - 1);
+      // turned up the wall and let go: it straightens out and rides the wall along
+      const r = new Kart(0, "K", 0, true);
+      r.tube = true;
+      r.placeOn(t, 300, way * (HALF_WIDTH + 3));
+      r.heading += way * 0.6;
+      r.v = 30;
+      for (let i = 0; i < 90; i++) {
+        r.boostTime = 1;
+        r.update(1 / 60, { ...go, steer: 0 }, t, CLASSES.legend);
+      }
+      expect(off(r)).toBeLessThan(0.08);
+      expect(Math.abs(r.offset)).toBeGreaterThan(TUBE_FLOOR + 2);
+      // and off the floor onto a wall turned further round than that: turned in to it, at no snap
+      const s = new Kart(0, "K", 0, true);
+      s.tube = true;
+      s.placeOn(t, 300, way * (TUBE_FLOOR - 0.4));
+      s.heading += way * 1.2;
+      s.v = 22;
+      let jump = 0, prev = s.heading;
+      for (let i = 0; i < 30; i++) {
+        s.update(1 / 60, { ...go, steer: 0 }, t, CLASSES.legend);
+        jump = Math.max(jump, Math.abs(Math.atan2(Math.sin(s.heading - prev), Math.cos(s.heading - prev))));
+        prev = s.heading;
+      }
+      expect(Math.abs(s.offset)).toBeGreaterThan(TUBE_FLOOR);
+      expect(jump).toBeLessThan(0.1);
+      expect(off(s)).toBeLessThan(WALL_TURN + 0.05);
+    }
+  });
+
+  it("never jumps a kart along the tube, going round over the middle of the roof on any bend", async () => {
+    // (moved in the race's flat terms and found again from them, a kart crossing the middle of the
+    // roof came out 5 to 20 m further along the tube in a frame, and as much as 40 round the
+    // inside of a tight bend, where high up the flat terms fold over themselves)
+    const { kartPlace, tubeBetween } = await import("../src/game/render/tube");
+    for (const pts of [calm(), figure8()]) {
+      const t = Track.fromPoints(pts.map((v) => v * (tunnel.scale ?? 1)));
+      const where = (k: Kart) => { const q = kartPlace(t, k); return tubeBetween(t, q.i, q.w, q.u, 0).p; };
+      let worst = 0, crossed = 0;
+      for (let i0 = 0; i0 < t.count; i0 += 9) {
+        for (const side of [1, -1]) {
+          const k = new Kart(0, "K", 0, true);
+          k.tube = true;
+          k.placeOn(t, i0, side * (TUBE_HALF - 0.6));
+          k.heading += side * 0.7; // (turned toward the middle of the roof, to go over it)
+          k.v = 30;
+          const go = { steer: side, throttle: 1, brake: 0, drift: false };
+          k.update(1 / 60, go, t, CLASSES.legend);
+          let prev = where(k), last = k.offset;
+          for (let f = 0; f < 30; f++) {
+            k.boostTime = 1;
+            k.update(1 / 60, go, t, CLASSES.legend);
+            const q = where(k), step = Math.hypot(q[0] - prev[0], q[1] - prev[1], q[2] - prev[2]);
+            worst = Math.max(worst, step / ((Math.abs(k.v) + 9) / 60)); // (its speed, and sliding down)
+            if (Math.sign(k.offset) !== Math.sign(last) && Math.abs(k.offset) > TUBE_HALF - 3) crossed++;
+            prev = q;
+            last = k.offset;
+          }
+        }
+      }
+      expect(crossed).toBeGreaterThan(300); // (it really went over the middle of the roof, everywhere)
+      expect(worst).toBeLessThan(1.05);
+    }
   });
 
   it("moves a kart up a wall or over the ceiling as fast as it says, through the tightest bend", async () => {
@@ -2618,7 +2738,7 @@ describe("the neon tunnel", () => {
   it("puts pads up its walls and on its ceiling, traffic on its floor, and rivals race it to the end", async () => {
     let up = 0, ceiling = 0, pads = 0;
     for (const seed of [1, 2, 3]) {
-      const race = new Race({ rivals: 3, difficulty: "pro", theme: neon, seed, replay: calm(), trackType: "speedway" }, null, () => {});
+      const race = new Race({ rivals: 3, difficulty: "pro", theme: tunnel, seed, replay: calm(), trackType: "speedway" }, null, () => {});
       for (const p of race.features.pads) {
         pads++;
         if (Math.abs(p.offset) > HALF_WIDTH) up++;
@@ -2630,7 +2750,7 @@ describe("the neon tunnel", () => {
     expect(pads).toBeGreaterThan(5);
     expect(up).toBeGreaterThan(0);
     expect(ceiling).toBeGreaterThanOrEqual(0);
-    const race = new Race({ rivals: 3, difficulty: "pro", theme: neon, seed: 4, replay: calm() }, null, () => {});
+    const race = new Race({ rivals: 3, difficulty: "pro", theme: tunnel, seed: 4, replay: calm() }, null, () => {});
     await race.prepare();
     const pilot = new RivalDriver(new Rand(2), race.player, 0);
     let traffic = 0;

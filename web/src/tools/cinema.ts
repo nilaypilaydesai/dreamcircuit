@@ -1,9 +1,9 @@
 // The DATA page's hero video (and the stills and GIF frames for the README), filmed in the game
 // itself: a trailer that cuts between the eight worlds, the items, the garage and the Grand Prix
 // podium. It drives races through the dev hook (window.__dc) on circuits the designer dreamed and
-// films clean, HUD-free shots from scripted cameras: a drone over the grid inside the neon
-// tunnel, the chase camera through a jump and round the tube over its ceiling, traffic in the
-// tube, tracking shots along Tokyo's expressway and a crane's girder, a police car on the player's
+// films clean, HUD-free shots from scripted cameras: a drone over the grid inside the harbor
+// tunnel, the chase camera through a jump and round the tube over its roof, traffic in the
+// tunnel, tracking shots along Tokyo's expressway and a crane's girder, a police car on the player's
 // tail, cows crossing the valley road, a wrecking ball, a meteor, a geyser, a kart floating off a
 // crater's rim under the Earth, a red-rock canyon, close-ups of items in use, and a kart going
 // into the volcano's lava and coming back out under the rescue drone; the garage and the podium
@@ -86,7 +86,7 @@ export const VARIANTS: Variant[] = [
 
 // the aiming arrow's sweep (race/items.ts)
 const AIM_MAX = 0.75, AIM_RATE = 3.1;
-const THEME = { valley: 0, neon: 1, mesa: 2, reef: 3, tokyo: 4, volcano: 5, construction: 6, moon: 7 };
+const THEME = { valley: 0, tunnel: 1, mesa: 2, reef: 3, tokyo: 4, volcano: 5, construction: 6, moon: 7 };
 const COW_WALK = 1, POLICE_CHASE = 1, GEYSER_QUIET = 0, METEOR_FALL = 0; // (race/obstacles.ts)
 const FALL_SWAP = 0.72, FALL_RELEASE = 2.0; // into the lava: lifted out, let go (race/kart.ts)
 const PAN = 1536, FRAME_W = 384; // the sky's panorama for a full turn, and the film's width (render/sky.ts)
@@ -307,8 +307,8 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     await until(() => race().phase === "racing" && race().player.dist > meters, 60 * 30);
   };
 
-  // ---------------------------------------------------------------- the Neon Tunnel: a figure-eight
-  await start(o.figure8, THEME.neon, 7);
+  // ---------------------------------------------------------------- the Harbor Tunnel: a figure-eight
+  await start(o.figure8, THEME.tunnel, 7);
   // 1. The launch: a drone ahead of the grid, inside the tube, drifting back and up as the pack
   // rockets off.
   {
@@ -345,7 +345,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     }
   }
   // 3. Round the tube: on the gas (and a boost), the player turns up the wall, holds a line
-  // slanting round over the ceiling and down the other wall, and straightens out on the floor;
+  // slanting round over the roof and down the other wall, and straightens out on the floor;
   // the chase camera rolls round with it.
   {
     await until(() => race().player.v > 24 && !race().player.air, 60 * 20);
@@ -357,7 +357,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       const rel = wrapAngle(k.heading - heading(k.idx));
       if (Math.sign(k.offset) !== Math.sign(last) && Math.abs(k.offset) > 15) over = true;
       last = k.offset;
-      const back = over && Math.abs(k.offset) < 4;
+      const back = over && Math.abs(k.offset) < 12; // (straightening from low on the far wall, to land on the floor straight)
       const want = back ? 0 : 0.85;
       dc.step(per, ["gas", ...(rel < want - 0.06 ? ["left"] : rel > want + 0.06 ? ["right"] : [])], false);
       dc.shot({ clear: 2.5 });
@@ -368,7 +368,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   // 4. Traffic in the tube: on the game's chase camera, the pack weaves through the cars, and
   // rides the walls past them.
   {
-    await start(o.loops[4], THEME.neon, 7);
+    await start(o.loops[4], THEME.tunnel, 7);
     const cars = () => race().obstacles.list.filter((q) => q.kind === "traffic" &&
       (q.s - race().track.s[race().player.idx] + race().track.length) % race().track.length < 40);
     await until(() => race().phase === "racing" && race().player.dist > 120 && cars().length > 0, 60 * 120);
