@@ -602,7 +602,8 @@ after the player, with a siren and a flashing warning, once the player is 14 to 
 A police car goes no faster than a stock kart's top speed in the race's class (by 4%), nor round a
 bend faster than the class's grip allows, so a player at full speed holds it off and a boost pulls
 away; it gains on a player who is slower (off the line, off the road, after a spin). It steers
-across the road onto the player's line at 3 m/s at most, and only 9 m behind them, on their line
+across the road onto the player's line at 3 m/s at most (and no further than the road's
+shoulder: after a kart on the pavement it drove into the buildings there), and only 9 m behind them, on their line
 and two and a half seconds into the chase, does it go for the ram: it holds that line and lunges,
 the warning turns to DODGE! and flashes faster, and a sidestep then makes it miss (it falls back
 and comes again). It rams only as it lunges, never a kart that is stopped or spinning; the

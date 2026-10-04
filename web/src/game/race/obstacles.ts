@@ -71,6 +71,7 @@ const POLICE_LEN = 4.4; // m, a police car's length (it rams from behind)
 const POLICE_STEER = 3; // m/s: the fastest a police car moves across the road onto the player's line
 const POLICE_LUNGE_AT = 9; // m behind the player: where it settles on a line and goes for the ram
 const POLICE_SHAKEN = 110; // m: this far behind the player, it has lost them and gives up
+const POLICE_ROAD = HALF_WIDTH + 1.5; // m: how far out from the middle of the road it will drive
 
 /** How far apart (m along the road) a world's obstacles are set out. */
 const SPACING: Record<ObstacleKind, number> = {
@@ -391,7 +392,9 @@ export class Obstacles {
         : Math.min(top, gap < 5 ? player.v - 1 : Math.max(player.v + (gap > 25 ? 6 : 2), 16));
       o.v += Math.max(-18 * dt, Math.min(16 * dt, want - o.v));
       if (o.state !== POLICE_LUNGE && gap < 40) {
-        const d = player.offset - o.offset;
+        // (onto the road and its shoulder, no further: after a kart on the pavement it drove into the
+        // buildings there)
+        const want = Math.max(-POLICE_ROAD, Math.min(POLICE_ROAD, player.offset)), d = want - o.offset;
         o.offset += Math.sign(d) * Math.min(Math.abs(d), POLICE_STEER * dt);
       }
       if (o.state === POLICE_CHASE && !slow && o.age > 2.5 && gap > 0 && gap < POLICE_LUNGE_AT && Math.abs(player.offset - o.offset) < 1.5) {

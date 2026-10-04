@@ -2511,6 +2511,7 @@ describe("what gets in the way", () => {
         glide(k, v, off);
         ob.update(1 / 60, t, [k], k, true);
         if (ob.chasing) seen++;
+        for (const o of ob.list) if (o.state === POLICE_CHASE) expect(Math.abs(o.offset)).toBeLessThan(HALF_WIDTH + 1.6); // (on the road)
         for (const e of ob.events) heard.push(e.sound);
         ob.events = [];
       }
@@ -2521,6 +2522,9 @@ describe("what gets in the way", () => {
     expect(away.seen).toBeGreaterThan(60);
     expect(away.heard).not.toContain("ram");
     expect(away.heard).toContain("shaken");
+    // a kart out on the pavement: it keeps to the road (and the shoulder), and cannot ram it there
+    const out = chase(22, 30, () => HALF_WIDTH + 9);
+    expect(out.heard).not.toContain("ram");
     // slower, it catches up; but a sidestep each time it goes for the ram dodges every one
     let lunges = 0, was = false, side = 1, shift = 0;
     const dodged = chase(22, 40, (ob) => {
