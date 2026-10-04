@@ -248,8 +248,16 @@ with a small depth bias per kind so a kart on a deck draws over the deck and a k
 draws under it. Road surfaces that karts stand on (decks, climbs, ramps, pads) sort by their far
 edge rather than their middle: sorted by the middle, the piece of road under a kart was often
 drawn after it, and its far half covered the kart's wheels on a flat deck and half the kart on a
-steep climb (a Roller Coaster screenshot showed it). The camera rides up onto bridges with the
-kart it follows and rises partway on a jump, for a sense of air.
+steep climb (a Roller Coaster screenshot showed it). A boost pad lies on the road wherever it is:
+on a climb, each part of it is drawn straight after the piece of road it lies on (the climb's road
+records the nearest sort key of its strips, and the pad goes just nearer than that, over the road's
+lines and before any kart on it, which sorts half a meter nearer still); on the ground, the whole
+pad is one decal at its far end's depth. Drawn as one flat plate at the height of its start, as
+it was, a pad on a slope sank under the climb's road (out of sight, or cut in pieces by it); a
+third to a half of all pads lay on a climb once climbs came to every world. The camera rides up
+onto bridges with the kart it follows and rises partway on a jump, for a sense of air, but never
+more than 1.8 m short of it (the top of a jump at home): on the moon a flight goes 9.5 m up, and
+rising only partway the camera lost the kart off the top of the screen.
 
 **Bridges.** When the dreamed road crosses itself (a figure-eight), the later stretch becomes a
 bridge: it is lifted 6 m over the road below, on 44 m smoothstep ramps either side of a 34 m
@@ -300,7 +308,9 @@ three clean laps, under 2% of the time on grass, and at least three drifts.
 ramps on straights longer than 95 m (at least 260 m apart, and never near a bridge, an item row
 or the start), and boost pads at corner exits (170 m apart). A ramp is an 11 m striped wedge, 1.7
 m high at the lip; a fast kart leaves it on a ballistic arc (gravity 26 m/s^2, arcade-short), with
-a third of its steering in the air. A hop (the drift button) from 0.24 s before the lip to 0.18 s
+a third of its steering in the air. The straight a ramp needs is long enough for the flight: 45 m
+from the foot to past the landing at home, and as much longer as gravity is weaker on the moon
+(124 m). A hop (the drift button) from 0.24 s before the lip to 0.18 s
 after it is a trick, and within 0.085 s of the lip a perfect one: the kart spins in the air and
 lands into a boost (0.8 s, or 1.35 s for a perfect trick). Pads give a 1 s boost; every boost
 widens the field of view and draws speed lines. Rivals try tricks too, more often in the faster
@@ -416,7 +426,16 @@ top is more than gravity can hold, which on a crater's rim takes 15 to 20 m/s on
 2.4 m either side, so the steps between road points do not set karts flying). The ground is regolith pocked with a thousand craters, each a
 bowl lit on one side inside a bright rim of thrown-out dust; the drivers wear helmets; the scenery
 is landers, dishes, habitats, boulders and a rover; and the sky is black, with stars, grey ridges
-and the Earth, its seas, land, ice and clouds lit from one side and its night side faint.
+and the Earth, its seas, land, ice and clouds lit from one side and its night side faint. A jump
+on the moon flies three times as far (a Pro kart 85 m, a boosted Legend 150 m), which on a lap of the
+usual size was a ninth of the lap in one leap and often past the end of the straight, so the moon
+draws every circuit 1.6 times the size (laps of 1.3 to 2 km). The designer dreams, and every check
+runs, at its own size: only the road laid out in the world is scaled, and a map is kept at the usual
+size and raced at the scale of whichever world it is raced in. The ground texture grows to hold the
+biggest lap the checks allow (3920 texels across instead of 2560, its craters and scenery as thick
+on the ground as before) and paints in 0.86 s: the painters now hash each noise cell's corners once
+per row instead of at every texel, the same bits 1.5 to 3 times faster in every world, and the
+dreaming screen goes up before a race is set out, so START never leaves the menu frozen.
 
 Inside the volcano (Volcano Core) the road is a causeway of rock across a lake of lava
 (`world/lava.ts`). The terrain is not painted in colours there: each lava texel holds a phase (from
