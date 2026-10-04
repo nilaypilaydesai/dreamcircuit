@@ -1,8 +1,8 @@
 // Drawing the land around a circuit (world/landforms.ts). Each landform is a solid turned about
 // its middle: rings of points from its foot up (each a little ragged), joined into faces lit by the
 // sun from the north-west, in its world's colours: bands of grass on a knoll, strata of sandstone
-// on a butte, a crown of coral on a reef rock, snow on a crag, a crater of lava on a cinder cone,
-// glowing ridges and rings on a neon peak.
+// on a butte, a crown of coral on a reef rock, a crater of lava on a cinder cone,
+// glowing ridges and rings on a neon peak, floors of lit windows on a tower block.
 
 import { hex, mix, shade } from "../core/gfx";
 import type { Theme } from "../themes";
@@ -18,11 +18,17 @@ interface Look {
   cap?: (theme: Theme) => number; // a flat top in this colour
   capLit?: boolean; // the sun lights the top too (else it glows: a crater of lava)
   ridges?: (theme: Theme, side: number) => number; // glowing lines up its edges, and rings around it
+  glows?: (ring: number) => boolean; // bands that give light rather than take the sun's (lit windows)
 }
 
 const STRATA = [hex("#c8693a"), hex("#d98b4f"), hex("#b5532f"), hex("#e2a467"), hex("#a8472a")];
 const CORALS = [hex("#ff6f91"), hex("#ff9f5a"), hex("#b76cff"), hex("#ffd45a"), hex("#5ad1c4")];
-const REEF_ROCK = hex("#56697a"), CRAG = hex("#77726b"), BASALT = hex("#2f2729"), SNOW = hex("#eef3fb");
+const REEF_ROCK = hex("#56697a"), BASALT = hex("#2f2729");
+/** A tower block's profile: straight up, a ring at every band of wall and of windows (seven floors). */
+const BLOCK_RINGS: [number, number][] = [
+  [1, 0], ...Array.from({ length: 7 }, (_, f): [number, number][] => [[1, 0.04 + f * 0.137], [1, 0.12 + f * 0.137]]).flat(), [1, 1],
+];
+const BLOCK_LIT = [hex("#ffd98a"), hex("#dfe8ff"), hex("#ffcf7a"), hex("#1b1e29"), hex("#9fd8ff")];
 
 const LOOKS: Record<LandformKind, Look> = {
   knoll: {
@@ -45,11 +51,6 @@ const LOOKS: Record<LandformKind, Look> = {
     sides: 9, profile: [[1, 0], [0.92, 0.35], [0.7, 0.7], [0.42, 0.94], [0, 1]], jitter: 0.15,
     band: (_t, k, q, l) => (k < 2 ? shade(REEF_ROCK, 0.9 + 0.1 * (q & 1)) : CORALS[(q + l.seed) % CORALS.length]),
   },
-  crag: {
-    sides: 8, profile: [[1, 0], [0.7, 0.42], [0.42, 0.76], [0.16, 1]], jitter: 0.2,
-    band: (t, k, q) => (k < 2 ? shade(CRAG, 0.88 + 0.12 * (q & 1)) : t.snow || SNOW),
-    cap: (t) => t.snow || SNOW, capLit: true,
-  },
   cone: {
     sides: 10, profile: [[1, 0], [0.74, 0.55], [0.44, 1]], jitter: 0.08,
     band: (_t, k) => (k === 0 ? BASALT : mix(BASALT, hex("#7a2410"), 0.35)), cap: () => hex("#ff7a1e"),
@@ -62,6 +63,12 @@ const LOOKS: Record<LandformKind, Look> = {
   rim: {
     sides: 12, profile: [[1, 0], [0.82, 0.35], [0.55, 0.72], [0.25, 0.94], [0, 1]], jitter: 0.06,
     band: (t, k) => shade(t.ground[0], 0.96 + 0.05 * k),
+  },
+  // a tower block at night: floors of dark wall and bands of windows, lit or not side by side
+  block: {
+    sides: 4, profile: BLOCK_RINGS, jitter: 0,
+    band: (_t, k, q, l) => (k % 2 === 1 ? BLOCK_LIT[Math.floor(hash(l.seed, q, k) * BLOCK_LIT.length)] : hex("#262a36")),
+    cap: () => hex("#3a3e4a"), capLit: true, glows: (k) => k % 2 === 1,
   },
 };
 
@@ -108,7 +115,8 @@ function build(p: Painter, l: Landform, look: Look, theme: Theme): void {
       const q2 = (q + 1) % sides;
       const pts = apex ? [rings[k][q], rings[k][q2], rings[k + 1][0]] : [rings[k][q], rings[k][q2], rings[k + 1][q2], rings[k + 1][q]];
       const n = normal(pts, mid);
-      face(p, pts, lit(look.band(theme, k, q, l), n), n);
+      const band = look.band(theme, k, q, l);
+      face(p, pts, look.glows?.(k) ? band : lit(band, n), n);
       if (look.ridges && apex) {
         // a ring of light around it a third and two thirds of the way up, and a line up its edge
         const top = rings[k + 1][0], ring = shade(theme.grid || hex("#3d1f6b"), 2.3);

@@ -130,14 +130,14 @@ export class Scenery {
     for (let k = 0; k < 900 * this.area && this.items.length < 700 * this.area; k++) {
       const x = this.rng.range(-this.half + 12, this.half - 12), y = this.rng.range(-this.half + 12, this.half - 12);
       const kind = this.rng.pick(t.far);
-      const big = kind === "mesa" || kind === "peak" || kind === "wreck" || kind === "spire" || kind === "crane" ||
-        kind === "skeleton";
-      // big landmarks stand well back from the road (a mountain peak furthest of all)
-      const need = kind === "peak" ? 120 : big ? 60 : HALF_WIDTH + 7;
+      const big = kind === "mesa" || kind === "wreck" || kind === "spire" || kind === "crane" || kind === "skeleton" ||
+        kind === "tower" || kind === "apartment" || kind === "billboard" || kind === "pagoda";
+      // big landmarks stand well back from the road
+      const need = big ? 60 : HALF_WIDTH + 7;
       const d = this.roadDistance(track, x, y, need + 10);
       if (d < need) continue;
       // forests cluster: drop a few neighbours around trees
-      const n = ["pine", "oak", "cactus", "crystal", "kelp", "coral", "snowpine", "basalt", "boulder", "drum"].includes(kind)
+      const n = ["pine", "oak", "cactus", "crystal", "kelp", "coral", "sakura", "basalt", "boulder", "drum"].includes(kind)
         ? this.rng.int(1, 4) : 1;
       for (let m = 0; m < n; m++) {
         const xx = x + this.rng.range(-6, 6) * (m > 0 ? 1 : 0), yy = y + this.rng.range(-6, 6) * (m > 0 ? 1 : 0);

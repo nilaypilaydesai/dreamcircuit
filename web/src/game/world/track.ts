@@ -9,8 +9,8 @@
 // on exactly the same road.
 //
 // Where new road crosses road that already exists, the new stretch becomes a bridge: it climbs a
-// ramp, crosses on a deck high enough to drive under, and comes back down. In the mountains the
-// road also climbs over hills, smooth rises and falls set along the lap as it is dreamed.
+// ramp, crosses on a deck high enough to drive under, and comes back down. In every world the
+// road also climbs over the land, rises and falls set along the lap as it is dreamed.
 
 export const N = 256;
 export const SCALE = 1.5; // model meters -> game meters (karts like wide roads)
@@ -38,17 +38,17 @@ export function bridgeLift(ds: number): number {
   return BRIDGE_HEIGHT * (1 - u * u * (3 - 2 * u));
 }
 
-/** What a climb is built as: an earth embankment, a rocky mountainside, a ledge along a cliff
- * (a rock face on one side, a drop on the other), a concrete foundation, a steel girder (a crane's
- * arm), scaffolding, a crater's rim, a grassy rise in a meadow, a neon skyway on pylons, a low
- * roller of the neon grid, a mesa, a sand dune, a ridge of coral, or a causeway of basalt. */
+/** What a climb is built as: an earth embankment, a concrete foundation, a steel girder (a
+ * crane's arm), scaffolding, a crater's rim, a grassy rise in a meadow, a neon skyway on pylons, a
+ * low roller of the neon grid, a mesa, a sand dune, a ridge of coral, a causeway of basalt, an
+ * elevated expressway on concrete piers, or the ramp of a parking garage. */
 export type HillStyle =
-  | "earth" | "rock" | "cliff" | "foundation" | "girder" | "scaffold" | "crater"
-  | "meadow" | "skyway" | "wave" | "mesa" | "dune" | "coral" | "basalt";
+  | "earth" | "foundation" | "girder" | "scaffold" | "crater" | "meadow" | "skyway" | "wave"
+  | "mesa" | "dune" | "coral" | "basalt" | "expressway" | "garage";
 
 /** A climb: the road rises and falls back over ``len`` m from arc length ``s0``, as a smooth hump
- * ("sine") or up a ramp to a level top and down again ("plateau"). ``side``: which side a cliff's
- * rock face is on (1 left, -1 right). */
+ * ("sine") or up a ramp to a level top and down again ("plateau"). ``side``: which side a one-sided
+ * climb has its open side on (1 left, -1 right: the parking bays beside a garage's ramp). */
 export interface Hill { s0: number; len: number; h: number; shape?: "sine" | "plateau"; style?: HillStyle; side?: number }
 
 /** The length of a plateau's ramps up and down: long enough that a kart at full speed stays on

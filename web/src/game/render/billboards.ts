@@ -277,7 +277,7 @@ const WATER = ["#ffffff", "#bfe6ff", "#63a7e6", "#2f6fb0"].map(hex);
 const DUST = ["#e8e2d4", "#b9ad94", "#8a7f6a", "#5a5244"].map(hex);
 const SPLASHES: Partial<Record<FallKind, number[]>> = {
   pond: WATER, trench: WATER, quicksand: ["#f0cf94", "#d9a35b", "#b07b44", "#7a5430"].map(hex),
-  void: ["#ff2bd6", "#2de2e6", "#7a3fd0", "#3d1f6b"].map(hex), crevasse: ["#ffffff", "#e6f4ff", "#9fd3f0", "#5aa7d8"].map(hex),
+  void: ["#ff2bd6", "#2de2e6", "#7a3fd0", "#3d1f6b"].map(hex), canal: ["#ffffff", "#ffc1e3", "#5fd3e6", "#2f6fb0"].map(hex),
   chasm: ["#e6e7ec", "#b3b4b8", "#8d8e93", "#5a5c66"].map(hex),
 };
 

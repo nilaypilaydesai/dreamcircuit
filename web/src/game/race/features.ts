@@ -2,7 +2,8 @@
 //   jump ramps on long straights: fly off the lip, and hop (the drift button) right at the lip
 //   for a trick that pays a boost on landing;
 //   boost pads at corner exits (and, on some track types, along the straights);
-//   tunnels through rock on straights, in the mountains (their walls keep karts in).
+//   tunnels on straights, under buildings in Tokyo and through buildings going up on the building
+//   site (their walls keep karts in).
 // How long a straight earns a jump and how far apart pads are depend on the track type
 // (race/tracktypes.ts); when the lap locks, a type's minimum counts are made good on the best
 // free road left. Pure logic (no rendering), unit-tested headlessly.
@@ -36,7 +37,7 @@ export interface Tunnel {
   n: number; // dense points through it
 }
 
-/** What a race builds: tunnels (the mountains), the jump rule (null: no jumps) and the pad rule;
+/** What a race builds: tunnels (Tokyo, the building site), the jump rule (null: no jumps) and the pad rule;
  * ``gravity``, relative to the usual, sets how far a jump flies (on the moon, three times as far). */
 export interface FeatureRules { tunnels: boolean; ramps: RampRule | null; pads: PadRule; gravity: number }
 
@@ -103,7 +104,7 @@ export class Features {
           this.lastRamp = s;
         }
       }
-      // a tunnel through the rock on a long, gently curving stretch (the mountains)
+      // a tunnel on a long, gently curving stretch (under a building in Tokyo, through one going up on the site)
       this.tunnelRun = k < 1 / 110 && track.elev[i] === 0 ? this.tunnelRun + SPACING : 0;
       if (this.withTunnels && this.tunnelRun > TUNNEL_LEN + 12 && s - this.lastTunnel > TUNNEL_GAP) {
         const s0 = s - TUNNEL_LEN - 6, start = i - Math.round((TUNNEL_LEN + 6) / SPACING);

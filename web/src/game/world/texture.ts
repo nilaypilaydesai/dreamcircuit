@@ -6,11 +6,13 @@
 // bank of rock with a glowing rim where it meets the lava. Elsewhere the ground is shaded as if it
 // rose and fell (a height field lit from the north-west), so the land does not read as flat.
 
-import { hash2, mix, shade, valueNoise } from "../core/gfx";
+import { hash2, hex, mix, shade, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
 import { CRACK, CRUST, MOLTEN, PHASES, SHADOW, isLava, isMark, lavaColor, lavaMark } from "./lava";
 import { type Hazard, hazardColor } from "./hazards";
 import { HALF_WIDTH, MAX_FROM_START, type Track } from "./track";
+
+const PUDDLE_NEON = [hex("#ff4f9a"), hex("#39d5ff"), hex("#ffb347"), hex("#9d6bff")]; // Tokyo's, in its puddles
 
 export const TEX = 2560; // texels across, in a world of the usual scale
 export const RES = 0.3; // meters per texel
@@ -64,7 +66,7 @@ export class WorldTexture {
     this.size = texSize(theme.scale);
     this.half = (this.size * RES) / 2;
     this.rg = this.size / RELIEF_STEP + 1;
-    this.rows = [0, 1, 2].map(() => new Float64Array(this.size));
+    this.rows = [0, 1, 2, 3].map(() => new Float64Array(this.size));
     this.relief = this.makeRelief(theme, seed);
     for (let k = 0; k < LEVELS; k++) this.levels.push(new Uint32Array((this.size >> k) * (this.size >> k)));
     this.paintTerrain(0, 0, this.size, this.size);
@@ -195,6 +197,49 @@ export class WorldTexture {
     }
   }
 
+  /** Tokyo's ground at night: wet paving in 3 m slabs, puddles holding the city's neon (pink,
+   * cyan, amber or violet, brightest in the middle), and an iron manhole cover here and there. */
+  private paintCity(x0: number, y0: number, x1: number, y1: number): void {
+    const t = this.theme, tex = this.levels[0], seed = this.seed, [n4, n17, n9, n23] = this.rows;
+    const xa = Math.max(0, x0), xb = Math.min(this.size, x1);
+    for (let ty = Math.max(0, y0); ty < Math.min(this.size, y1); ty++) {
+      const wy = this.half - (ty + 0.5) * RES;
+      noiseRow(n4, xa, xb, this.half, wy, 4, seed);
+      noiseRow(n17, xa, xb, this.half, wy, 17, seed + 1);
+      noiseRow(n9, xa, xb, this.half, wy, 9, seed + 2);
+      noiseRow(n23, xa, xb, this.half, wy, 23, seed + 3);
+      const jy = ((wy % 3) + 3) % 3 < 0.14;
+      for (let tx = xa; tx < xb; tx++) {
+        const wx = (tx + 0.5) * RES - this.half;
+        let c = shade(mix(t.ground[0], t.ground[1], n4[tx]), 0.9 + 0.2 * n17[tx]);
+        if (jy || ((wx % 3) + 3) % 3 < 0.14) c = shade(c, 0.8); // the joints between slabs
+        const wet = n9[tx];
+        if (wet > 0.64) {
+          const g = (wet - 0.64) / 0.36, neon = PUDDLE_NEON[Math.min(3, Math.floor(n23[tx] * 4))];
+          c = mix(shade(c, 0.55), neon, 0.1 + 0.42 * g * g);
+        }
+        if (hash2(tx, ty, seed) > 0.986) c = t.groundSpeck;
+        tex[ty * this.size + tx] = c;
+      }
+    }
+    // manhole covers, one in a few 20 m squares: an iron disc ruled with a grid, a brighter rim
+    const cell = 20;
+    for (let gy = Math.floor((this.half - y1 * RES) / cell) - 1; gy <= Math.ceil((this.half - y0 * RES) / cell); gy++) {
+      for (let gx = Math.floor((x0 * RES - this.half) / cell) - 1; gx <= Math.ceil((x1 * RES - this.half) / cell); gx++) {
+        if (hash2(gx, gy, seed + 9) > 0.3) continue;
+        const cx = (gx + 0.2 + 0.6 * hash2(gx, gy, seed + 10)) * cell, cy = (gy + 0.2 + 0.6 * hash2(gx, gy, seed + 11)) * cell;
+        const [ctx, cty] = this.texel(cx, cy), span = Math.ceil(0.85 / RES);
+        for (let ty = Math.max(y0, 0, Math.floor(cty - span)); ty < Math.min(y1, this.size, cty + span + 1); ty++) {
+          for (let tx = Math.max(x0, 0, Math.floor(ctx - span)); tx < Math.min(x1, this.size, ctx + span + 1); tx++) {
+            const d = Math.hypot(tx + 0.5 - ctx, ty + 0.5 - cty) * RES;
+            if (d > 0.8) continue;
+            tex[ty * this.size + tx] = d > 0.66 ? hex("#4a4d55") : (tx + ty) % 2 ? hex("#2a2c32") : hex("#34363d");
+          }
+        }
+      }
+    }
+  }
+
   /** The moon's regolith, grey and fine, pocked all over with craters: a bowl in shadow on the
    * side the light comes from and lit on the other, inside a bright rim of thrown-out dust. */
   private paintCraters(x0: number, y0: number, x1: number, y1: number): void {
@@ -238,6 +283,10 @@ export class WorldTexture {
     }
     if (this.theme.terrain === "craters") {
       this.paintCraters(x0, y0, x1, y1);
+      return;
+    }
+    if (this.theme.terrain === "city") {
+      this.paintCity(x0, y0, x1, y1);
       return;
     }
     const t = this.theme;

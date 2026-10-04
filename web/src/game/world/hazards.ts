@@ -1,14 +1,14 @@
 // What a kart can drive into off the road, in every world, and be fished out of by the rescue
 // drone, as from the volcano's lava: a pond in the meadows, a hole in the neon grid, quicksand in
-// the desert, a trench in the reef, a crevasse in the mountains, a dug-out pit on the building
-// site and a chasm on the moon. Each is an ellipse set out when the lap locks, past the shoulder
+// the desert, a trench in the reef, a canal in Tokyo, a dug-out pit on the building site and a
+// chasm on the moon. Each is an ellipse set out when the lap locks, past the shoulder
 // (never on the road), mostly on the outside of the bends, where karts run wide. They are painted
 // into the ground (world/texture.ts); a kart on the ground inside one goes in (race/race.ts).
 
 import { hash2, hex, mix, shade, valueNoise } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "./track";
 
-export type HazardKind = "pond" | "void" | "quicksand" | "trench" | "crevasse" | "pit" | "chasm";
+export type HazardKind = "pond" | "void" | "quicksand" | "trench" | "canal" | "pit" | "chasm";
 /** What a kart fell into: a hazard, the lava, or off the edge of raised road. */
 export type FallKind = HazardKind | "lava" | "drop";
 
@@ -29,7 +29,7 @@ const SIZE: Record<HazardKind, { rx: [number, number]; ry: [number, number] }> =
   void: { rx: [5, 9], ry: [4, 6] },
   quicksand: { rx: [6, 10], ry: [4, 7] },
   trench: { rx: [9, 15], ry: [3, 5] },
-  crevasse: { rx: [10, 16], ry: [1.6, 2.6] },
+  canal: { rx: [11, 17], ry: [2.6, 3.6] },
   pit: { rx: [5, 9], ry: [4, 6] },
   chasm: { rx: [6, 10], ry: [5, 8] },
 };
@@ -104,8 +104,17 @@ const LOOKS: Record<HazardKind, (d: number, a: number, u: number, v: number, wx:
     if (d > 0.88) return mix(c, C("#f4e9cf"), 0.45);
     return mix(C("#04101d"), C("#16506e"), d ** 2 + 0.05 * valueNoise(wx, wy, 2, 3));
   },
-  // a crack in the snow: white lips, ice blue walls, black depths
-  crevasse: (d) => (d > 0.9 ? C("#f6f9ff") : d > 0.62 ? mix(C("#5aa7d8"), C("#bfe6ff"), (d - 0.62) / 0.28) : mix(C("#06101c"), C("#1d4466"), d / 0.62)),
+  // a canal at night: a lip of granite blocks, a dark wall down to black water with the city's
+  // neon lying in it in streaks along its length
+  canal: (d, _a, u, v, wx, wy) => {
+    if (d > 0.88) return Math.floor(u / 1.6) & 1 ? C("#8e939c") : C("#7d828b");
+    if (d > 0.8) return C("#3a3e47");
+    const water = mix(C("#050b16"), C("#0d1d33"), 0.5 + 0.5 * Math.sin(u * 0.9 + v * 3.1));
+    const streak = valueNoise(u * 0.35, v * 2.4, 1, 41), hue = valueNoise(wx, wy, 9, 42);
+    if (streak < 0.72) return water;
+    const neon = hue < 0.4 ? C("#ff4f9a") : hue < 0.7 ? C("#39d5ff") : C("#ffb347");
+    return mix(water, neon, Math.min(0.75, (streak - 0.72) * 5));
+  },
   // a dug-out pit: shoring planks round its lip, striped tape, darkness in it
   pit: (d, a) => {
     if (d > 0.93) return Math.floor((a / (Math.PI * 2)) * 28 + 28) % 2 ? C("#ff8a1f") : C("#f4f1ea");
@@ -129,5 +138,5 @@ export function hazardColor(h: Hazard, wx: number, wy: number, c: number): numbe
 /** The colour the screen darkens to as a kart goes in (the drone lifts it out under it). */
 export const FALL_TINT: Record<FallKind, number> = {
   lava: hex("#1c0603"), drop: hex("#0b0b14"), pond: hex("#04122a"), trench: hex("#020a14"), quicksand: hex("#1f140a"),
-  void: hex("#05010d"), crevasse: hex("#0a1422"), pit: hex("#0b0806"), chasm: hex("#000000"),
+  void: hex("#05010d"), canal: hex("#030a16"), pit: hex("#0b0806"), chasm: hex("#000000"),
 };

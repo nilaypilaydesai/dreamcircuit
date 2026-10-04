@@ -27,7 +27,7 @@ export interface PadRule { gap: number; straights: boolean }
 
 /** Climbs: their lengths, heights and the road between them (m), set on segments ``segs`` of
  * the lap (clear of the grid and the run to the line). ``kinds``, if given, are what each climb may
- * be built as, with lengths and heights of their own (a world's climbs: girders, cliff ledges). */
+ * be built as, with lengths and heights of their own (a world's climbs: girders, expressways). */
 export interface HillRule {
   len: [number, number]; h: [number, number]; gap: [number, number]; segs: [number, number];
   kinds?: ClimbKind[];
@@ -54,13 +54,13 @@ export interface TrackType {
 
 export const DEFAULT_RAMPS: RampRule = { straight: 85, bend: 1 / 170, gap: 260 };
 export const DEFAULT_PADS: PadRule = { gap: 170, straights: false };
-/** The mountains' climbs (any track type there): over rocky shoulders of the mountain, and along
- * ledges cut into its cliffs. */
-export const MOUNTAIN_HILLS: HillRule = {
-  len: [110, 170], h: [3.5, 6.2], gap: [80, 160], segs: [24, 180],
+/** Tokyo's climbs (any track type there): up onto the elevated expressway on its concrete piers,
+ * and up the ramp of a parking garage, under its ceiling, a floor up. */
+export const TOKYO_HILLS: HillRule = {
+  len: [90, 200], h: [3.6, 7.5], gap: [70, 150], segs: [24, 186],
   kinds: [
-    { style: "rock", shape: "sine", len: [120, 180], h: [4.5, 7.5] },
-    { style: "cliff", shape: "plateau", len: [130, 190], h: [5, 7] },
+    { style: "expressway", shape: "plateau", len: [150, 210], h: [6, 7.5] },
+    { style: "garage", shape: "plateau", len: [90, 130], h: [3.6, 4.2] },
   ],
 };
 /** The construction zone's: up onto concrete foundations, along scaffolding, and high along a

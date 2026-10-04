@@ -1,13 +1,13 @@
 // The land around a circuit, so that the ground is not one flat plane: knolls in the meadows,
-// buttes and dunes in the desert, glowing peaks on the neon grid, crags in the mountains, cinder
-// cones in the lava, heaps of spoil on the building site, rocks crowned with coral on the reef and
-// old crater rims on the moon. Each is a solid of a few dozen faces (render/landforms.ts), set out
+// buttes and dunes in the desert, glowing peaks on the neon grid, cinder cones in the lava, heaps
+// of spoil on the building site, rocks crowned with coral on the reef and old crater rims on the
+// moon, and blocks of towers in Tokyo. Each is a solid of a few dozen faces (render/landforms.ts), set out
 // when the circuit locks, always beyond the fence that keeps karts near the road, so nothing ever
 // drives into one.
 
 import { HALF_WIDTH } from "./track";
 
-export type LandformKind = "knoll" | "gridpeak" | "butte" | "dune" | "reefrock" | "crag" | "cone" | "spoil" | "rim";
+export type LandformKind = "knoll" | "gridpeak" | "butte" | "dune" | "reefrock" | "cone" | "spoil" | "rim" | "block";
 
 export interface Landform {
   kind: LandformKind;
@@ -27,10 +27,10 @@ export const LANDFORM_SIZE: Record<LandformKind, { r: [number, number]; h: [numb
   butte: { r: [14, 28], h: [10, 22], stretch: [1, 1.8] },
   dune: { r: [16, 28], h: [5, 9], stretch: [1.8, 2.6] },
   reefrock: { r: [10, 22], h: [5, 11], stretch: [1, 1.5] },
-  crag: { r: [16, 32], h: [10, 22], stretch: [1, 1.5] },
   cone: { r: [12, 22], h: [7, 12], stretch: [1, 1.2] },
   spoil: { r: [8, 15], h: [4, 8], stretch: [1, 1.6] },
   rim: { r: [24, 42], h: [4, 9], stretch: [1, 1.4] },
+  block: { r: [9, 16], h: [26, 64], stretch: [1, 1.7] },
 };
 
 /** How far a landform's foot must stay from the road: past the fence karts cannot cross (17 m out

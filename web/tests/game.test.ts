@@ -1319,20 +1319,20 @@ describe("the grand prix", () => {
     expect(cup.podium().map((x) => x.id)).toEqual([0, 1, 2]); // 39, 37, 35
   });
 
-  it("runs through every world, the reef, the mountains, the volcano, the building site and the moon too", () => {
+  it("runs through every world, the reef, Tokyo, the volcano, the building site and the moon too", () => {
     const ids = THEMES.map((t) => t.id);
-    expect(ids).toEqual(["valley", "neon", "mesa", "reef", "mountain", "volcano", "construction", "moon"]);
+    expect(ids).toEqual(["valley", "neon", "mesa", "reef", "tokyo", "volcano", "construction", "moon"]);
     expect(THEMES.find((t) => t.id === "reef")!.underwater).toBe(true);
     expect(THEMES.find((t) => t.id === "volcano")!.volcano).toBe(true);
     expect(THEMES.find((t) => t.id === "moon")!.gravity).toBeLessThan(0.5);
   });
 });
 
-describe("the mountains", () => {
-  const mountain = THEMES.find((t) => t.mountain)!;
+describe("Tokyo's climbs", () => {
+  const tokyo = THEMES.find((t) => t.winding)!;
 
-  it("climb over hills, gently, and the whole field races them to the finish", async () => {
-    const race = new Race({ rivals: 5, difficulty: "pro", theme: mountain, seed: 3, replay: twisty() }, null, () => {});
+  it("go up and over, never steeper than about 22%, and the whole field races them to the finish", async () => {
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: tokyo, seed: 3, replay: twisty() }, null, () => {});
     await race.prepare();
     const t = race.track;
     expect(t.hills.length).toBeGreaterThan(0);
@@ -1341,7 +1341,7 @@ describe("the mountains", () => {
     for (let i = 1; i < t.count; i++) {
       steepest = Math.max(steepest, Math.abs(t.elev[i] - t.elev[i - 1]) / Math.max(1e-6, t.s[i] - t.s[i - 1]));
     }
-    expect(steepest).toBeLessThan(0.23); // a mountain road: never steeper than about 22%
+    expect(steepest).toBeLessThan(0.23); // up an expressway's ramp: never steeper than about 22%
     const pilot = new RivalDriver(new Rand(2), race.player, 0);
     let climbing = 0;
     for (let i = 0; i < 60 * 240 && race.phase !== "done"; i++) {
@@ -1356,7 +1356,7 @@ describe("the mountains", () => {
 
   it("keep their climbs clear of a figure-eight's bridge and the road under it", async () => {
     for (const seed of [4, 5, 6]) {
-      const race = new Race({ rivals: 3, difficulty: "pro", theme: mountain, seed, replay: figure8() }, null, () => {});
+      const race = new Race({ rivals: 3, difficulty: "pro", theme: tokyo, seed, replay: figure8() }, null, () => {});
       await race.prepare();
       const t = race.track;
       expect(t.bridges.length).toBe(1);
@@ -1669,23 +1669,22 @@ describe("the lie of the land", () => {
   });
 });
 
-describe("the mountain pass, driven on", () => {
-  const mountain = THEMES.find((t) => t.id === "mountain")!;
+describe("Tokyo, driven on", () => {
+  const tokyo = THEMES.find((t) => t.id === "tokyo")!;
 
-  it("builds its climbs as rocky mountainsides and as ledges along cliffs", async () => {
+  it("builds its climbs as elevated expressways and parking garages, and winds more for drifting", async () => {
     const styles = new Set<string>();
     for (const seed of [3, 4]) {
-      const race = new Race({ rivals: 0, difficulty: "pro", theme: mountain, seed, replay: twisty() }, null, () => {});
+      const race = new Race({ rivals: 0, difficulty: "pro", theme: tokyo, seed, replay: twisty() }, null, () => {});
       await race.prepare();
       for (const h of race.track.hills) {
         styles.add(h.style!);
-        if (h.style === "cliff") {
-          expect(h.shape).toBe("plateau"); // a level ledge, cut into the rock
-          expect([1, -1]).toContain(h.side);
-        }
+        expect(h.shape).toBe("plateau"); // up a ramp, along the deck or the floor, and down
       }
     }
-    expect([...styles].sort()).toEqual(["cliff", "rock"]);
+    expect([...styles].sort()).toEqual(["expressway", "garage"]);
+    expect(tokyo.winding).toBe(true);
+    expect(tokyo.tunnels).toBe("city");
   });
 });
 
@@ -1836,10 +1835,10 @@ describe("drawing the worlds", () => {
 
   it("builds every style of climb out of faces, and draws them", async () => {
     const { hillFaces } = await import("../src/game/render/structures");
-    for (const style of ["earth", "rock", "cliff", "foundation", "girder", "scaffold", "crater", "meadow", "skyway", "wave",
+    for (const style of ["earth", "expressway", "garage", "foundation", "girder", "scaffold", "crater", "meadow", "skyway", "wave",
                          "mesa", "dune", "coral", "basalt"] as const) {
       const t = Track.fromPoints(calm());
-      const plateau = ["cliff", "foundation", "girder", "scaffold", "skyway", "mesa", "basalt"].includes(style);
+      const plateau = ["expressway", "garage", "foundation", "girder", "scaffold", "skyway", "mesa", "basalt"].includes(style);
       t.addHill({ s0: 200, len: 160, h: 6, shape: plateau ? "plateau" : "sine", style, side: 1 });
       const { cam, scr, faces, painter } = await scene();
       look(cam, t, t.s.findIndex((s) => s >= 215));
@@ -1895,21 +1894,21 @@ describe("drawing the worlds", () => {
     }
   });
 
-  it("builds a tunnel through rock, or through a building's steel frame", async () => {
+  it("builds a tunnel under a building, or through a building's steel frame", async () => {
     const { tunnelFaces } = await import("../src/game/render/structures");
     const t = Track.fromPoints(calm());
     const f = new Features(true);
     f.onCommit(t, 0, t.count, () => false, () => 0.5);
     const counts: number[] = [];
-    for (const theme of [THEMES.find((x) => x.id === "mountain")!, THEMES.find((x) => x.id === "construction")!]) {
+    for (const theme of [THEMES.find((x) => x.id === "tokyo")!, THEMES.find((x) => x.id === "construction")!]) {
       const { cam, faces, painter } = await scene();
       look(cam, t, f.tunnels[0].start);
       tunnelFaces(painter, t, f, theme);
       for (const face of faces) face.draw();
       counts.push(faces.length);
     }
-    expect(counts[0]).toBeGreaterThan(20);
-    expect(counts[1]).toBeGreaterThan(counts[0]); // columns, slabs and glass: more parts than rock
+    expect(counts[0]).toBeGreaterThan(60); // tiled walls, lamps, the building's walls and windows, its facades and signs
+    expect(counts[1]).toBeGreaterThan(20); // barriers, columns, slabs and glass
   });
 
   it("paints a city of towers and tower cranes behind the building site, and the Earth in the moon's sky", async () => {
@@ -1929,6 +1928,9 @@ describe("drawing the worlds", () => {
     expect(await sees("construction", crane)).toBe(true);
     expect(await sees("moon", sea)).toBe(true);
     expect(await sees("moon", crane)).toBe(false);
+    // Tokyo at night: lit windows, and the moon's light on Fuji's snow
+    expect(await sees("tokyo", (r, g, b) => r > 240 && g > 200 && g < 230 && b > 120 && b < 150)).toBe(true);
+    expect(await sees("tokyo", (r, g, b) => b > 200 && r > 180 && r < 215 && g > 190 && g < 220)).toBe(true);
   });
 });
 

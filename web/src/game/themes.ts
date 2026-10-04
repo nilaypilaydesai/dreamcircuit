@@ -2,7 +2,7 @@
 
 import { hex } from "./core/gfx";
 import {
-  type HillRule, MESA_HILLS, MOON_HILLS, MOUNTAIN_HILLS, NEON_HILLS, REEF_HILLS, SITE_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
+  type HillRule, MESA_HILLS, MOON_HILLS, NEON_HILLS, REEF_HILLS, SITE_HILLS, TOKYO_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
 } from "./race/tracktypes";
 import type { HazardKind } from "./world/hazards";
 import type { LandformKind } from "./world/landforms";
@@ -12,7 +12,8 @@ export type SceneryKind =
   | "pine" | "oak" | "bush" | "rock" | "flowers" | "cactus" | "palm" | "crystal" | "neonpalm"
   | "mesa" | "lamp" | "tire" | "cone" | "chevron"
   | "kelp" | "coral" | "anemone" | "shell" | "wreck" // the reef
-  | "snowpine" | "cliff" | "peak" | "snowbank" // the mountains
+  | "streetlamp" | "vending" | "lantern" | "neonsign" | "pole" | "sakura" // Tokyo's streets
+  | "tower" | "apartment" | "billboard" | "pagoda" // and its skyline
   | "basalt" | "obsidian" | "vent" | "spire" | "magmarock" // the volcano
   | "crane" | "skeleton" | "mixer" | "digger" | "pipes" | "girders" | "barrier" | "drum" // the construction zone
   | "lander" | "dish" | "habitat" | "boulder" | "rover"; // the moon
@@ -41,8 +42,7 @@ export interface Theme {
   near: SceneryKind[]; // decorations beside the road
   far: SceneryKind[]; // landscape across the infield and beyond
   underwater?: boolean; // bubble helmets, rising bubbles, light shafts, caustics, fish
-  mountain?: boolean; // climbs over hills, tunnels, a more winding road
-  snow?: number; // snow on the far mountain tops (0 = none)
+  winding?: boolean; // a more winding road (the dream leans wild): Tokyo's streets, for drifting
   farAmp?: number; // how tall the far hills on the horizon are (default 26 px)
   volcano?: boolean; // a lake of lava around a rock road (drive into it and a drone fishes you
   // out), crater walls with lava falls all around, embers in the air
@@ -51,10 +51,11 @@ export interface Theme {
   scale?: number; // how much bigger than usual its circuits are drawn (the moon's: a jump carries a kart far)
   hills?: HillRule; // climbs set along the road as it is dreamed (any track type)
   hillStyle?: HillStyle; // what climbs are built as when the rule does not say (default: earth)
-  tunnels?: "rock" | "frame"; // tunnels on long straights: through rock, or a building's steel frame
+  tunnels?: "city" | "frame"; // tunnels on long straights: under a building, or through a building's steel frame
   helmets?: boolean; // every driver wears a clear helmet (the reef has its own, under water)
-  terrain?: "craters" | "dirt"; // the ground: cratered regolith, or a building site's churned dirt
-  skyline?: "city" | "moon"; // the far hills are a city of towers and cranes, or the moon's ridges with the Earth up above
+  terrain?: "craters" | "dirt" | "city"; // the ground: cratered regolith, a building site's churned dirt, or wet paving at night
+  skyline?: "city" | "moon" | "tokyo"; // the far hills are a city of towers and cranes, the moon's ridges with the
+  // Earth up above, or Tokyo at night (lit towers, a lattice tower, Fuji far off under the moon)
   relief?: number; // m: how much the ground rises and falls (shaded into it, lit from the north-west)
   ripples?: boolean; // sand: ripples the wind has drawn across it
   landforms?: LandformKind[]; // the land around the circuit: knolls, buttes, dunes, peaks (3D, off the road)
@@ -111,17 +112,20 @@ export const THEMES: Theme[] = [
     underwater: true, hills: REEF_HILLS, hillStyle: "coral", relief: 3, ripples: true, landforms: ["reefrock"], hazard: "trench",
   },
   {
-    id: "mountain", name: "MOUNTAIN PASS", blurb: "UP THE MOUNTAINSIDE, ALONG CLIFF LEDGES, THROUGH THE ROCK",
-    skyTop: hex("#2f6fd6"), skyHorizon: hex("#cfe6ff"), fog: hex("#dbe9f7"), sun: hex("#fff3c4"), stars: false,
-    farHills: hex("#6b7ba0"), nearHills: hex("#3d6a4d"), clouds: hex("#ffffff"),
-    ground: [hex("#6f8f5a"), hex("#678653")], groundSpeck: hex("#f4f7fb"),
-    shoulder: hex("#8f8a7c"), road: hex("#4f525c"), roadSpeck: hex("#5c606b"),
-    edge: hex("#f4f4f4"), kerb: [hex("#d62828"), hex("#f4f4f4")], barrier: hex("#3a3d46"),
+    // Tokyo at night, for drifting: winding streets between lit towers, vending machines and paper
+    // lanterns, up onto the elevated expressway and up the ramp of a parking garage, through
+    // tunnels under buildings, the paving wet and full of neon; Fuji far off under the moon
+    id: "tokyo", name: "TOKYO NIGHTS", blurb: "DRIFT THE NEON STREETS, UP THE EXPRESSWAY AND THE PARKING GARAGE",
+    skyTop: hex("#05071a"), skyHorizon: hex("#4a2352"), fog: hex("#241a3c"), sun: 0, stars: false,
+    farHills: hex("#171b2e"), nearHills: hex("#0f1221"), clouds: 0,
+    ground: [hex("#25282f"), hex("#22252c")], groundSpeck: hex("#3a3e4a"),
+    shoulder: hex("#3e424c"), road: hex("#1d1f26"), roadSpeck: hex("#272a33"),
+    edge: hex("#f2f2f2"), kerb: [hex("#e23b3b"), hex("#f2f2f2")], barrier: hex("#c9ced6"),
     grid: 0,
-    near: ["snowpine", "rock", "snowpine", "snowbank", "cliff", "snowpine", "cone"],
-    far: ["snowpine", "snowpine", "peak", "rock", "cliff", "snowpine", "snowbank"],
-    mountain: true, snow: hex("#f6f9ff"), farAmp: 46, hills: MOUNTAIN_HILLS, hillStyle: "rock", tunnels: "rock",
-    relief: 8, landforms: ["crag"], hazard: "crevasse",
+    near: ["streetlamp", "vending", "lantern", "neonsign", "pole", "sakura", "streetlamp", "vending"],
+    far: ["tower", "apartment", "tower", "billboard", "sakura", "pagoda", "tower", "apartment"],
+    winding: true, farAmp: 34, hills: TOKYO_HILLS, hillStyle: "expressway", tunnels: "city", terrain: "city",
+    skyline: "tokyo", wall: hex("#b8bcc4"), landforms: ["block"], hazard: "canal",
   },
   {
     // inside a volcano: the road is a causeway of rock across a lake of lava ("ground" is the

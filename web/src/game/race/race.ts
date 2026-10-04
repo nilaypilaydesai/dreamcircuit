@@ -265,7 +265,10 @@ export class Race {
       const perSeg = s / Math.max(1, (seg - FIRST_SEG + N) % N);
       const intoLine = seg + (len + 80) / Math.max(perSeg, 1) > N;
       const jump = this.features.rampNear(s - 30, len + 60);
-      if (tunnel || jump || intoLine || this.blocked(s - 10, len + 20, false)) {
+      // (a long climb must clear a bridge, and the road under it, from end to end, not just at its middle)
+      const bridged = t.bridges.some((b) => (b.centerS + BRIDGE_CLEAR > s - 10 && b.centerS - BRIDGE_CLEAR < s + len + 10) ||
+        (t.s[b.lower] + UNDER_CLEAR > s - 10 && t.s[b.lower] - UNDER_CLEAR < s + len + 10));
+      if (tunnel || jump || bridged || intoLine || this.blocked(s - 10, len + 20, false)) {
         this.nextHill = s + 15;
         if (++this.hillTries > 12) {
           this.hillTurn++;
@@ -308,6 +311,24 @@ export class Race {
     // gentler bend (a 20 m flight there drifts 3 m: still on the road)
     for (const [where, bend] of [[free, 1 / 90], [nearRows, 1 / 90], [nearRows, 1 / 60]] as const) {
       if (min.ramps && f.ramps.length < min.ramps) f.topUpRamps(t, min.ramps - f.ramps.length, where, bend);
+    }
+    // still short of the jumps it confirms: a climb that no kart is on gives its road to a jump (the
+    // straightest climbs first), so the promise is kept
+    if (min.ramps && f.ramps.length < min.ramps) {
+      const straightness = (h: { s0: number; len: number }) => {
+        let worst = 0;
+        for (let i = 0; i < t.count; i += 4) if (t.s[i] >= h.s0 && t.s[i] <= h.s0 + h.len) worst = Math.max(worst, Math.abs(t.curvature(i)));
+        return worst;
+      };
+      for (const h of [...t.hills].sort((a, b) => straightness(a) - straightness(b))) {
+        if (f.ramps.length >= min.ramps) break;
+        if (this.kartsNear(h.s0 - 30, h.len + 60)) continue;
+        const r = t.removeHills(h.s0, h.s0 + h.len);
+        if (!r) continue;
+        this.tex.repaint(t, r[0], r[1]);
+        this.items.relift(t);
+        f.topUpRamps(t, min.ramps - f.ramps.length, nearRows, 1 / 60);
+      }
     }
     for (const where of [free, nearRows]) {
       if (min.pads && f.pads.length < min.pads) f.topUpPads(t, min.pads - f.pads.length, where, () => this.rng.next());
@@ -357,9 +378,9 @@ export class Race {
    * fast, clean and drifting raises it; running wide or slow calms the dream down. */
   styleWanted(): number {
     const d = this.driving;
-    // Legend leans wild and Rookie calm (Intermediate a little calm); the mountains wind more
+    // Legend leans wild and Rookie calm (Intermediate a little calm); Tokyo's streets wind more
     const bias = { rookie: -0.1, intermediate: -0.05, pro: 0, legend: 0.1 }[this.setup.difficulty] +
-      (this.setup.theme.mountain ? 0.12 : 0);
+      (this.setup.theme.winding ? 0.12 : 0);
     // (centred a little calm: dreamed laps had too many hairpins)
     const v = 0.45 + 1.25 * (d.speed - 0.72) + 0.6 * d.drift - 1.1 * d.offroad - 0.25 * (1 - d.clean) + bias;
     return Math.max(0.05, Math.min(0.95, v));
@@ -549,10 +570,10 @@ export class Race {
     if (k.isPlayer) this.events.push(into === "lava" ? { kind: "lava" } : { kind: "fell", into });
   }
 
-  /** Whether the road at kart k's spot is raised road with an open edge on k's side: a bridge, a
-   * skyway, a girder, scaffolding, a foundation, a mesa's wall, a basalt causeway, or the drop side
-   * of a cliff ledge (an embankment's slope it would just land on). And how far past the road's
-   * edge the deck goes there. */
+  /** Whether the road at kart k's spot is raised road with an open edge: a bridge, a skyway, a
+   * girder, scaffolding, a foundation, a mesa's wall or a basalt causeway (not an embankment's
+   * slope, which it would just land on, nor an expressway's or a garage's walls). And how far past
+   * the road's edge the deck goes there. */
   private openEdge(k: Kart): number | null {
     const t = this.track;
     if (t.bridgeAt(k.idx) > 1) return 0;
@@ -560,7 +581,6 @@ export class Race {
     const h = t.hills.find((hl) => s >= hl.s0 && s <= hl.s0 + hl.len);
     if (!h) return null;
     const style = h.style ?? this.setup.theme.hillStyle ?? "earth";
-    if (style === "cliff") return Math.sign(k.offset) === -(h.side ?? 1) ? 0 : null;
     if (style === "mesa") return 2.2; // (a strip of sand along the top before the wall)
     return OPEN_EDGES.has(style) ? 0 : null;
   }

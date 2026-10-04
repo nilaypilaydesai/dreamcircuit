@@ -2,7 +2,8 @@
 // silhouettes that scroll at different rates as the camera turns. Inside the volcano the hills
 // are the crater's walls: dark basalt lit red from below, with lava falling down them. Behind
 // the building site they are a city's towers, with half-built frames and tower cranes in front;
-// on the moon, grey ridges under a black sky with the Earth hanging in it.
+// on the moon, grey ridges under a black sky with the Earth hanging in it; over Tokyo, lit towers
+// at night, a lattice tower, and Fuji far off under the moon.
 
 import { H, Rand, W, hex, mix, shade, type Screen, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
@@ -48,11 +49,15 @@ export class Sky {
     }
     if (t.skyline === "moon") {
       this.earth(rng, h);
-      this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3, 0, true);
+      this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3, true);
       this.hills(this.near, rng, h, t.nearHills, 0.86, 7, 4);
       return;
     }
-    this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3, t.snow ?? 0);
+    if (t.skyline === "tokyo") {
+      this.tokyo(rng, h, t);
+      return;
+    }
+    this.hills(this.far, rng, h, t.farHills, 0.62, t.farAmp ?? 26, 3);
     this.hills(this.near, rng, h, t.nearHills, 0.82, 12, 5);
   }
 
@@ -212,6 +217,83 @@ export class Sky {
     }
   }
 
+  /** Tokyo at night: a full moon over Fuji (its snow catching the moonlight) far off across a low
+   * skyline of lit windows, a red and white lattice tower lit up above it all, and nearer towers
+   * with neon on their roofs and red lights blinking on top. */
+  private tokyo(rng: Rand, h: number, t: Theme): void {
+    const far = this.far, set = (dst: Uint32Array, x: number, y: number, c: number) => {
+      if (y >= 0 && y < h) dst[y * PAN + (((x % PAN) + PAN) % PAN)] = c;
+    };
+    // the moon, and Fuji below it to one side
+    const mx = rng.int(0, PAN), my = Math.floor(h * 0.22), mr = 7;
+    for (let y = my - mr - 5; y <= my + mr + 5; y++) {
+      for (let x = mx - mr - 5; x <= mx + mr + 5; x++) {
+        const d = Math.hypot(x - mx, y - my);
+        if (d <= mr) set(far, x, y, (x * 7 + y * 3) % 11 === 0 && d < mr - 2 ? hex("#d9dbe6") : hex("#f4f2e6"));
+        else if (d <= mr + 5 && y >= 0 && y < h) {
+          const i = y * PAN + (((x % PAN) + PAN) % PAN);
+          far[i] = mix(far[i], hex("#b9b6d8"), 0.3 * (1 - (d - mr) / 5));
+        }
+      }
+    }
+    const fx = mx + rng.int(60, 140) * (rng.next() < 0.5 ? 1 : -1), half = 170, peak = Math.floor(h * 0.3);
+    for (let x = fx - half; x <= fx + half; x++) {
+      const d = Math.abs(x - fx) / half, rise = (h - peak) * Math.min(1, ((1 - d) / 0.96) ** 1.7);
+      const top = Math.round(h - rise), snowline = peak + (h - peak) * 0.24 + Math.round(Math.sin(x * 0.9) * 2 + Math.sin(x * 0.37) * 3);
+      for (let y = top; y < h; y++) {
+        const lit = x < fx ? 1 : 0.84;
+        set(far, x, y, y < snowline ? shade(hex("#c9d3ea"), lit) : shade(hex("#262c46"), lit * (1 - 0.3 * ((y - top) / Math.max(1, h - top)))));
+      }
+    }
+    // the lattice tower: a tapering red and white frame, two lit decks, lights up its legs
+    const tx = fx + rng.int(220, 520), tTop = Math.floor(h * 0.18), tBase = h;
+    for (let y = tTop; y < tBase; y++) {
+      const u = (y - tTop) / (tBase - tTop), w = Math.round(1 + u * u * 16);
+      const band = Math.floor((y - tTop) / 4) & 1 ? hex("#e8e8ec") : hex("#d8402e");
+      for (let dx = -w; dx <= w; dx++) {
+        const edge = Math.abs(dx) >= w - 1, lace = (dx + y) % 4 === 0 || (dx - y) % 4 === 0;
+        if (edge || lace) set(far, tx + dx, y, edge ? band : shade(band, 0.7));
+      }
+    }
+    for (const [u, w] of [[0.42, 5], [0.62, 8]]) {
+      const y = Math.floor(tTop + u * (tBase - tTop));
+      for (let dx = -w; dx <= w; dx++) for (let k = 0; k < 2; k++) set(far, tx + dx, y + k, k ? hex("#ffd98a") : hex("#e8e8ec"));
+    }
+    for (let y = tTop - 6; y < tTop; y++) set(far, tx, y, hex("#e8e8ec"));
+    set(far, tx, tTop - 7, hex("#ff2a2a"));
+    // the city: a low skyline far off, then nearer and taller towers, every window that is lit a dot
+    this.nightCity(far, rng, h, t.farHills, 0.84, 16, 0.28, false);
+    this.nightCity(this.near, rng, h, t.nearHills, 0.95, (t.farAmp ?? 26) * 0.95, 0.4, true);
+  }
+
+  /** A night skyline: towers of ``color`` side by side (gaps between some), their windows lit (a
+   * share ``lit`` of them, warm or cool), a red light on the tall ones, and with ``neon`` a glowing
+   * sign on some roofs. */
+  private nightCity(dst: Uint32Array, rng: Rand, h: number, color: number, base: number, amp: number, lit: number,
+                    neon: boolean): void {
+    const set = (x: number, y: number, c: number) => {
+      if (y >= 0 && y < h) dst[y * PAN + (((x % PAN) + PAN) % PAN)] = c;
+    };
+    const signs = [hex("#ff3fa4"), hex("#2de2e6"), hex("#ffd23f"), hex("#9d6bff")];
+    for (let x = rng.int(0, 10); x < PAN;) {
+      const w = rng.int(neon ? 10 : 6, neon ? 26 : 18), top = Math.floor(h * base - rng.range(0.25, 1) * amp);
+      for (let dx = 0; dx < w; dx++) {
+        for (let y = top; y < h; y++) {
+          const r = y - top, win = r > 1 && dx > 0 && dx < w - 1 && r % 3 === 1 && dx % 2 === 1;
+          const c = win && rng.next() < lit ? (rng.next() < 0.65 ? hex("#ffd98a") : hex("#dfe8ff"))
+            : dx === 0 ? shade(color, 1.4) : color;
+          set(x + dx, y, c);
+        }
+      }
+      if (top < h * base - amp * 0.6) set(x + (w >> 1), top - 1, hex("#ff2a2a"));
+      if (neon && rng.next() < 0.35) {
+        const c = rng.pick(signs), sw = Math.min(w - 2, rng.int(5, 10));
+        for (let dx = 1; dx <= sw; dx++) for (let y = top - 4; y < top - 1; y++) set(x + dx, y, y === top - 3 ? shade(c, 1.3) : c);
+      }
+      x += w + (rng.next() < 0.3 ? rng.int(3, 12) : 0);
+    }
+  }
+
   /** The Earth hanging in the moon's black sky: blue seas, green and brown land, ice at the poles
    * and swirls of cloud, lit from one side with the night side faint, a thin blue rim of air. */
   private earth(rng: Rand, h: number): void {
@@ -240,7 +322,7 @@ export class Sky {
   }
 
   private hills(dst: Uint32Array, rng: Rand, h: number, color: number, base: number, amp: number,
-                octaves: number, snow = 0, ridged = snow > 0): void {
+                octaves: number, ridged = false): void {
     // a periodic 1-D fractal profile: sums of sines with integer frequencies wrap seamlessly
     const comps = Array.from({ length: octaves * 3 }, (_, k) => ({
       f: 1 + rng.int(1, 4 + k * 3), a: rng.range(0.4, 1) / (1 + k), p: rng.range(0, Math.PI * 2),
@@ -251,14 +333,11 @@ export class Sky {
       let v = 0;
       for (const c of comps) v += c.a * Math.sin(c.f * th + c.p);
       let n = v / norm;
-      // mountains are ridged, a sharp peak wherever the sum crosses zero, not rolling hills
+      // ridges are sharp, a peak wherever the sum crosses zero, not rolling hills
       if (ridged) n = 0.3 - 1.2 * Math.abs(n);
       const top = Math.floor(h * base - n * amp - amp * 0.4);
-      // snow caps the taller peaks: deeper on the highest ones
-      const cap = snow ? Math.max(0, Math.round((n - 0.04) * amp * 0.5)) : 0;
       for (let y = Math.max(0, top); y < h; y++) {
-        dst[y * PAN + x] = y < top + cap ? (y === top ? 0xffffffff : snow)
-          : y === top ? shade(color, 1.25) : shade(color, 1 - 0.25 * ((y - top) / Math.max(1, h - top)));
+        dst[y * PAN + x] = y === top ? shade(color, 1.25) : shade(color, 1 - 0.25 * ((y - top) / Math.max(1, h - top)));
       }
     }
   }

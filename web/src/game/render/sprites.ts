@@ -844,65 +844,218 @@ export function fishFrames(color: number): SceneryArt[] {
   });
 }
 
-// ---------------------------------------------------------------------------------- the mountains
+// ---------------------------------------------------------------------------------- Tokyo
 
-function snowpine(rng: Rand): SceneryArt {
-  const p = pine(rng);
-  const s = p.sprite;
-  const snow = hex("#f6f9ff");
-  for (let y = 0; y < s.h - 10; y++) {
-    for (let x = 0; x < s.w; x++) {
-      const c = s.data[y * s.w + x];
-      // snow lies on the top edge of every tier
-      if (c && c !== hex("#0e2416") && (y === 0 || !s.data[(y - 1) * s.w + x] || s.data[(y - 1) * s.w + x] === hex("#0e2416"))) {
-        s.data[y * s.w + x] = snow;
-        if (y + 1 < s.h && rng.next() > 0.5) s.data[(y + 1) * s.w + x] = snow;
+const NEONS = [hex("#ff3fa4"), hex("#2de2e6"), hex("#ffd23f"), hex("#9d6bff"), hex("#ff6a3a")];
+const NIGHT_INK = hex("#0b0c12");
+
+/** A street lamp: a tall grey pole, an arm reaching out over the road, a sodium lamp glowing
+ * orange at its end. */
+function streetlamp(rng: Rand): SceneryArt {
+  const s = makeSprite(18, 58);
+  const pole = hex("#5a5f68");
+  rect(s, 2, 6, 4, 58, pole);
+  rect(s, 1, 54, 5, 58, shade(pole, 0.8));
+  for (let x = 3; x < 13; x++) px(s, x, 6 - Math.round(((x - 3) / 10) ** 2 * 3), pole); // the arm, curving up and out
+  rect(s, 10, 2, 16, 4, hex("#3a3e46")); // the lamp's housing, and its glowing lens
+  rect(s, 10, 4, 16, 6, hex("#ffb347"));
+  rect(s, 11, 6, 15, 7, hex("#ffd9a0"));
+  outline(s, NIGHT_INK);
+  for (const [x, y] of [[9, 7], [16, 7], [12, 8], [13, 8], [10, 8], [15, 8]]) px(s, x, y, hex("#8a5426")); // the glow under it
+  return { sprite: s, height: 8 + rng.range(-0.5, 1), solid: true };
+}
+
+/** Vending machines, two side by side: lit windows of drinks in rows, buttons, a coin panel and
+ * the slot at the bottom. */
+function vending(rng: Rand): SceneryArt {
+  const s = makeSprite(26, 30);
+  const bodies = [rng.pick([hex("#d8dde6"), hex("#c8202c")]), rng.pick([hex("#2a62c8"), hex("#e8e8ea"), hex("#1f8f4f")])];
+  const drinks = [hex("#e8343a"), hex("#2f80ed"), hex("#27ae60"), hex("#f2c94c"), hex("#f2994a"), hex("#ffffff")];
+  bodies.forEach((body, m) => {
+    const x0 = m * 13;
+    rect(s, x0, 0, x0 + 12, 30, body);
+    rect(s, x0, 0, x0 + 12, 1, shade(body, 1.25));
+    rect(s, x0 + 1, 2, x0 + 11, 17, hex("#e6f6ff"));
+    for (let row = 0; row < 3; row++) {
+      for (let k = 0; k < 4; k++) rect(s, x0 + 2 + k * 2, 3 + row * 5, x0 + 3 + k * 2, 6 + row * 5, rng.pick(drinks));
+      rect(s, x0 + 2, 6 + row * 5, x0 + 10, 7 + row * 5, hex("#b8c4cc")); // the shelf
+    }
+    rect(s, x0 + 1, 18, x0 + 11, 19, hex("#4a4f5a"));
+    rect(s, x0 + 8, 20, x0 + 11, 23, hex("#2a2d36"));
+    rect(s, x0 + 2, 24, x0 + 10, 27, hex("#16181f"));
+  });
+  outline(s, NIGHT_INK);
+  return { sprite: s, height: 1.9, solid: true };
+}
+
+/** Red paper lanterns, glowing, hung from a little wooden eave on a post. */
+function lantern(rng: Rand): SceneryArt {
+  const s = makeSprite(22, 36);
+  const wood = hex("#4a2e1c");
+  rect(s, 10, 6, 12, 36, wood);
+  rect(s, 1, 3, 21, 4, shade(wood, 1.4));
+  rect(s, 2, 4, 20, 6, wood);
+  const lit = rng.next() < 0.5 ? hex("#ff7a3a") : hex("#ff9a4a");
+  for (const cx of [5, 16]) {
+    rect(s, cx, 6, cx + 1, 8, hex("#2a1a10"));
+    for (let y = 8; y < 21; y++) {
+      const t = (y - 8) / 12, w = Math.round(3.6 * Math.sin(Math.PI * (0.12 + 0.76 * t)) + 0.4);
+      for (let x = cx - w; x <= cx + 1 + w; x++) {
+        const c = y === 8 || y === 20 ? hex("#1a1210") : y % 3 === 0 ? hex("#b5141c") : Math.abs(x - cx - 0.5) < w * 0.45 ? lit : hex("#e8232e");
+        px(s, x, y, c);
       }
     }
   }
-  return p;
+  outline(s, hex("#140c08"));
+  return { sprite: s, height: 3.2, solid: true };
 }
 
-function cliff(rng: Rand): SceneryArt {
-  const s = makeSprite(44, 46);
-  const base = rng.pick([hex("#7d7a74"), hex("#8a8174"), hex("#6f6c69")]);
-  const tops = Array.from({ length: 6 }, () => rng.int(2, 18));
-  for (let x = 0; x < 44; x++) {
-    const k = (x / 44) * 5, i = Math.floor(k), t = k - i;
-    const top = Math.round(tops[i] * (1 - t) + tops[i + 1] * t);
-    for (let y = top; y < 46; y++) {
-      const strata = (y + Math.floor(x / 7)) % 8 === 0;
-      px(s, x, y, y < top + 2 ? hex("#f6f9ff") : strata ? shade(base, 0.78) : x < 14 ? shade(base, 1.1) : base);
+/** A neon sign on a pole: a glowing border round a dark panel, and down it four characters made of
+ * bright strokes (the look of signs on the street, not words). */
+function neonsign(rng: Rand): SceneryArt {
+  const s = makeSprite(14, 50);
+  const neon = rng.pick(NEONS), ink = rng.pick([hex("#ffffff"), hex("#fff4b0"), rng.pick(NEONS)]);
+  rect(s, 6, 32, 8, 50, hex("#4a4f5a"));
+  rect(s, 0, 0, 14, 33, neon);
+  rect(s, 1, 1, 13, 32, hex("#140f1f"));
+  for (let g = 0; g < 4; g++) {
+    const y0 = 3 + g * 7;
+    rect(s, 3, y0 + rng.int(0, 2), 3 + rng.int(5, 8), y0 + rng.int(0, 2) + 1, ink); // a stroke across
+    const x = 4 + rng.int(0, 5);
+    rect(s, x, y0, x + 1, y0 + rng.int(4, 6), ink); // one down
+    if (rng.next() < 0.7) { const y = y0 + rng.int(3, 5); rect(s, 3 + rng.int(0, 2), y, 3 + rng.int(5, 8), y + 1, ink); }
+  }
+  outline(s, NIGHT_INK);
+  return { sprite: s, height: 5.5 + rng.range(0, 1.5), solid: true };
+}
+
+/** A utility pole: concrete, two crossarms with white insulators, a transformer, and wires
+ * drooping away to either side. */
+function pole(rng: Rand): SceneryArt {
+  const s = makeSprite(32, 64);
+  const conc = hex("#8a8e96"), arm = hex("#4f535b"), wire = hex("#16181d");
+  rect(s, 15, 0, 17, 64, conc);
+  rect(s, 15, 0, 16, 64, shade(conc, 1.15));
+  for (const y of [6, 12]) {
+    rect(s, 7, y, 25, y + 1, arm);
+    for (const x of [8, 12, 20, 24]) px(s, x, y - 1, hex("#e8e8e2"));
+  }
+  rect(s, 17, 20, 22, 28, hex("#6f747c"));
+  rect(s, 17, 20, 22, 21, hex("#9aa0aa"));
+  outline(s, NIGHT_INK);
+  const sag = rng.range(2.5, 4);
+  for (const [x0, y0, x1] of [[8, 5, 0], [24, 5, 31], [12, 11, 0], [20, 11, 31]]) {
+    for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) {
+      const t = (x - x0) / (x1 - x0);
+      px(s, x, Math.round(y0 + 4 * sag * t * (1 - t) + 2 * t), wire);
     }
   }
-  outline(s, hex("#2b2a28"));
-  return { sprite: s, height: 7 + rng.range(0, 3.5), solid: true };
+  return { sprite: s, height: 10, solid: true };
 }
 
-function peak(rng: Rand): SceneryArt {
-  const s = makeSprite(120, 80);
-  const rock = hex("#6f6f80"), dark = hex("#4f4f60"), snow = hex("#f6f9ff");
-  const apex = rng.int(48, 72);
-  for (let x = 0; x < 120; x++) {
-    const slope = x < apex ? (apex - x) / apex : (x - apex) / (120 - apex);
-    const top = Math.round(4 + slope * 74);
-    for (let y = top; y < 80; y++) {
-      const snowline = top + 10 + Math.sin(x * 0.7) * 3;
-      px(s, x, y, y < snowline ? snow : x > apex ? dark : rock);
+/** A cherry tree in blossom: a dark trunk and branches under a cloud of pink, petals falling. */
+function sakura(rng: Rand): SceneryArt {
+  const s = makeSprite(36, 36);
+  const trunk = hex("#3a2620"), pinks = [hex("#ffc4dd"), hex("#ff9ec7"), hex("#ffb7d5")];
+  rect(s, 16, 20, 20, 36, trunk);
+  stroke(s, 18, 23, 9, 14, 1, trunk);
+  stroke(s, 18, 23, 27, 13, 1, trunk);
+  for (const [cx, cy, r] of [[18, 11, 10], [9, 15, 7], [27, 15, 7], [18, 18, 7]]) {
+    disc(s, cx, cy, r, (x, y) => (y < cy - r * 0.35 ? hex("#ffe2ef") : pinks[(x * 3 + y * 5) % 3]));
+  }
+  for (let k = 0; k < 10; k++) px(s, rng.int(6, 30), rng.int(3, 22), hex("#ffffff"));
+  outline(s, hex("#5a2a3a"));
+  for (let k = 0; k < 7; k++) px(s, rng.int(3, 33), rng.int(25, 35), hex("#ffb7d5")); // petals, falling
+  return { sprite: s, height: 6.5 + rng.range(-1, 1.5), solid: true };
+}
+
+/** An office tower at night: dark glass, rows of windows (most lit, warm or cool), a red light on
+ * the roof, and on some a tall neon sign down one side. */
+function tower(rng: Rand): SceneryArt {
+  const w = rng.int(22, 30), h = rng.int(84, 112);
+  const s = makeSprite(w + 6, h);
+  const glass = rng.pick([hex("#1d2436"), hex("#232a3d"), hex("#1a1f2e")]);
+  rect(s, 0, 5, w, h, glass);
+  rect(s, 0, 5, 2, h, shade(glass, 1.5));
+  for (let y = 8; y < h - 2; y += 4) {
+    for (let x = 3; x < w - 2; x += 3) {
+      const r = rng.next();
+      rect(s, x, y, x + 2, y + 2, r < 0.36 ? hex("#ffd98a") : r < 0.56 ? hex("#dfe8ff") : r < 0.6 ? hex("#9fd8ff") : shade(glass, 0.75));
     }
   }
-  outline(s, hex("#5a5a6a"));
-  return { sprite: s, height: 55 + rng.range(0, 25), solid: false };
+  rect(s, 4, 1, w - 4, 5, shade(glass, 0.85));
+  px(s, w >> 1, 0, hex("#ff2a2a"));
+  if (rng.next() < 0.6) {
+    const neon = rng.pick(NEONS), top = rng.int(14, 30), len = rng.int(26, 44);
+    rect(s, w, top, w + 6, top + len, neon);
+    rect(s, w + 1, top + 1, w + 5, top + len - 1, hex("#140f1f"));
+    for (let y = top + 3; y < top + len - 3; y += 5) rect(s, w + 2, y, w + 4, y + 3, neon);
+  }
+  outline(s, NIGHT_INK);
+  return { sprite: s, height: 45 + rng.range(0, 25), solid: false };
 }
 
-function snowbank(rng: Rand): SceneryArt {
-  const s = makeSprite(24, 10);
-  for (const [cx, cy, r] of [[7, 8, 5], [13, 7, 6], [18, 8, 5]]) {
-    disc(s, cx, cy, r, (_x, y) => (y < cy - 2 ? hex("#ffffff") : hex("#dfe8f4")));
+/** A block of flats at night: a balcony along every floor, windows lit warm (a few blue with a
+ * television on), air conditioners. */
+function apartment(rng: Rand): SceneryArt {
+  const w = 44, floors = rng.int(7, 11), fh = 6, h = floors * fh + 3;
+  const s = makeSprite(w, h);
+  const wall = shade(rng.pick([hex("#8f8a80"), hex("#7f8590"), hex("#9a8f7f")]), 0.55);
+  rect(s, 0, 0, w, h, wall);
+  rect(s, 0, 0, w, 3, shade(wall, 0.8));
+  for (let f = 0; f < floors; f++) {
+    const y = 3 + f * fh;
+    for (let x = 2; x < w - 4; x += 6) {
+      const r = rng.next();
+      rect(s, x, y + 1, x + 4, y + 4, r < 0.5 ? hex("#ffcf7a") : r < 0.6 ? hex("#7fb2ff") : hex("#202330"));
+      if (rng.next() < 0.25) rect(s, x + 4, y + 3, x + 6, y + 5, hex("#c8ccd4")); // an air conditioner
+    }
+    rect(s, 0, y + fh - 1, w, y + fh, shade(wall, 1.6));
   }
-  if (rng.next() > 0.5) px(s, 12, 3, hex("#bfcde0"));
-  outline(s, hex("#8fa0b8"));
-  return { sprite: s, height: 1.1, solid: false };
+  outline(s, NIGHT_INK);
+  return { sprite: s, height: floors * 2.8, solid: false };
+}
+
+/** A billboard up on a frame: a big lit screen of colour and shapes (no words). */
+function billboard(rng: Rand): SceneryArt {
+  const s = makeSprite(48, 40);
+  const frame = hex("#3a3e46"), a = rng.pick(NEONS), b = rng.pick([hex("#3a1d6e"), hex("#0f3a6e"), hex("#6e0f3a")]);
+  rect(s, 8, 27, 10, 40, frame);
+  rect(s, 38, 27, 40, 40, frame);
+  rect(s, 0, 0, 48, 28, frame);
+  for (let y = 2; y < 26; y++) for (let x = 2; x < 46; x++) px(s, x, y, mix(b, a, Math.min(1, (x + y) / 64)));
+  const cx = rng.int(10, 36);
+  disc(s, cx, 13, rng.int(5, 8), () => hex("#ffffff"));
+  for (let k = 0; k < 3; k++) {
+    const y = rng.int(4, 22);
+    rect(s, rng.int(3, 20), y, rng.int(26, 45), y + 2, mix(a, hex("#ffffff"), 0.5));
+  }
+  outline(s, NIGHT_INK);
+  return { sprite: s, height: 14 + rng.range(0, 6), solid: false };
+}
+
+/** A five-storey pagoda: dark roofs with upturned eaves, vermilion walls between them, a lit
+ * window in each, and the spire with its gold rings on top. */
+function pagoda(): SceneryArt {
+  const w = 38, h = 80;
+  const s = makeSprite(w, h);
+  const roof = hex("#2a2a33"), wall = hex("#b8322a"), gold = hex("#d9a441"), cx = 19;
+  rect(s, cx - 1, 0, cx + 1, 18, gold);
+  for (let y = 3; y < 16; y += 3) rect(s, cx - 2, y, cx + 2, y + 1, gold);
+  for (let t = 0; t < 5; t++) {
+    const yb = 18 + t * 12, half = 7 + t * 2.5;
+    rect(s, Math.round(cx - half * 0.6), yb + 3, Math.round(cx + half * 0.6), yb + 12, wall);
+    rect(s, cx - 1, yb + 6, cx + 1, yb + 9, hex("#ffd98a"));
+    for (let y = yb; y < yb + 4; y++) {
+      const hw2 = half * (0.55 + ((y - yb) / 4) * 0.45);
+      rect(s, Math.round(cx - hw2), y, Math.round(cx + hw2), y + 1, y === yb ? shade(roof, 1.6) : roof);
+    }
+    px(s, Math.round(cx - half) - 1, yb + 1, roof); // the eaves' upturned tips
+    px(s, Math.round(cx + half), yb + 1, roof);
+  }
+  rect(s, 7, 78, 31, 80, hex("#5a5e66"));
+  outline(s, NIGHT_INK);
+  return { sprite: s, height: 32, solid: false };
 }
 
 // ---------------------------------------------------------------------------------- the volcano
@@ -1254,10 +1407,16 @@ export function makeScenery(kind: SceneryKind, rng: Rand): SceneryArt {
     case "anemone": return anemone(rng);
     case "shell": return shell(rng);
     case "wreck": return wreck(rng);
-    case "snowpine": return snowpine(rng);
-    case "cliff": return cliff(rng);
-    case "peak": return peak(rng);
-    case "snowbank": return snowbank(rng);
+    case "streetlamp": return streetlamp(rng);
+    case "vending": return vending(rng);
+    case "lantern": return lantern(rng);
+    case "neonsign": return neonsign(rng);
+    case "pole": return pole(rng);
+    case "sakura": return sakura(rng);
+    case "tower": return tower(rng);
+    case "apartment": return apartment(rng);
+    case "billboard": return billboard(rng);
+    case "pagoda": return pagoda();
     case "basalt": return basalt(rng);
     case "obsidian": return obsidian(rng);
     case "vent": return vent(rng);

@@ -905,7 +905,9 @@ class Game {
     if (race.features.tunnels.length) {
       const ci = t.nearest(cam.x, cam.y, race.player.idx);
       if (race.features.tunnelAt(t.s[ci]) && Math.abs(t.offset(cam.x, cam.y, ci)) < 7) {
-        this.scr.dimRect(0, 0, W, H, hex("#0b0b14"), theme.tunnels === "frame" ? 0.14 : 0.34); // a building's frame is open to the light
+        // (a building's frame is open to the light; under a building in Tokyo, the sodium lamps glow orange)
+        if (theme.tunnels === "frame") this.scr.dimRect(0, 0, W, H, hex("#0b0b14"), 0.14);
+        else this.scr.dimRect(0, 0, W, H, hex("#2a1404"), 0.3);
       }
     }
   }

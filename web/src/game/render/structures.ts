@@ -1,10 +1,10 @@
 // The 3D parts of a circuit, built from flat polygons every frame for whatever is in view:
 // bridges (deck with kerbed edges and center dashes, guard rails, girder sides, underside),
 // jump ramps (a striped wedge with kerb-coloured sides), boost pads (chevrons that pulse forward),
-// climbs (the road up on an earth embankment, a rocky mountainside, a ledge on a cliff, a concrete
-// foundation, a steel girder, a scaffold, a crater's rim, a grassy rise, a neon skyway or roller,
-// a mesa, a dune, a ridge of coral or a causeway of basalt) and tunnels (through a rock mound, or
-// through the steel frame of a building going up).
+// climbs (the road up on an earth embankment, a concrete foundation, a steel girder, a scaffold, a
+// crater's rim, a grassy rise, a neon skyway or roller, a mesa, a dune, a ridge of coral, a
+// causeway of basalt, an elevated expressway or a parking garage's ramp) and tunnels (under a
+// building in Tokyo, or through the steel frame of a building going up).
 
 import { hex, mix, shade } from "../core/gfx";
 import { PAD_HALF, PAD_LEN, RAMP_HEIGHT, RAMP_LEN, TUNNEL_H, type Features, type Pad, type Tunnel } from "../race/features";
@@ -91,12 +91,11 @@ function indexAt(track: Track, s: number): number {
 
 const STONE = hex("#8f8a7c");
 const UP: P3 = [0, 0, 1], DOWN: P3 = [0, 0, -1];
-const ROCK = hex("#6f6b66"), ROCK_DARK = hex("#55514c"), CEILING = hex("#2f2d2b"), LAMP = hex("#ffd98a");
-const SNOW = hex("#eef3fb");
+const LAMP = hex("#ffd98a");
 const SLAB = hex("#b5b1a5"), SLAB_SIDE = hex("#9b978b"), SLAB_UNDER = hex("#77736a"), REBAR = hex("#9a5530");
 const STEEL = hex("#68707c"), CRANE = hex("#f2b21b"), CRANE_DARK = hex("#b98310");
 const PLANKS = [hex("#b9844c"), hex("#a5733f")], PLANK_GAP = hex("#4a3420"), TOE = hex("#ff8a1f");
-const PIPE = hex("#c9cdd4"), PIPE_DARK = hex("#9aa0a9"), RAIL_STEEL = hex("#c4c8cf");
+const PIPE = hex("#c9cdd4"), PIPE_DARK = hex("#9aa0a9");
 
 /** A steady random number in [0, 1) for dense index ``k`` (the same every frame). */
 function jag(k: number, salt: number): number {
@@ -186,50 +185,117 @@ function earthClimb(c: Piece): void {
   walls(c, c.theme.wall ?? STONE);
 }
 
-/** Over a shoulder of the mountain: snow along the top, then a broad, ragged slope of rock in two
- * bands down to the valley floor. */
-function rockClimb(c: Piece): void {
-  const hw = HALF_WIDTH, { hi, hj, i, j } = c, snow = c.theme.snow || SNOW;
-  asphalt(c);
+const LANE = hex("#e8e8e8"), PARAPET = hex("#9a9ea6"), COPING = hex("#c3c7ce"), FASCIA = hex("#6b7079");
+const SOFFIT = hex("#2b2e35"), PIER = hex("#80858d"), LAMP_POLE = hex("#565b64"), SIGN_GREEN = hex("#1d7a4b");
+
+/** Tokyo's elevated expressway: dark asphalt with white lines, concrete parapets with a pale
+ * coping, a deep girder underneath, sodium lamps on tall poles reaching out over the road (their
+ * light lying in orange pools on the deck), a concrete pier with a cap beam every so often, and
+ * now and then a green sign over the road. */
+function expresswayClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, n, theme } = c, raised = Math.max(hi, hj) > 0.6;
+  deck(c, -hw, hw, shade(theme.road, 1.3));
+  deck(c, -hw + 0.35, -hw + 0.55, LANE, 0, 1, 0.01, -0.22);
+  deck(c, hw - 0.55, hw - 0.35, LANE, 0, 1, 0.01, -0.22);
+  if (Math.floor(c.s / 5) % 2 === 0) deck(c, -0.1, 0.1, LANE, 0, 1, 0.01, -0.25);
+  const P = (k: number, off: number, z: number) => edgePoint(c.track, k, off, z);
+  face(c.p, [P(c.i, -hw, hi - 1.3), P(c.i, hw, hi - 1.3), P(c.j, hw, hj - 1.3), P(c.j, -hw, hj - 1.3)], SOFFIT, DOWN, 0.2);
   for (const side of [1, -1]) {
-    const fi = (hi * 1.6 + 1) * (0.8 + 0.4 * jag(i, side + 2)), fj = (hj * 1.6 + 1) * (0.8 + 0.4 * jag(j, side + 2));
-    const lit = side > 0 ? 1 : 0.8;
-    const ki = 0.6 + 0.12 * jag(i, side + 5), kj = 0.6 + 0.12 * jag(j, side + 5); // where the darker band starts
-    // each piece a facet of its own, catching the light a little differently, a few dusted with snow
-    const facet = lit * (0.86 + 0.26 * jag(c.n, side + 13)), dusted = jag(c.n, side + 17) > 0.8;
-    flank(c, side, [hw, hw], [hi, hj], [hw + 0.22 * fi, hw + 0.22 * fj], [hi * 0.78, hj * 0.78], shade(snow, 0.95 * lit));
-    flank(c, side, [hw + 0.22 * fi, hw + 0.22 * fj], [hi * 0.78, hj * 0.78], [hw + ki * fi, hw + kj * fj],
-          [hi * (1 - ki), hj * (1 - kj)], dusted ? shade(snow, 0.85 * lit) : shade(ROCK, facet));
-    flank(c, side, [hw + ki * fi, hw + kj * fj], [hi * (1 - ki), hj * (1 - kj)], [hw + fi, hw + fj], [0, 0],
-          shade(ROCK_DARK, facet * (0.9 + 0.2 * jag(c.n, side + 19))));
+    band(c, side * hw, -1.3, 0, FASCIA, -0.1);
+    if (!raised) continue;
+    band(c, side * hw, 0, 1.0, PARAPET);
+    band(c, side * hw, 0.9, 1.05, COPING, -0.16);
   }
-  walls(c, c.theme.wall ?? STONE);
+  const z = (hi + hj) / 2;
+  // a lamp every twelve pieces, on alternate sides: a pole up from the parapet, an arm out over the
+  // road, the lamp at its end, and its light in a pool on the deck
+  const m = n % 12;
+  if (raised && m >= 5 && m <= 7) {
+    face(c.p, [at(c, 0, -hw, hi + 0.008), at(c, 1, -hw, hj + 0.008), at(c, 1, hw, hj + 0.008), at(c, 0, hw, hi + 0.008)],
+         hex("#ffb24a"), UP, -0.205, m === 6 ? 0.12 : 0.06, true);
+  }
+  if (raised && m === 6) {
+    const side = Math.floor(n / 12) & 1 ? 1 : -1, off = side * (hw + 0.25), reach = off - side * 3.2, top = z + 8.2;
+    bar(c, off, 0.5, z + 1.0, 0.5, top, 0.22, LAMP_POLE, -0.12);
+    face(c.p, [at(c, 0.5, off, top - 0.1), at(c, 0.5, reach, top - 0.1), at(c, 0.5, reach, top + 0.12), at(c, 0.5, off, top + 0.12)],
+         LAMP_POLE, null, -0.12);
+    face(c.p, [at(c, 0.42, reach + side * 0.7, top - 0.32), at(c, 0.42, reach - side * 0.1, top - 0.32),
+               at(c, 0.58, reach - side * 0.1, top - 0.1), at(c, 0.58, reach + side * 0.7, top - 0.1)], SODIUM, null, -0.13);
+  }
+  // a pier under the middle of the deck, a cap beam across under the girder
+  const under = z - 1.3;
+  if (n % 16 === 8 && under > 1.5) {
+    face(c.p, [at(c, 0.5, -1.1, 0), at(c, 0.5, 1.1, 0), at(c, 0.5, 1.1, under - 1.1), at(c, 0.5, -1.1, under - 1.1)], PIER, null, 0.05);
+    bar(c, 0, 0.5, 0, 0.5, under - 1.1, 2.2, shade(PIER, 0.84), 0.05);
+    face(c.p, [at(c, 0.5, -hw + 0.6, under - 1.1), at(c, 0.5, hw - 0.6, under - 1.1), at(c, 0.5, hw - 0.6, under),
+               at(c, 0.5, -hw + 0.6, under)], shade(PIER, 1.1), null, 0.04);
+  }
+  // a green sign over the road on two posts, a white border and white lines of lettering
+  if (raised && n % 40 === 20) {
+    const zb = z + 4.9, back: P3 = [-c.tx, -c.ty, 0];
+    for (const side of [1, -1]) bar(c, side * (hw + 0.3), 0.5, z, 0.5, zb + 1.7, 0.2, LAMP_POLE, -0.12);
+    face(c.p, [at(c, 0.5, -hw + 0.4, zb), at(c, 0.5, hw - 0.4, zb), at(c, 0.5, hw - 0.4, zb + 1.7), at(c, 0.5, -hw + 0.4, zb + 1.7)],
+         LANE, back, -0.12);
+    face(c.p, [at(c, 0.5, -hw + 0.55, zb + 0.15), at(c, 0.5, hw - 0.55, zb + 0.15), at(c, 0.5, hw - 0.55, zb + 1.55),
+               at(c, 0.5, -hw + 0.55, zb + 1.55)], SIGN_GREEN, back, -0.13);
+    for (const [o0, o1, zz] of [[-4.6, -0.6, 1.1], [0.4, 4.2, 1.1], [-3.8, -1.2, 0.55], [1.0, 3.4, 0.55]]) {
+      face(c.p, [at(c, 0.5, o0, zb + zz), at(c, 0.5, o1, zb + zz), at(c, 0.5, o1, zb + zz + 0.22), at(c, 0.5, o0, zb + zz + 0.22)],
+           LANE, back, -0.14);
+    }
+  }
 }
 
-/** A ledge cut into a cliff: a rock face rising over the road on one side (``side``), snow along
- * its top, and on the other a sheer drop to the valley floor behind a guard rail. */
-function cliffClimb(c: Piece, side: number): void {
-  const hw = HALF_WIDTH, { hi, hj, i, j, tx, ty } = c, snow = c.theme.snow || SNOW;
-  asphalt(c);
+const GARAGE_FLOOR = hex("#8b9097"), GARAGE_ROOF = hex("#474b54"), TUBE = hex("#eefcff"), GARAGE_SLAB = hex("#9ea2a9");
+const GARAGE_EDGE = hex("#7a7e86"), GARAGE_WALL = hex("#b3b7be"), GARAGE_PAINT = hex("#f2d13a"), GARAGE_H = 5.0;
+
+/** The ramp of a parking garage, up a floor and along it: a concrete floor with a yellow line
+ * down the middle and a yellow and black kerb, low concrete walls, square columns, and over the
+ * road the floor above, lit underneath by strip lights, its slab's edge showing outside; a striped
+ * clearance bar over the way in. */
+function garageClimb(c: Piece): void {
+  const hw = HALF_WIDTH, { hi, hj, n } = c, wide = hw + 1.1, top = GARAGE_H;
+  deck(c, -hw, hw, GARAGE_FLOOR);
+  deck(c, -hw, -hw + 0.45, STRIPE[n & 1], 0, 1, 0.01, -0.22);
+  deck(c, hw - 0.45, hw, STRIPE[(n + 1) & 1], 0, 1, 0.01, -0.22);
+  if (n % 3 !== 2) deck(c, -0.12, 0.12, GARAGE_PAINT, 0, 1, 0.01, -0.25);
   const P = (k: number, off: number, z: number) => edgePoint(c.track, k, off, z);
-  const ti = hi * (1.55 + 0.5 * jag(i, 7)), tj = hj * (1.55 + 0.5 * jag(j, 7)), back = hw + 1.4;
-  const rock = Math.floor(c.s / 5.4) & 1 ? ROCK : shade(ROCK, 0.9);
-  // the rock face, leaning back from the road, and the snow along its top
-  const mid = (z: number, t: number) => z + (t - z) * 0.84;
-  face(c.p, [P(i, side * hw, hi), P(j, side * hw, hj), P(j, side * (hw + 1.18), mid(hj, tj)), P(i, side * (hw + 1.18), mid(hi, ti))],
-       rock, [side * ty, -side * tx, 0.3], -0.05);
-  face(c.p, [P(i, side * (hw + 1.18), mid(hi, ti)), P(j, side * (hw + 1.18), mid(hj, tj)), P(j, side * back, tj), P(i, side * back, ti)],
-       shade(snow, 0.92), [side * ty, -side * tx, 0.3], -0.05);
-  // the mountain behind it, down to the valley floor
-  flank(c, side, [back, back], [ti, tj], [back + 2.5, back + 2.5], [ti * 0.9, tj * 0.9], snow, 0.1);
-  flank(c, side, [back + 2.5, back + 2.5], [ti * 0.9, tj * 0.9], [back + 2 + ti, back + 2 + tj], [0, 0],
-        shade(ROCK_DARK, 0.86 + 0.26 * jag(c.n, 23)), 0.1);
-  // the drop: rock straight down from the road's edge, and the rail along it
-  const out = -side;
-  flank(c, out, [hw, hw], [hi, hj], [hw + 0.8 + jag(i, 3), hw + 0.8 + jag(j, 3)], [0, 0], shade(ROCK_DARK, 0.92), 0.1, 0.15);
-  if (Math.max(hi, hj) > 0.6) {
-    band(c, out * hw, 0.5, 0.78, RAIL_STEEL);
-    if (c.n % 2 === 0) bar(c, out * hw, 0, hi, 0, hi + 0.82, 0.14, shade(RAIL_STEEL, 0.7), -0.15);
+  // the floor above: its underside (the ceiling), the strip lights on it, its top and its edges
+  face(c.p, [P(c.i, -wide, hi + top), P(c.i, wide, hi + top), P(c.j, wide, hj + top), P(c.j, -wide, hj + top)], GARAGE_ROOF, DOWN, 0.06);
+  if (n % 2 === 0) {
+    for (const o of [-2.6, 2.6]) {
+      face(c.p, [at(c, 0.1, o - 0.16, zAt(c, 0.1) + top - 0.02), at(c, 0.9, o - 0.16, zAt(c, 0.9) + top - 0.02),
+                 at(c, 0.9, o + 0.16, zAt(c, 0.9) + top - 0.02), at(c, 0.1, o + 0.16, zAt(c, 0.1) + top - 0.02)], TUBE, DOWN, 0.05);
+    }
+  }
+  face(c.p, [P(c.i, -wide, hi + top + 0.45), P(c.j, -wide, hj + top + 0.45), P(c.j, wide, hj + top + 0.45),
+             P(c.i, wide, hi + top + 0.45)], GARAGE_SLAB, UP, 0.06);
+  for (const side of [1, -1]) {
+    const off = side * wide, outward: P3 = [-side * c.ty, side * c.tx, 0];
+    face(c.p, [P(c.i, off, hi + top), P(c.j, off, hj + top), P(c.j, off, hj + top + 0.45), P(c.i, off, hi + top + 0.45)],
+         GARAGE_EDGE, outward, 0.02);
+    // the floor's edge down to the ground, and the low wall along it
+    flank(c, side, [hw, hw], [hi, hj], [hw, hw], [0, 0], shade(GARAGE_EDGE, side > 0 ? 1 : 0.84), 0.1, 0);
+    band(c, side * hw, 0, 0.95, GARAGE_WALL);
+    if (n % 4 !== 0) continue;
+    // a square column, up from the ground to the floor above, striped yellow and black at the foot
+    const o0 = side * (hw + 0.2), o1 = side * (hw + 0.8), zc = Math.max(hi, hj) + top;
+    const C0 = (u: number, o: number, zz: number) => at(c, u, o, zz);
+    face(c.p, [C0(0, o0, 0), C0(0.35, o0, 0), C0(0.35, o0, zc), C0(0, o0, zc)], GARAGE_WALL, [side * c.ty, -side * c.tx, 0], -0.02);
+    face(c.p, [C0(0, o1, 0), C0(0.35, o1, 0), C0(0.35, o1, zc), C0(0, o1, zc)], GARAGE_WALL, outward, -0.02);
+    face(c.p, [C0(0, o0, 0), C0(0, o1, 0), C0(0, o1, zc), C0(0, o0, zc)], shade(GARAGE_WALL, 0.8), [-c.tx, -c.ty, 0], -0.02);
+    face(c.p, [C0(0.35, o0, 0), C0(0.35, o1, 0), C0(0.35, o1, zc), C0(0.35, o0, zc)], shade(GARAGE_WALL, 0.8), [c.tx, c.ty, 0], -0.02);
+    const zf = hi + 0.95;
+    face(c.p, [C0(0, o0, zf), C0(0.35, o0, zf), C0(0.35, o0, zf + 0.8), C0(0, o0, zf + 0.8)], STRIPE[0], [side * c.ty, -side * c.tx, 0], -0.03);
+    face(c.p, [C0(0, o0, zf + 0.25), C0(0.35, o0, zf + 0.25), C0(0.35, o0, zf + 0.5), C0(0, o0, zf + 0.5)], STRIPE[1],
+         [side * c.ty, -side * c.tx, 0], -0.04);
+  }
+  // the way in: a striped clearance bar under the edge of the floor above
+  if (n === 0) {
+    for (let b = 0; b < 8; b++) {
+      const o0 = -hw + (2 * hw * b) / 8, o1 = -hw + (2 * hw * (b + 1)) / 8;
+      face(c.p, [P(c.i, o0, hi + top - 0.6), P(c.i, o1, hi + top - 0.6), P(c.i, o1, hi + top), P(c.i, o0, hi + top)], STRIPE[b & 1],
+           [-c.tx, -c.ty, 0], -0.13);
+    }
   }
 }
 
@@ -527,8 +593,8 @@ export function hillFaces(p: Painter, track: Track, theme: Theme, pads: readonly
       const [tx, ty] = track.tangent(i);
       const c: Piece = { p, track, theme, i, j, hi, hj, s: track.s[i], n: (i - a) / step,
                          len: Math.max(0.05, track.s[j] - track.s[i]), tx, ty, top: Infinity };
-      if (style === "rock") rockClimb(c);
-      else if (style === "cliff") cliffClimb(c, hl.side ?? 1);
+      if (style === "expressway") expresswayClimb(c);
+      else if (style === "garage") garageClimb(c);
       else if (style === "foundation") foundationClimb(c);
       else if (style === "girder") girderClimb(c);
       else if (style === "scaffold") scaffoldClimb(c);
@@ -574,47 +640,92 @@ function climbPieceAt(track: Track, q: number): number {
   return -1;
 }
 
-/** The tunnels: through rock in the mountains, through a building's frame on the building site. */
+/** The tunnels: under a building in Tokyo, through a building's frame on the building site. */
 export function tunnelFaces(p: Painter, track: Track, f: Features, theme?: Theme): void {
   for (const tn of f.tunnels) {
     if (!near(p, track, tn.start + (tn.n >> 1), 90)) continue;
     if (theme?.tunnels === "frame") frameTunnel(p, track, tn);
-    else rockTunnel(p, track, tn);
+    else cityTunnel(p, track, tn);
   }
 }
 
-/** Walls, a ceiling and lamps inside; outside, a rock mound over the road and a rock face around
- * each mouth. */
-function rockTunnel(p: Painter, track: Track, tn: Tunnel): void {
-  const hw = HALF_WIDTH + 0.4, top = TUNNEL_H;
+const TILE = hex("#d6d0c0"), TILE_BAND = hex("#2f6fb0"), TUNNEL_TOP = hex("#34363d"), SODIUM = hex("#ffb347");
+const FACADE = hex("#262a36"), ROOF = hex("#3a3e4a"), WINDOWS = [hex("#ffd98a"), hex("#dfe8ff"), hex("#ffb0d0"), hex("#141722")];
+const NEON_SIGNS = [hex("#ff3fa4"), hex("#2de2e6"), hex("#ffd23f"), hex("#9d6bff")];
+const STOREYS = 5, STOREY_H = 3.6, BLOCK = 9; // the building over the road: its floors, and m out past the walls
+
+/** A point ``u`` of the way from dense point i to j, ``off`` m left of the centerline, ``z`` m up. */
+function between(track: Track, i: number, j: number, u: number, off: number, z: number): P3 {
+  const a = edgePoint(track, i, off, z), b = edgePoint(track, j, off, z);
+  return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, z];
+}
+
+/** Under a building, Tokyo-style: tiled walls with a blue band, a ceiling, orange sodium lamps
+ * along both walls; outside, the building over the road, its walls rising either side with rows
+ * of windows (most of them lit), its roof, and over each mouth its facade, a neon sign over the
+ * road. */
+function cityTunnel(p: Painter, track: Track, tn: Tunnel): void {
+  const hw = HALF_WIDTH + 0.4, top = TUNNEL_H, out = hw + BLOCK, roof = top + STOREYS * STOREY_H;
   for (let k = 0; k < tn.n; k += 3) {
-    const i = track.wrap(tn.start + k), j = track.wrap(tn.start + Math.min(tn.n, k + 3));
+    const i = track.wrap(tn.start + k), j = track.wrap(tn.start + Math.min(tn.n, k + 3)), n = k / 3;
     const zi = track.elev[i], zj = track.elev[j];
     const [tx, ty] = track.tangent(i);
     const P = (q: number, off: number, z: number) => edgePoint(track, q, off, z);
     // inside: the walls face the road, the ceiling faces down
-    face(p, [P(i, hw, zi), P(j, hw, zj), P(j, hw, zj + top), P(i, hw, zi + top)], ROCK_DARK, [ty, -tx, 0], 0.05);
-    face(p, [P(j, -hw, zj), P(i, -hw, zi), P(i, -hw, zi + top), P(j, -hw, zj + top)], shade(ROCK_DARK, 0.85), [-ty, tx, 0], 0.05);
-    face(p, [P(i, -hw, zi + top), P(j, -hw, zj + top), P(j, hw, zj + top), P(i, hw, zi + top)], CEILING, DOWN, 0.06);
-    if (k % 12 === 0) {
+    face(p, [P(i, hw, zi), P(j, hw, zj), P(j, hw, zj + top), P(i, hw, zi + top)], TILE, [ty, -tx, 0], 0.05);
+    face(p, [P(j, -hw, zj), P(i, -hw, zi), P(i, -hw, zi + top), P(j, -hw, zj + top)], shade(TILE, 0.86), [-ty, tx, 0], 0.05);
+    face(p, [P(i, hw, zi + 1.0), P(j, hw, zj + 1.0), P(j, hw, zj + 1.3), P(i, hw, zi + 1.3)], TILE_BAND, [ty, -tx, 0], 0.04);
+    face(p, [P(j, -hw, zj + 1.0), P(i, -hw, zi + 1.0), P(i, -hw, zi + 1.3), P(j, -hw, zj + 1.3)], shade(TILE_BAND, 0.86),
+         [-ty, tx, 0], 0.04);
+    face(p, [P(i, -hw, zi + top), P(j, -hw, zj + top), P(j, hw, zj + top), P(i, hw, zi + top)], TUNNEL_TOP, DOWN, 0.06);
+    if (n % 2 === 0) {
       for (const off of [hw - 0.06, -hw + 0.06]) {
-        face(p, [P(i, off, zi + 4.1), P(j, off, zj + 4.1), P(j, off, zj + 4.6), P(i, off, zi + 4.6)], LAMP, null, -0.05);
+        face(p, [P(i, off, zi + 4.3), P(j, off, zj + 4.3), P(j, off, zj + 4.6), P(i, off, zi + 4.6)], SODIUM, null, -0.05);
       }
     }
-    // outside: a rock mound over the tunnel, ridged along the middle
-    const ridge = top + 3.5, foot = hw + 6.5;
-    face(p, [P(i, foot, zi), P(j, foot, zj), P(j, 0, zj + ridge), P(i, 0, zi + ridge)], ROCK, [-ty, tx, 1], 0.12);
-    face(p, [P(j, -foot, zj), P(i, -foot, zi), P(i, 0, zi + ridge), P(j, 0, zj + ridge)], shade(ROCK, 0.8), [ty, -tx, 1], 0.12);
+    // outside: the building's walls along the road, facing out, and its roof
+    face(p, [P(i, out, zi), P(j, out, zj), P(j, out, zj + roof), P(i, out, zi + roof)], FACADE, [-ty, tx, 0], 0.1);
+    face(p, [P(j, -out, zj), P(i, -out, zi), P(i, -out, zi + roof), P(j, -out, zj + roof)], shade(FACADE, 0.82), [ty, -tx, 0], 0.1);
+    face(p, [P(i, -out, zi + roof), P(j, -out, zj + roof), P(j, out, zj + roof), P(i, out, zi + roof)], ROOF, UP, 0.1);
+    // a window a storey on each wall, most of them lit
+    for (let f = 0; f < STOREYS + 1; f++) {
+      const z0 = (zi + zj) / 2 + 0.9 + f * STOREY_H;
+      for (const side of [1, -1]) {
+        const lit = WINDOWS[Math.floor(jag(n * 13 + f * 7 + (side > 0 ? 0 : 5), 31) * 4.6) % 4];
+        const W0 = (u: number, z: number) => between(track, i, j, u, side * out, z);
+        face(p, [W0(0.18, z0), W0(0.82, z0), W0(0.82, z0 + 1.7), W0(0.18, z0 + 1.7)], lit,
+             [-side * ty, side * tx, 0], 0.09);
+      }
+    }
   }
-  // a rock face around each mouth, facing out along the road
+  // each end: the building's facade beside and over the mouth, its windows, and a neon sign
   for (const [q, dir] of [[tn.start, -1], [track.wrap(tn.start + tn.n), 1]] as const) {
     const [tx, ty] = track.tangent(q);
     const z = track.elev[q];
     const L = (off: number, zz: number): P3 => edgePoint(track, q, off, z + zz);
-    const out: P3 = [tx * dir, ty * dir, 0];
-    face(p, [L(hw, 0), L(hw + 6.5, 0), L(hw + 2, top + 3.5), L(hw, top + 3.5)], ROCK, out, -0.12);
-    face(p, [L(-hw - 6.5, 0), L(-hw, 0), L(-hw, top + 3.5), L(-hw - 2, top + 3.5)], ROCK, out, -0.12);
-    face(p, [L(-hw, top), L(hw, top), L(hw, top + 3.5), L(-hw, top + 3.5)], shade(ROCK, 0.9), out, -0.12);
+    const fwd: P3 = [tx * dir, ty * dir, 0];
+    face(p, [L(-out, top), L(out, top), L(out, roof), L(-out, roof)], FACADE, fwd, -0.1);
+    face(p, [L(hw, 0), L(out, 0), L(out, top), L(hw, top)], FACADE, fwd, -0.1);
+    face(p, [L(-out, 0), L(-hw, 0), L(-hw, top), L(-out, top)], FACADE, fwd, -0.1);
+    face(p, [L(-hw - 0.5, top - 0.4), L(hw + 0.5, top - 0.4), L(hw + 0.5, top), L(-hw - 0.5, top)], shade(TILE, 0.7), fwd, -0.11);
+    for (let f = 1; f < STOREYS + 1; f++) {
+      for (let o = -out + 1; o < out - 1.5; o += 2.6) {
+        if (f === 1 && Math.abs(o + 0.6) < 5.5) continue; // (the sign hangs there)
+        const lit = WINDOWS[Math.floor(jag(Math.round(o * 3) + f * 17 + (dir > 0 ? 50 : 0), 37) * 4.6) % 4];
+        const z0 = top + 0.9 + (f - 1) * STOREY_H;
+        face(p, [L(o, z0), L(o + 1.3, z0), L(o + 1.3, z0 + 1.7), L(o, z0 + 1.7)], lit, fwd, -0.11);
+      }
+    }
+    // the sign: a bright border round a dark panel with a few bright strokes on it
+    const neon = NEON_SIGNS[(Math.abs(q) * 7) % NEON_SIGNS.length], z0 = top + 0.5, z1 = top + 3.1;
+    face(p, [L(-5, z0), L(5, z0), L(5, z1), L(-5, z1)], neon, fwd, -0.12);
+    face(p, [L(-4.7, z0 + 0.3), L(4.7, z0 + 0.3), L(4.7, z1 - 0.3), L(-4.7, z1 - 0.3)], hex("#16101f"), fwd, -0.13);
+    for (let g = 0; g < 4; g++) {
+      const o = -4.1 + g * 2.15, kind = jag(q + g, 43);
+      face(p, [L(o, z0 + 0.7), L(o + 1.5, z0 + 0.7), L(o + 1.5, z0 + 0.95), L(o, z0 + 0.95)], neon, fwd, -0.14);
+      face(p, [L(o + 0.6, z0 + 0.7), L(o + 0.9, z0 + 0.7), L(o + 0.9, z1 - 0.7), L(o + 0.6, z1 - 0.7)], neon, fwd, -0.14);
+      if (kind > 0.4) face(p, [L(o, z1 - 0.95), L(o + 1.5, z1 - 0.95), L(o + 1.5, z1 - 0.7), L(o, z1 - 0.7)], neon, fwd, -0.14);
+    }
   }
 }
 

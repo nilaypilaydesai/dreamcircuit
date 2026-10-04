@@ -7,7 +7,7 @@ interface Song {
   bpm: number;
   chords: string[]; // one per bar
   lead: string[]; // one per bar: 16 tokens, a note ("E5"), "-" to hold, "." for silence
-  bass: "bounce" | "drive" | "walk" | "pad";
+  bass: "bounce" | "drive" | "walk" | "pad" | "octave"; // octave: eighths, jumping up an octave on the offbeat
   arp: 0 | 8 | 16; // arpeggio speed (notes per bar), 0 for none
   drums: { kick: string; snare: string; hat: string };
 }
@@ -83,23 +83,24 @@ export const SONGS: Record<string, Song> = {
     arp: 16,
     drums: { kick: "x.......x.......", snare: "................", hat: "..x...x...x...x." },
   },
-  // the mountains: a quick, bouncing climb
-  mountain: {
-    bpm: 156,
-    chords: ["D", "G", "D", "A", "D", "G", "A", "D"],
+  // Tokyo: drift music, a fast minor riff in the eurobeat way: a bass jumping octaves on every
+  // eighth, a pedal-note lead in the second half, a four-on-the-floor kick under open hats
+  tokyo: {
+    bpm: 158,
+    chords: ["Am", "F", "G", "Am", "Am", "F", "G", "E7"],
     lead: [
-      "F#5 . A5 . D6 - A5 . F#5 . A5 . D6 - - .",
-      "G5 . B5 . D6 - B5 . G5 . B5 . D6 - - .",
-      "A5 . F#5 . D5 - F#5 . A5 . D6 . A5 - - .",
-      "E5 . A5 . C#6 - A5 . E5 . G5 . A5 - - .",
-      "D6 . C#6 . B5 . A5 . F#5 . A5 . D6 - - .",
-      "B5 . A5 . G5 . F#5 . G5 . B5 . D6 - - .",
-      "C#6 . E6 . A5 . C#6 . E6 - - . A5 . . .",
-      "D6 - - . A5 - - . F#5 - - . D5 - - .",
+      "A5 . C6 . E6 . A6 - G6 . E6 . C6 - - .",
+      "F5 . A5 . C6 . F6 - E6 . C6 . A5 - - .",
+      "G5 . B5 . D6 . G6 - F6 . D6 . B5 - - .",
+      "E6 - D6 . C6 - B5 . A5 - - . E5 . A5 .",
+      "A5 . A5 . C6 . A5 . E6 . A5 . D6 . C6 .",
+      "F5 . F5 . A5 . F5 . C6 . F5 . E6 . C6 .",
+      "G5 . G5 . B5 . G5 . D6 . G5 . F6 . E6 .",
+      "G#5 - - . B5 - - . D6 - - . E6 - - .",
     ],
-    bass: "bounce",
-    arp: 8,
-    drums: { kick: "x...x...x...x...", snare: "....x.......x...", hat: "x.x.x.x.x.x.x.x." },
+    bass: "octave",
+    arp: 16,
+    drums: { kick: "x...x...x...x...", snare: "....x.......x...", hat: "..x...x...x...x." },
   },
   // the volcano: a driving minor riff over a pounding bass, with a climb in the second half
   volcano: {
@@ -271,12 +272,14 @@ export class Music {
     const root = tones[0] - 12;
     const bassAt: Record<Song["bass"], number[]> = {
       bounce: [0, 4, 8, 12], drive: [0, 2, 4, 6, 8, 10, 12, 14], walk: [0, 4, 8, 12], pad: [0],
+      octave: [0, 2, 4, 6, 8, 10, 12, 14],
     };
     if (bassAt[song.bass].includes(s)) {
       let m = root;
       if (song.bass === "bounce" && s % 8 === 4) m = root + 12;
       if (song.bass === "walk") m = [root, root + 7, root + 12, root + 7][s / 4];
-      const len = song.bass === "pad" ? 16 : song.bass === "drive" ? 2 : 4;
+      if (song.bass === "octave" && s % 4 === 2) m = root + 12;
+      const len = song.bass === "pad" ? 16 : song.bass === "drive" || song.bass === "octave" ? 2 : 4;
       this.note(ac, "triangle", freq(m), t, len * dur * 0.9, song.bass === "pad" ? 0.13 : 0.17);
     }
     // drums
