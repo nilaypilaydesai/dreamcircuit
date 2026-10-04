@@ -237,7 +237,14 @@ grid every 1.2 m and multiplied into the terrain's colours, so meadows, desert a
 as rolling land, at about 50 ms per race (the sand's ripples cost more than the relief does). Oil slicks are painted into the ground the same way,
 per pixel as each row is drawn: a dark puddle with a wobbly edge, a slowly turning rainbow film
 and the sky shining on its far side, so it lies flat in perspective under the karts that drive
-over it (on raised road, where the ground under it is hidden, a sprite stands in for it).
+over it. Where the road is not the ground (a deck, a climb, a jump ramp, the neon tunnel's tube)
+the ground under the oil is hidden, so the same puddle is laid on the road as faces
+(`render/decals.ts`): rim, body, the film's ring and the shine, each point put on the road's
+surface where it is (up the climb's slope, round the tube's wall), all one decal at one depth:
+on raised road just short of its near edge, so it goes down after every piece of road it lies on,
+and in the tube (whose panels are the backdrop to everything) at its far edge, as a pad is. A slick keeps
+the road point it was dropped from, so on a deck it is laid on the deck and not on the road
+beneath. A sprite used to stand in for it there, and a slick on a bridge stood up like a wall.
 
 **Polygons in a Mode-7 world.** A flat ground texture cannot show a bridge, so bridges, climbs,
 tunnels, jump ramps, boost pads and the landforms around the circuit are drawn as flat-shaded
@@ -316,6 +323,15 @@ lands into a boost (0.8 s, or 1.35 s for a perfect trick). Pads give a 1 s boost
 widens the field of view and draws speed lines. Rivals try tricks too, more often in the faster
 classes.
 
+The race measures a ramp, a pad and a tunnel by arc length (a ramp's height and a pad's boost go
+by how far along the road a kart is), and they are drawn by arc length too (`Track.stepAlong`),
+from a foot that lies on a road point (`Track.indexBack`). They used to be drawn by counting road
+points off as 0.6 m each, but a lap's points are a little closer than that (0.53 to 0.59 m, by
+circuit: each stretch between the dreamed points is split into a whole number of pieces no
+longer than 0.6 m), so a jump's wedge was drawn up to 7.7 m from where karts drove up it, a pad up
+to 0.7 m short of the stretch that boosts, and a tunnel's walls began up to 6 m before the mouth
+drawn.
+
 **The start.** The countdown reads the throttle: press it in the half second before GO for a
 rocket start (a 1.2 s boost); hold it for more than 1.7 s and the wheels spin for 0.75 s
 instead. Rivals get their own good starts at a rate set by their class. (Until the hero video
@@ -357,31 +373,34 @@ what is fitted, with room between parts), and a bar along the bottom with a line
 picked, as tall as the longest of those lines needs, so nothing moves from one part to the next;
 on a phone held upright the three are stacked.
 
-**The reef, the mountains and the volcano.** Three worlds are more than palettes. Under the sea (Coral Reef)
+**The reef, Tokyo and the volcano.** Three worlds are more than palettes. Under the sea (Coral Reef)
 the ground is lit by caustics, two layers of a tiling 64x64 sine pattern drifting against each
 other and multiplied, so bright filaments ripple over the sand at the cost of two table lookups
 per ground pixel; shafts of light slant down over the view, bubbles rise past the camera, and
 schools of fish circle points around the lap, each fish turned to face the way it swims across the
 screen. Every driver wears a clear bubble helmet: when a kart is baked, the centre of its
 driver's helmet is projected into each of the 16 views, and a translucent dome with a bright rim
-and a glint is drawn there over the sprite. In the mountains (Mountain Pass) the road bores through tunnels on long, gently curving
-straights: walls the karts are kept between, a ceiling and lamps inside, a rock mound over the top
-and a rock face around each mouth outside; the view darkens while the camera is in one. The
-designer is asked for a more winding road there (the style signal leans 0.12 wilder), and the far
-hills on the horizon are tall and snow-capped.
+and a glint is drawn there over the sprite. Tokyo (Tokyo Nights) is a world for drifting: the
+designer is asked for a more winding road there (the style signal leans 0.12 wilder), between lit
+towers, vending machines, paper lanterns, neon signs, utility poles and cherry trees, the paving
+wet and holding the neon in its puddles. The road bores under buildings on long, gently curving
+straights: walls the karts are kept between, tiled, with sodium lamps inside, and the building's
+lit windows and a neon sign over each mouth; the view darkens while the camera is in one. The
+skyline is a night city with a lattice tower, and Fuji far off under the moon; a canal runs past
+the bends to fall into.
 
 **Climbs in every world.** Hills are a second kind of raised road next to bridges, and every world
 has them, built its own way (`render/structures.ts`): over rolling meadows behind wooden fences
-(Dream Valley), up onto a neon skyway on pylons with neon tubes for rails and over low rollers
-ruled with the grid's glowing lines (Neon Night), onto mesa tops walled in level bands of sandstone
-(level with the ground, not with the road, as rock is laid down) and over dunes (Sunset Mesa),
-over ridges of rock with fans and tubes of coral standing on them (Coral Reef), over rocky
-shoulders of the mountain in lit facets with snow along the top, and along ledges cut into cliffs,
-the rock face rising over the road on one side and a sheer drop behind a guard rail on the other
-(Mountain Pass), along causeways of basalt columns raised over the lava itself (Volcano Core), up
+(Dream Valley), onto mesa tops walled in level bands of sandstone (level with the ground, not
+with the road, as rock is laid down) and over dunes (Sunset Mesa), over ridges of rock with fans
+and tubes of coral standing on them (Coral Reef), up onto an elevated expressway (concrete
+parapets, sodium lamps reaching over the road, green signs, piers) and up the ramp of a parking
+garage (columns, strip lights under the floor above, a striped kerb) in Tokyo, along causeways
+of basalt columns raised over the lava itself (Volcano Core), up
 onto concrete foundations, along scaffolding of pipes and planks and high along a tower crane's
 girder, a steel deck on a yellow truss with a column to the ground every so often and the crane
-standing beside it (Construction Zone), and over crater rims (Moon Base). A climb is a smooth
+standing beside it (Construction Zone), and over crater rims (Moon Base); in the Neon Tunnel the
+whole tube rises and falls over humps. A climb is a smooth
 sin^2 hump or a plateau (smoothstep ramps either side of a level top, long enough that a kart at
 full speed stays on the road over the top under normal gravity, and never steeper than about 22%).
 A world's kinds of climb take turns, so a lap has one of each, each waiting a while for room before
@@ -390,7 +409,8 @@ lap, and the building site went without one. Climbs are decided once the road 10
 foot has been dreamed, after the jumps, tunnels and pads on that road are placed: a climb never
 covers a jump or where its karts land, and a straight that may yet earn a jump is left for it.
 Set the other way round, the climbs took the straights first and the worlds lost up to four jumps
-in five; now every world keeps all its jumps and climbs two or three times a lap. The road a climb
+in five; now every world keeps all its jumps and climbs two to four times a lap (six to eight on
+the moon's bigger laps). The road a climb
 lifts was painted flat, so it is painted again, the boxes and coins on it ride up with it, and the
 scenery beside it is cleared. A Roller Coaster track sets climbs in any world, in that world's
 style. If the dream later crosses itself, the climbs near the new bridge and the road under it are
@@ -398,16 +418,17 @@ flattened (the bridge needs the headroom) and the ground is repainted. Karts sta
 a bridge: guard rails keep a kart on raised road, and the ground under a kart is the road's height
 where it is.
 
-**The land around the circuit.** When the lap locks, up to 18 landforms are set out
-(`world/landforms.ts`): knolls in the meadows, buttes and dunes in the desert, glowing pyramid peaks
-on the neon grid with lines of light up their edges and around them, reef rocks crowned with
-coral, crags with snow on top, cinder cones with lava in their craters, heaps of spoil on the
-building site and old crater rims on the moon. Each is a solid turned about its middle (rings of
+**The land around the circuit.** When the lap locks, up to 28 landforms are set out (more on the
+moon's bigger ground, 66 there) (`world/landforms.ts`): knolls in the meadows, buttes and dunes in
+the desert, reef rocks crowned with coral, blocks of towers with floors of lit windows in Tokyo,
+cinder cones with lava in their craters, heaps of spoil on the building site and old crater rims
+on the moon. Each is a solid turned about its middle (rings of
 points from its foot up, a little ragged, joined into faces, `render/landforms.ts`), lit by the same
 north-west sun as the ground's relief, culled when it is behind the camera or past the far plane.
-Their feet stay at least 26.5 m from the road's centerline everywhere: past the fence that keeps
+Their feet stay at least 25.5 m from the road's centerline everywhere: past the fence that keeps
 karts within 17 m of the road's edge, so nothing ever drives into one, and nothing grows inside
-them. All the climbs, landforms, bridges and tunnels in view take 0.4 to 0.8 ms a frame on average
+them. (Brought 4 m inside the fence, to stand closer to the road, a foot could reach where a kart
+in the grass drives; the test now checks the clearance against the fence itself.) All the climbs, landforms, bridges and tunnels in view take 0.4 to 0.8 ms a frame on average
 to build and fill, and about 3 ms at worst (measured headlessly, 300 views around a lap in every
 world).
 
@@ -415,7 +436,7 @@ world).
 and tunnels through the ground floors of buildings going up (concrete barriers along the road,
 rust-red steel columns, floor slabs overhead with the first as the ceiling, glass going in on some
 bays, the next storey's columns sticking up out of the top, and a striped clearance bar at each
-end; the view darkens less than in a rock tunnel, as the frame is open to the light). The ground is
+end; the view darkens less than under a building in Tokyo, as the frame is open to the light). The ground is
 churned dirt with the tread of the machines' tracks, the scenery is tower cranes, buildings' steel
 skeletons, mixers, diggers, stacks of pipes and girders, barriers and drums, and the skyline is a
 city of towers with half-built frames and tower cranes in front of it. Moon Base has weak gravity
@@ -468,20 +489,81 @@ screen draws its layout beside the hint. While a map is picked, the TRACK row sh
 type, dimmed and locked, so the screen never claims a type the race won't use.
 
 **The rescue drone, in every world.** The volcano's rescue works anywhere. When the lap locks, each
-other world sets out up to seven hazards of its own kind (`world/hazards.ts`): ponds in Dream
-Valley, holes in Neon Night's grid, quicksand in Sunset Mesa, a trench in the reef, crevasses in
-the mountains, dug-out pits on the building site and chasms on the moon. Each is an ellipse on the
+other world but the tunnel (where there is nowhere off the road to go) sets out up to seven
+hazards of its own kind (`world/hazards.ts`): ponds in Dream Valley, quicksand in Sunset Mesa, a
+trench in the reef, a canal in Tokyo (a lip of granite blocks, a dark wall down to black water
+holding the city's lights), dug-out pits on the building site and chasms on the moon. Each is an ellipse on the
 outside of a bend (the tightest bends first, where karts run wide), wholly 10.3 m or more from every
 road point (past the road and its shoulder), clear of the start and of each other, painted into the
 ground (and painted again after any repaint of that ground) with nothing left standing in it. A kart
 on the ground in one goes in as into the lava: it sinks out of sight in a splash of the hazard's
 colours, the screen darkens to the hazard's colour, and the drone sets it back on the road it left.
-A kart can also fall off raised road: flying over the open edge of a bridge, the skyway, a girder,
-scaffolding, a foundation, a mesa's wall, a basalt causeway or the drop side of a cliff ledge, there
-is nothing under it but the ground far below, and once it has dropped 1.5 m under the deck the drone
+A kart can also fall off raised road: flying over the open edge of a bridge, a girder,
+scaffolding, a foundation, a mesa's wall or a basalt causeway, there is nothing under it but the ground far below, and once it has dropped 1.5 m under the deck the drone
 comes for it and lifts it back onto the deck. Over an embankment's slope (a meadow's, a dune's, a
 crater's rim) a kart just lands on the road again, as before. Rivals keep to their racing lines and
 seldom go in.
+
+**The Neon Tunnel.** The whole race runs inside a tube (`world/tube.ts`): a flat floor as wide as
+any road, walls that curve up in half circles 4.5 m across to a flat ceiling as wide as the
+floor, the whole way round. A kart's offset (m left of the centerline, as everywhere) is how far
+round the tube it has gone from the middle of the floor: past the floor's edge it is up a wall,
+past the wall on the ceiling, and on round it comes down the other wall. So the race goes on in
+its usual flat terms (the tube unrolled is a road 54 m wide whose two edges are one line, the
+middle of the ceiling), and items, rivals, pads and laps work as anywhere else; only drawing
+bends it round. Up a wall a kart is held on by its speed, the more the higher it is (12 m/s where
+the wall stands upright), and anywhere on the upper half it needs 22.5 m/s; slower, it slides
+back down, fast from the ceiling. WALL and LOOP light up beside the speed, with ticks on the
+speed bar, when a kart is fast enough for each. Pads go up the walls and on the ceiling, where
+only a kart fast enough to loop can reach them, and up to four cars drive the floor in three
+lanes, 60 to 95 m apart and slower than any racer, to weave through or ride a wall past. Its
+circuits are drawn 1.6 times the size and dreamed calmer, so the bends are wide enough to drive
+round the inside of.
+
+In the tube there is no Mode-7 ground and no sky (`render/tube.ts`). The 230 m of tube ahead of
+the camera are drawn as rings of 20 panels (the floor in four, each wall in six facets, the
+ceiling in four), in pieces that lengthen with distance, with glowing strips along the floor's
+edges, the middle of each wall and the ceiling's edges, a dashed middle line, and a ring of
+light every 10.8 m, pulsing. The panels are the backdrop to everything in the tube: sorted 7 m
+deeper than they are, a panel always goes down before a kart, a pad or a strip of light lying on
+it, while anything a bend's wall really hides is much further behind it than that. Where a
+figure-eight's tube crosses itself, the other pass is left out near the camera (from inside it
+is never seen, and drawn it would show through the walls). The camera, given in the race's flat
+terms like everything else, is put where it really is round the tube and given its own forward,
+right and up (forward along the tube and round it, up the way the surface under it faces), so it
+can look up a wall it is partly up and turns with the kart over the ceiling; looking back (the
+rear-view mirror, a drone shot down the grid) it draws the tube behind. Each sprite is turned on
+the screen by how the camera sees its surface's up. A surface's normal tips with the road's slope:
+taken as level, the floor of a climb ahead faced away from a camera below it and was culled.
+
+**Something in the way.** Every world has its own (`race/obstacles.ts`), set out along the road as
+it is committed, each kind its own distance apart (a cow every 260 m, a geyser every 230, a
+wrecking ball every 360), and on flat road if it stands on the ground. Cows graze beside the road
+and walk across it as karts come, and three in ten stop dead half way. Tumbleweeds blow across
+the mesa, some from the foot of a cutting's wall. Jellyfish drift and bob over the reef road and
+sting only when they are low. Police cars wait in alleys between Tokyo's buildings, pull out
+after the player with a siren and a flashing warning, ram them from behind, back off for a
+moment and come again, and give up after two hits, 22 s or once the player is 260 m clear.
+Geysers in the volcano's road glow and bubble for a second before they blow a column of lava 7.5
+m up. A wrecking ball swings across the building site's road on a 12.3 m cable from a crane's jib,
+once every 3.8 s, low enough to hit only near the bottom of its swing. On the moon, meteors are
+called in 70 to 130 m ahead of the player and fall for 1.8 s at a slant onto a red ring that
+pulses faster as they near. A hit spins a kart out (the wrecking ball also knocks it aside and
+slows it), a tumbleweed only slows it, and a geyser or a meteor throws it into the air; each kind
+has its own sprites and sound. Rivals are told where the danger is and steer round it.
+
+**Cuttings.** Once a stretch of flat road's climbs are decided, the land may rise in walls beside it
+(`world/banks.ts`), so the road runs down through the land rather than across it: on one side or
+both (a Tokyo street has both seven times in ten, a mesa canyon six), 40 to 150 m long and 2.5 to
+22 m tall by world, 8.9 m out from the centerline (past the road and its shoulder), leaning back
+as they rise (a grassy bank lies well back, a street's shop fronts stand upright). Grassy banks
+with a dry-stone wall at their foot in the valley, a canyon of red rock in beds on the mesa, rock
+walls topped with coral on the reef, streets of lit shop fronts with their signs and floors of
+windows above in Tokyo, basalt cliffs with glowing seams in the volcano, site hoardings with
+containers stacked behind on the building site, banks of regolith on the moon. They keep clear of
+bridges, tunnels, jumps, the line and whatever comes in from the side (cows, the police's alleys,
+a crane's mast); a wall holds a kart at the edge of the shoulder, and hazards and scenery keep
+off its land.
 
 **The Grand Prix.** A cup (`race/cup.ts`) runs one race in every world, back to back. The rivals
 keep the same karts throughout (their builds come from the cup's seed, not each race's), and each
