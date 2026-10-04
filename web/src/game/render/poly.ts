@@ -17,11 +17,14 @@ export type P3 = [number, number, number];
 
 const NEAR = 0.6;
 
-/** Camera space: (forward, right, up), relative to the camera. */
+/** Camera space: (forward, right, up), relative to the camera (turned with it, if it rolls). */
 export function toCamera(cam: Camera, x: number, y: number, z: number): P3 {
   const dx = x - cam.x, dy = y - cam.y;
   const c = Math.cos(cam.heading), s = Math.sin(cam.heading);
-  return [dx * c + dy * s, dx * s - dy * c, z - cam.height];
+  const f = dx * c + dy * s, r = dx * s - dy * c, u = z - cam.height, roll = cam.roll;
+  if (!roll) return [f, r, u];
+  const cr = Math.cos(roll), sr = Math.sin(roll);
+  return [f, r * cr - u * sr, u * cr + r * sr];
 }
 
 function clipNear(poly: P3[]): P3[] {

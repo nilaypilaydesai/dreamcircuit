@@ -2,7 +2,7 @@
 // bridges (deck with kerbed edges and center dashes, guard rails, girder sides, underside),
 // jump ramps (a striped wedge with kerb-coloured sides), boost pads (chevrons that pulse forward),
 // climbs (the road up on an earth embankment, a concrete foundation, a steel girder, a scaffold, a
-// crater's rim, a grassy rise, a neon skyway or roller, a mesa, a dune, a ridge of coral, a
+// crater's rim, a grassy rise, a mesa, a dune, a ridge of coral, a
 // causeway of basalt, an elevated expressway or a parking garage's ramp) and tunnels (under a
 // building in Tokyo, or through the steel frame of a building going up).
 
@@ -421,53 +421,6 @@ function meadowClimb(c: Piece): void {
   }
 }
 
-const SKYWAY_UNDER = hex("#1a0b30"), SKYWAY_SIDE = hex("#2a1450"), PYLON = hex("#2c1d4a");
-
-/** A skyway on pylons over the grid: a dark deck edged with glowing lines, neon tubes for rails, a
- * strip of light along its edge, and every so often a pylon with a ring of light around it. */
-function skywayClimb(c: Piece): void {
-  const hw = HALF_WIDTH, { hi, hj, n, theme } = c;
-  deck(c, -hw, hw, shade(theme.road, 1.05));
-  deck(c, -hw + 0.3, -hw + 0.6, theme.edge, 0, 1, 0.01, -0.22);
-  deck(c, hw - 0.6, hw - 0.3, theme.edge, 0, 1, 0.01, -0.22);
-  if (n % 3 === 0) deck(c, -0.15, 0.15, theme.kerb[0], 0, 0.55, 0.01, -0.25);
-  const P = (k: number, off: number, z: number) => edgePoint(c.track, k, off, z);
-  face(c.p, [P(c.i, -hw, hi - 0.6), P(c.i, hw, hi - 0.6), P(c.j, hw, hj - 0.6), P(c.j, -hw, hj - 0.6)], SKYWAY_UNDER, DOWN, 0.2);
-  for (const side of [1, -1]) {
-    const off = side * hw;
-    band(c, off, -0.6, 0, SKYWAY_SIDE, -0.1);
-    band(c, off, -0.42, -0.3, theme.kerb[0], -0.11);
-    if (Math.max(hi, hj) > 0.6) {
-      band(c, off, 0.45, 0.6, theme.edge);
-      band(c, off, 0.95, 1.08, theme.kerb[0]);
-      if (n % 3 === 0) bar(c, off, 0, hi, 0, hi + 1.08, 0.1, PYLON, -0.14);
-    }
-  }
-  const z = (hi + hj) / 2 - 0.6;
-  if (n % 9 === 4 && z > 1.2) {
-    // a pylon: a cross of two slabs, seen from any side, ringed with light half way up
-    face(c.p, [at(c, 0.5, -0.7, 0), at(c, 0.5, 0.7, 0), at(c, 0.5, 0.7, z), at(c, 0.5, -0.7, z)], PYLON, null, 0.05);
-    bar(c, 0, 0.5, 0, 0.5, z, 1.4, shade(PYLON, 0.85), 0.05);
-    face(c.p, [at(c, 0.5, -0.72, z * 0.5), at(c, 0.5, 0.72, z * 0.5), at(c, 0.5, 0.72, z * 0.5 + 0.22),
-               at(c, 0.5, -0.72, z * 0.5 + 0.22)], theme.edge, null, 0.04);
-    bar(c, 0, 0.5, z * 0.5 + 0.11, 0.5, z * 0.5 + 0.11, 1.44, theme.edge, 0.04);
-  }
-}
-
-/** A low roller of the neon grid: dark banks ruled with glowing lines, as if the grid itself had
- * been lifted into a wave, a neon tube along the top of each. */
-function waveClimb(c: Piece): void {
-  const hw = HALF_WIDTH, { hi, hj, theme } = c, line = shade(theme.grid || hex("#3d1f6b"), 1.9);
-  asphalt(c);
-  for (const side of [1, -1]) {
-    const fi = hi * 2.6 + 2, fj = hj * 2.6 + 2;
-    flank(c, side, [hw, hw], [hi, hj], [hw + fi, hw + fj], [0, 0], shade(theme.ground[0], side > 0 ? 1.5 : 1.2));
-    for (const t of [0.33, 0.66]) flankPatch(c, side, fi, fj, 0, 1, t, t + 0.035, line);
-    if (c.n % 2 === 0) flankPatch(c, side, fi, fj, 0, 0.07, 0, 1, line);
-    if (Math.max(hi, hj) > 0.4) band(c, side * hw, 0.3, 0.42, theme.edge);
-  }
-}
-
 const STRATA = [hex("#c8693a"), hex("#d98b4f"), hex("#b5532f"), hex("#e2a467"), hex("#a8472a")];
 
 /** Up onto a mesa: walls of sandstone in level bands of red and ochre (level with the ground, not
@@ -600,8 +553,6 @@ export function hillFaces(p: Painter, track: Track, theme: Theme, pads: readonly
       else if (style === "scaffold") scaffoldClimb(c);
       else if (style === "crater") craterClimb(c);
       else if (style === "meadow") meadowClimb(c);
-      else if (style === "skyway") skywayClimb(c);
-      else if (style === "wave") waveClimb(c);
       else if (style === "mesa") mesaClimb(c);
       else if (style === "dune") duneClimb(c);
       else if (style === "coral") coralClimb(c);

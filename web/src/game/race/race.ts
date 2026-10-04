@@ -13,6 +13,7 @@ import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
 import { Features, RAMP_LEN, TUNNEL_LEN } from "./features";
 import { AIMED, AIM_MAX, AIM_RATE, type Field, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
+import { type ObstacleSound, Obstacles } from "./obstacles";
 import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, collideKarts } from "./kart";
 import type { Standing } from "./odds";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
@@ -59,7 +60,8 @@ export type RaceEvent =
   | { kind: "bridge" } // the dream crossed itself and built a bridge
   | { kind: "lava" } // the player drove into the lava
   | { kind: "fell"; into: FallKind } // or into a hazard, or off the edge of raised road
-  | { kind: "rescued" }; // and was lifted out at the road (the camera cuts there)
+  | { kind: "rescued" } // and was lifted out at the road (the camera cuts there)
+  | { kind: "obstacle"; sound: ObstacleSound; near: boolean }; // a cow, a police car, a geyser... (race/obstacles.ts)
 
 export interface RaceSetup {
   rivals: number; // 0..7
@@ -75,7 +77,7 @@ export interface RaceSetup {
 
 /** Whether the player's controls reach the race: while racing, and during the countdown, where
  * the throttle decides a rocket start (pressed just before GO) or a burnout (held too long). */
-const OPEN_EDGES = new Set(["skyway", "girder", "scaffold", "foundation", "basalt"]); // raised road a kart can fall off
+const OPEN_EDGES = new Set(["girder", "scaffold", "foundation", "basalt"]); // raised road a kart can fall off
 const HILL_LOOK = 100; // m of road past a climb's foot that is known before the climb is decided
 const BRIDGE_CLEAR = 95; // m of road kept free of jumps and pads around a bridge's crossing
 const UNDER_CLEAR = 80; // m around the road that passes under a bridge
@@ -91,6 +93,8 @@ export class Race {
   readonly tex: WorldTexture;
   readonly scenery: Scenery;
   readonly items: Items;
+  /** What gets in the way on the road in this world (cows, police, a wrecking ball...). */
+  readonly obstacles: Obstacles;
   readonly features: Features;
   readonly karts: Kart[] = [];
   readonly player: Kart;
@@ -128,12 +132,13 @@ export class Race {
     this.nextHill = this.hillRule ? Math.max(60, this.hillRule.gap[1]) : Infinity;
     this.features = new Features({
       tunnels: !!setup.theme.tunnels, ramps: this.type.ramps ?? DEFAULT_RAMPS, pads: this.type.pads ?? DEFAULT_PADS,
-      gravity: setup.theme.gravity ?? 1,
+      gravity: setup.theme.gravity ?? 1, tube: !!setup.theme.tube,
     });
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
     this.items = new Items(new Rand(setup.seed + 3));
+    this.obstacles = new Obstacles(setup.theme.obstacle ?? null, new Rand(setup.seed + 41));
     this.items.gravity = GRAVITY * (setup.theme.gravity ?? 1);
     // a map is a layout: each world draws it at its own scale (the moon's are bigger)
     const scale = setup.theme.scale ?? 1;
@@ -167,7 +172,10 @@ export class Race {
       this.karts.push(k);
       if (!k.isPlayer) this.drivers.push(new RivalDriver(this.rng, k, slot));
     }
-    for (const k of this.karts) k.gravity = this.items.gravity;
+    for (const k of this.karts) {
+      k.gravity = this.items.gravity;
+      k.tube = !!setup.theme.tube;
+    }
     this.standings = [...this.karts];
   }
 
@@ -182,6 +190,12 @@ export class Race {
         Math.abs(t.s[b.lower] - s - len / 2) < UNDER_CLEAR) ||
       t.locked && (s + len > t.length - 80);
   }
+
+  /** Whether road [s, s + len) is free for an obstacle: no bridge, item row or run to the line, no
+   * jump (or where its karts land) and no tunnel. */
+  private readonly roadFree = (s: number, len: number): boolean =>
+    !this.blocked(s, len) && !this.features.rampNear(s - 10, len + 20) &&
+    !this.features.tunnels.some((tn) => tn.s0 < s + len + 10 && tn.s0 + TUNNEL_LEN > s - 10);
 
   /** Whether any kart is on, or coming up to, arc lengths [s, s + len) (what is built at the lock
    * must not appear under a kart or right in front of it). */
@@ -223,6 +237,8 @@ export class Race {
     // straight that earns a jump keeps it), until the lap locks
     this.placeHills(t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING));
     this.raiseCranes(to);
+    // what gets in the way (cows, geysers, police alleys...), on road whose climbs are decided
+    this.obstacles.place(t, t.locked ? t.count : to - Math.round(HILL_LOOK / SPACING), this.roadFree);
   }
 
   /** A tower crane beside each girder's middle, once the road there has been dreamed. */
@@ -378,9 +394,10 @@ export class Race {
    * fast, clean and drifting raises it; running wide or slow calms the dream down. */
   styleWanted(): number {
     const d = this.driving;
-    // Legend leans wild and Rookie calm (Intermediate a little calm); Tokyo's streets wind more
+    // Legend leans wild and Rookie calm (Intermediate a little calm); Tokyo's streets wind more, and
+    // the neon tunnel's bends are wide (to drive round the inside of the tube)
     const bias = { rookie: -0.1, intermediate: -0.05, pro: 0, legend: 0.1 }[this.setup.difficulty] +
-      (this.setup.theme.winding ? 0.12 : 0);
+      (this.setup.theme.winding ? 0.12 : 0) + (this.setup.theme.smooth ? -0.22 : 0);
     // (centred a little calm: dreamed laps had too many hairpins)
     const v = 0.45 + 1.25 * (d.speed - 0.72) + 0.6 * d.drift - 1.1 * d.offroad - 0.25 * (1 - d.clean) + bias;
     return Math.max(0.05, Math.min(0.95, v));
@@ -398,6 +415,7 @@ export class Race {
   private onLock(): void {
     this.placeHills(this.track.count);
     this.raiseCranes(this.track.count);
+    this.obstacles.place(this.track, this.track.count, this.roadFree);
     this.scenery.onLock(this.track);
     this.confirm();
     // the world's hazard, beside the road, on the outside of the bends
@@ -456,9 +474,10 @@ export class Race {
     if (!this.track.locked) this.watchDriving(dt);
 
     for (const k of this.karts) this.surfaceUnder(k);
+    const dangers = this.obstacles.dangers();
     this.drivers.forEach((d) => {
       if (d.kart.finished && this.phase === "done") return;
-      const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items);
+      const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers);
       d.kart.update(dt, c, this.track, this.cls);
       this.fire(d.kart, c);
       if (!d.kart.falling && this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
@@ -473,6 +492,12 @@ export class Race {
     if (wasRocket && this.player.rocket <= 0) this.events.push({ kind: "rocketOver" });
     if (wasSunk && this.player.fall >= FALL_SWAP) this.events.push({ kind: "rescued" });
     this.hazardsUnder();
+    this.obstacles.update(dt, this.track, this.karts, this.player, this.phase === "racing");
+    for (const ev of this.obstacles.events) {
+      const near = ev.player || Math.hypot(ev.x - this.player.x, ev.y - this.player.y) < 70;
+      if (near || ev.sound === "siren") this.events.push({ kind: "obstacle", sound: ev.sound, near });
+    }
+    this.obstacles.events = [];
     if (!this.player.falling && this.features.onPad(this.track, this.player)) {
       if (this.player.boostTime < 0.85) this.events.push({ kind: "pad" });
       this.player.boostTime = Math.max(this.player.boostTime, 1.0);
@@ -570,8 +595,8 @@ export class Race {
     if (k.isPlayer) this.events.push(into === "lava" ? { kind: "lava" } : { kind: "fell", into });
   }
 
-  /** Whether the road at kart k's spot is raised road with an open edge: a bridge, a skyway, a
-   * girder, scaffolding, a foundation, a mesa's wall or a basalt causeway (not an embankment's
+  /** Whether the road at kart k's spot is raised road with an open edge: a bridge, a girder,
+   * scaffolding, a foundation, a mesa's wall or a basalt causeway (not an embankment's
    * slope, which it would just land on, nor an expressway's or a garage's walls). And how far past
    * the road's edge the deck goes there. */
   private openEdge(k: Kart): number | null {
@@ -593,7 +618,7 @@ export class Race {
     k.ground = t.heightAt(k.x, k.y, k.idx) + r.height;
     // flying over the open edge of raised road there is nothing under the kart but the ground far
     // below; once it has dropped well under the deck, the rescue drone comes for it
-    if (k.air && !k.falling && k.rocket <= 0 && k.ground > 1.2) {
+    if (k.air && !k.falling && k.rocket <= 0 && k.ground > 1.2 && !k.tube) {
       const lip = this.openEdge(k);
       if (lip !== null && Math.abs(k.offset) > HALF_WIDTH + 0.5 + lip) {
         const deck = k.ground;

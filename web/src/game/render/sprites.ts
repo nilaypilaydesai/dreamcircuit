@@ -678,25 +678,6 @@ function palm(trunkC = hex("#8a5a32"), frond = hex("#2e9b4f")): SceneryArt {
   return { sprite: s, height: 9, solid: true };
 }
 
-function crystal(rng: Rand): SceneryArt {
-  const s = makeSprite(16, 34);
-  const c = rng.pick([hex("#ff2bd6"), hex("#2de2e6"), hex("#9b5cff")]);
-  for (let y = 0; y < 34; y++) {
-    const w = y < 8 ? (y / 8) * 6 : 6 - ((y - 8) / 26) * 2;
-    for (let x = Math.floor(8 - w); x <= 8 + w; x++) px(s, x, y, x < 8 ? mix(c, 0xffffffff, 0.35) : c);
-  }
-  outline(s, shade(c, 0.4));
-  return { sprite: s, height: 4.5 + rng.range(0, 3), solid: true };
-}
-
-function lamp(): SceneryArt {
-  const s = makeSprite(10, 40);
-  rect(s, 4, 6, 6, 40, hex("#3a2f55"));
-  disc(s, 5, 4, 3.5, () => hex("#2de2e6"));
-  disc(s, 5, 4, 1.5, () => 0xffffffff);
-  return { sprite: s, height: 7, solid: true };
-}
-
 function mesa(rng: Rand): SceneryArt {
   const s = makeSprite(70, 30);
   const c = hex("#b85c38"), cl = hex("#d9804f");
@@ -1056,6 +1037,205 @@ function pagoda(): SceneryArt {
   rect(s, 7, 78, 31, 80, hex("#5a5e66"));
   outline(s, NIGHT_INK);
   return { sprite: s, height: 32, solid: false };
+}
+
+// ---------------------------------------------------------------------------------- obstacles
+
+/** A cow, side on, facing right: walking (two frames, legs swapping) and startled (head up, mouth
+ * open). */
+export function cowFrames(k = 1): SceneryArt[] {
+  const art = (frame: number): SceneryArt => {
+    const s = makeSprite(38, 26);
+    const white = hex("#f2efe8"), black = hex("#1c1b20"), pink = hex("#f4a6b4"), horn = hex("#e8dcc0");
+    const up = frame === 2 ? -2 : 0;
+    // legs: the near pair and the far pair swap as it walks
+    const legs = frame === 1 ? [[10, 1], [14, -1], [24, 1], [28, -1]] : [[11, 0], [13, 0], [25, 0], [27, 0]];
+    for (const [x, dx] of legs) {
+      stroke(s, x, 16, x + dx, 23, 0.9, x === 13 || x === 14 || x === 27 || x === 28 ? shade(white, 0.8) : white);
+      rect(s, x + dx - 1, 23, x + dx + 2, 25, black); // the hooves
+    }
+    for (let y = 6; y < 17; y++) {
+      for (let x = 8; x < 30; x++) {
+        const corner = (x < 10 || x > 27) && (y < 8 || y > 14);
+        if (corner) continue;
+        const patch = Math.sin(x * 0.55 + 1) + Math.cos(y * 0.7 + x * 0.21) > 0.9;
+        px(s, x, y, patch ? black : y < 8 ? shade(white, 1.04) : white);
+      }
+    }
+    rect(s, 18, 16, 22, 18, pink); // the udder
+    stroke(s, 8, 7, 6, 15, 0.6, white); // the tail, and its tuft
+    rect(s, 5, 15, 8, 18, black);
+    for (let y = 3 + up; y < 13 + up; y++) for (let x = 29; x < 36; x++) px(s, x, y, x > 33 && y > 8 + up ? pink : white); // the head
+    rect(s, 30, 4 + up, 33, 7 + up, black); // a patch over the eye
+    px(s, 33, 6 + up, black);
+    rect(s, 30, 1 + up, 31, 3 + up, horn); // horns and an ear
+    rect(s, 34, 1 + up, 35, 3 + up, horn);
+    rect(s, 27, 4 + up, 29, 6 + up, white);
+    if (frame === 2) rect(s, 34, 11 + up, 36, 13 + up, hex("#5a2a2a")); // the mouth, open: moo
+    else px(s, 35, 10 + up, hex("#8a4a52"));
+    outline(s, hex("#2a2622"));
+    return { sprite: s, height: 1.7 * k, solid: true };
+  };
+  return [art(0), art(1), art(2)];
+}
+
+/** A tumbleweed: a ball of dry, tangled stems, in four turns as it rolls. */
+export function tumbleweedFrames(): SceneryArt[] {
+  const rng = new Rand(5);
+  const strands = Array.from({ length: 34 }, () => ({ a: rng.range(0, Math.PI * 2), b: rng.range(0.6, 2.6), r: rng.range(2.5, 9.5) }));
+  return [0, 1, 2, 3].map((f) => {
+    const s = makeSprite(22, 22);
+    const turn = (f * Math.PI) / 8;
+    for (const st of strands) {
+      for (let k = 0; k < 14; k++) {
+        const a = st.a + turn + (k / 13) * st.b, r = st.r * (0.75 + 0.25 * Math.sin(k * 0.9));
+        const c = k % 5 === 0 ? hex("#5a4428") : (k + Math.round(st.r)) % 3 ? hex("#c8a46a") : hex("#8a6a3e");
+        px(s, Math.round(11 + Math.cos(a) * r), Math.round(11 + Math.sin(a) * r * 0.92), c);
+      }
+    }
+    outline(s, hex("#3a2a14"));
+    return { sprite: s, height: 1.5, solid: false };
+  });
+}
+
+/** A jellyfish: a glowing bell that pulses (four frames), trailing waving tentacles. */
+export function jellyFrames(): SceneryArt[] {
+  return [0, 1, 2, 3].map((f) => {
+    const s = makeSprite(22, 30);
+    const squeeze = [0, 1, 2, 1][f];
+    const bell = hex("#ff8fd0"), rim = hex("#c86bff"), glow = hex("#ffe0f4");
+    for (let y = 0; y < 10; y++) {
+      const w = Math.round(Math.sqrt(Math.max(0, 1 - ((9 - y) / 9.5) ** 2)) * (9 - squeeze));
+      for (let x = 11 - w; x <= 11 + w; x++) px(s, x, y + squeeze, y < 3 ? glow : Math.abs(x - 11) > w - 2 ? rim : bell);
+    }
+    for (let t = 0; t < 6; t++) {
+      const x0 = 5 + t * 2.4;
+      for (let y = 10; y < 29 - (t % 2) * 4; y++) {
+        const x = Math.round(x0 + Math.sin(y * 0.45 + f * 1.6 + t) * 1.3);
+        px(s, x, y + squeeze, (y + t) % 4 === 0 ? glow : rim);
+      }
+    }
+    return { sprite: s, height: 1.9, solid: false };
+  });
+}
+
+/** A police car, black and white with a red light bar: from the front and from behind, each in two
+ * frames (the bar's lights flashing left and right). */
+export function policeFrames(): { front: SceneryArt[]; rear: SceneryArt[] } {
+  const car = (rear: boolean, f: number): SceneryArt => {
+    const s = makeSprite(36, 20);
+    const white = hex("#f4f4f2"), black = hex("#16171c"), glass = hex("#2b3a52"), red = hex("#ff2a2a"), dim = hex("#6a1212");
+    rect(s, 13, 0, 23, 2, f ? red : dim); // the light bar
+    rect(s, 13, 0, 18, 2, f ? dim : red);
+    rect(s, 10, 2, 26, 4, white); // the roof
+    for (let y = 4; y < 9; y++) rect(s, 9 - (y - 4) / 2, y, 27 + (y - 4) / 2, y + 1, glass); // the windscreen
+    rect(s, 3, 9, 33, 13, white); // the body: white up top, black below
+    rect(s, 2, 13, 34, 17, black);
+    if (rear) {
+      rect(s, 3, 10, 8, 12, red); // the tail lights, and the plate
+      rect(s, 28, 10, 33, 12, red);
+      rect(s, 15, 14, 21, 16, hex("#e8e8e2"));
+    } else {
+      rect(s, 3, 10, 8, 12, hex("#fff6c8")); // the headlights, and the grille
+      rect(s, 28, 10, 33, 12, hex("#fff6c8"));
+      rect(s, 12, 11, 24, 13, hex("#3a3c44"));
+    }
+    rect(s, 4, 17, 9, 20, black); // the wheels
+    rect(s, 27, 17, 32, 20, black);
+    outline(s, hex("#060608"));
+    return { sprite: s, height: 1.5, solid: true };
+  };
+  return { front: [car(false, 0), car(false, 1)], rear: [car(true, 0), car(true, 1)] };
+}
+
+/** A car in the tunnel's traffic, from behind: one of a few paints, red tail lights glowing. */
+export function trafficArt(paint: number): SceneryArt {
+  const s = makeSprite(34, 18);
+  const glass = hex("#1d2433"), dark = hex("#14151a");
+  rect(s, 9, 0, 25, 2, shade(paint, 1.15));
+  for (let y = 2; y < 7; y++) rect(s, 8 - (y - 2) / 2, y, 26 + (y - 2) / 2, y + 1, glass);
+  rect(s, 3, 7, 31, 13, paint);
+  rect(s, 3, 7, 31, 8, shade(paint, 1.3));
+  rect(s, 2, 13, 32, 15, shade(paint, 0.6));
+  rect(s, 3, 9, 9, 11, hex("#ff3030"));
+  rect(s, 25, 9, 31, 11, hex("#ff3030"));
+  rect(s, 14, 10, 20, 12, hex("#e8e8e2"));
+  rect(s, 4, 15, 9, 18, dark);
+  rect(s, 25, 15, 30, 18, dark);
+  outline(s, hex("#060608"));
+  return { sprite: s, height: 1.45, solid: true };
+}
+
+/** A geyser's vent in the rock road: a crack glowing in the dark (bright and bubbling as it is
+ * about to blow), and the column of lava and fire it throws up (three frames). */
+export function geyserArts(): { vent: SceneryArt; warn: SceneryArt[]; column: SceneryArt[] } {
+  const vent = (heat: number, f: number): SceneryArt => {
+    const s = makeSprite(28, 12);
+    for (let x = 1; x < 27; x++) {
+      const w = Math.round(2.6 * Math.sin((x / 27) * Math.PI) + 0.4 * Math.sin(x * 1.7));
+      for (let y = 8 - w; y <= 8 + Math.max(0, w - 1); y++) {
+        px(s, x, y, Math.abs(y - 8) < w - 0.5 ? (heat > 0 ? hex("#ffd86a") : hex("#ff7a1e")) : hex("#3a1608"));
+      }
+    }
+    if (heat > 0) {
+      for (let k = 0; k < 6; k++) disc(s, 5 + k * 3.6, 4 - ((k + f) % 3), 1.2, () => (k % 2 ? hex("#ffb347") : hex("#ff5a1a")));
+    }
+    return { sprite: s, height: 0.85, solid: false };
+  };
+  const column = (f: number): SceneryArt => {
+    const s = makeSprite(26, 74);
+    for (let y = 6; y < 74; y++) {
+      const w = 4 + Math.round(2 * Math.sin(y * 0.3 + f * 2.1)) + (y > 60 ? (y - 60) * 0.35 : 0);
+      for (let x = 13 - w; x <= 13 + w; x++) {
+        const core = Math.abs(x - 13) < w * 0.45;
+        px(s, x, y, core ? ((y + f * 3) % 7 === 0 ? hex("#fff6c8") : hex("#ffd86a")) : (x + y + f) % 3 ? hex("#ff7a1e") : hex("#d63a10"));
+      }
+    }
+    for (let k = 0; k < 11; k++) px(s, 3 + ((k * 7 + f * 5) % 20), (k * 5 + f * 3) % 12, k % 2 ? hex("#ffd86a") : hex("#ff5a1a")); // the crown's spatter
+    return { sprite: s, height: 7.5, solid: false };
+  };
+  return { vent: vent(0, 0), warn: [vent(1, 0), vent(1, 1)], column: [column(0), column(1), column(2)] };
+}
+
+/** A wrecking ball: heavy dark steel, lit from above, with the shackle its cable hangs from. */
+export function wreckingBallArt(): SceneryArt {
+  const s = makeSprite(28, 30);
+  rect(s, 12, 0, 16, 4, hex("#8a8e96"));
+  ball(s, 14, 16, 12.5, (u, v) => (u < -0.35 && v < -0.3 ? hex("#9aa0aa") : hex("#3a3d45")), 0, 0.6);
+  outline(s, hex("#0b0c10"));
+  return { sprite: s, height: 2.6, solid: true };
+}
+
+/** A meteor: a glowing rock, and the trail of fire behind it. */
+export function meteorArts(): { rock: SceneryArt; trail: SceneryArt } {
+  const s = makeSprite(16, 16);
+  ball(s, 8, 8, 6.5, (u, v) => (u + v < -0.6 ? hex("#fff1b0") : u + v < 0.2 ? hex("#ffb347") : hex("#d6501a")), 0, 0.55);
+  outline(s, hex("#5a1a08"));
+  const t = makeSprite(10, 10);
+  disc(t, 5, 5, 4.5, (x, y) => ((x + y) % 3 ? hex("#ff8a2a") : hex("#ffd86a")));
+  return { rock: { sprite: s, height: 1.5, solid: false }, trail: { sprite: t, height: 1.1, solid: false } };
+}
+
+/** An alley in Tokyo, where police cars wait: two buildings' corners with a narrow dark gap between
+ * them (a light at its far end), a vertical sign glowing on one, bins at the foot. */
+export function alleyArt(): SceneryArt {
+  const s = makeSprite(48, 70);
+  const wall = hex("#1f2330"), wall2 = hex("#262a38");
+  rect(s, 0, 4, 19, 70, wall);
+  rect(s, 29, 0, 48, 70, wall2);
+  rect(s, 19, 10, 29, 70, hex("#07080c")); // the gap
+  rect(s, 22, 58, 26, 66, hex("#ffd98a")); // a light at its far end
+  for (let y = 8; y < 64; y += 6) {
+    for (let x = 2; x < 17; x += 5) rect(s, x, y, x + 3, y + 3, (x * 7 + y) % 3 ? hex("#ffd98a") : hex("#141722"));
+    for (let x = 31; x < 46; x += 5) rect(s, x, y, x + 3, y + 3, (x + y * 5) % 4 ? hex("#dfe8ff") : hex("#141722"));
+  }
+  rect(s, 15, 14, 19, 44, hex("#ff3fa4")); // the vertical sign
+  rect(s, 16, 15, 18, 43, hex("#2a0f22"));
+  for (let y = 17; y < 41; y += 6) rect(s, 16, y, 18, y + 3, hex("#ffb0d0"));
+  rect(s, 20, 63, 25, 70, hex("#3a5a3a")); // bins
+  rect(s, 24, 65, 28, 70, hex("#5a5e66"));
+  outline(s, hex("#050608"));
+  return { sprite: s, height: 16, solid: true };
 }
 
 // ---------------------------------------------------------------------------------- the volcano
@@ -1442,9 +1622,6 @@ export function makeScenery(kind: SceneryKind, rng: Rand): SceneryArt {
     case "flowers": return flowers(rng);
     case "cactus": return cactus();
     case "palm": return palm();
-    case "neonpalm": return palm(hex("#ff2bd6"), hex("#2de2e6"));
-    case "crystal": return crystal(rng);
-    case "lamp": return lamp();
     case "mesa": return mesa(rng);
     case "tire": return tire();
     case "cone": return cone(rng);

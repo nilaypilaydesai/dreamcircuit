@@ -21,6 +21,9 @@ import { type WorldSprite, drawWorldSprites } from "./render/billboards";
 import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./render/mode7";
 import type { Face } from "./render/poly";
 import { aimArrow, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
+import { type ObstacleArt, obstacleArt, obstacleFaces, obstacleSprites } from "./render/obstacles";
+import { tubeFaces, tubePoint } from "./render/tube";
+import type { ObstacleSound } from "./race/obstacles";
 import { landformFaces } from "./render/landforms";
 import { Sky } from "./render/sky";
 import {
@@ -38,7 +41,7 @@ import { Garage } from "./ui/garage";
 import { HOWTO_PAGES, drawHowTo } from "./ui/howto";
 import { Hud, formatTime, kartColor } from "./ui/hud";
 import { Menu } from "./ui/menus";
-import { type Layout, N, checkLap } from "./world/track";
+import { HALF_WIDTH, type Layout, N, SPACING, checkLap } from "./world/track";
 import { CircuitDesigner, fromSteps, smoothArc, toGame } from "./world/trackgen";
 
 type Mode = "boot" | "title" | "main" | "garage" | "setup" | "cupSetup" | "howto" | "dreaming" | "race" | "pause"
@@ -116,6 +119,8 @@ class Game {
   private readonly trailArt: SceneryArt = trailArt();
   private readonly coinArt: SceneryArt[] = coinFrames();
   private readonly grabArt: SceneryArt[] = grabberFrames();
+  private readonly obstacleArt: ObstacleArt = obstacleArt();
+  private sirenAt = 0; // when the police siren next wails (while a car is after the player)
   private readonly held: Record<ItemKind, SceneryArt> = heldArt();
   private mode: Mode = "boot";
   private race: Race | null = null;
@@ -607,7 +612,7 @@ class Game {
       else if (e.kind === "bridge") this.hud.popup("BRIDGE AHEAD!", now, DREAM);
       else if (e.kind === "lava") { this.sound.lava(); this.shake = Math.max(this.shake, 0.3); }
       else if (e.kind === "fell") {
-        if (e.into === "pond" || e.into === "trench" || e.into === "quicksand") this.sound.splash();
+        if (e.into === "pond" || e.into === "trench" || e.into === "quicksand" || e.into === "canal") this.sound.splash();
         else this.sound.fall();
         this.shake = Math.max(this.shake, 0.25);
       }
@@ -625,6 +630,28 @@ class Game {
       else if (e.kind === "bite") this.sound.bite();
       else if (e.kind === "bounce" && e.near) this.sound.bounce();
       else if (e.kind === "rescued") { this.snapCamera(this.cam, race); this.sound.rescue(); }
+      else if (e.kind === "obstacle") this.obstacleEvent(e.sound, e.near, now);
+    }
+  }
+
+  /** Something in the way did something: its sound, and a word on the screen when it was the
+   * player it got. */
+  private obstacleEvent(sound: ObstacleSound, near: boolean, now: number): void {
+    const said = (text: string, color: number) => { if (near) this.hud.popup(text, now, color); };
+    switch (sound) {
+      case "moo": this.sound.moo(); said("MOO!", hex("#f2efe8")); break;
+      case "puff": this.sound.puff(); break;
+      case "zap": this.sound.zap(); said("STUNG!", hex("#ff8fd0")); break;
+      case "siren":
+        this.sound.siren();
+        this.sirenAt = this.time + 0.9;
+        this.hud.banner("POLICE!", now, hex("#ff2a2a"), 1.6, "THEY ARE AFTER YOU: SHAKE THEM OFF", true);
+        break;
+      case "ram": this.sound.ram(); this.shake = Math.max(this.shake, 0.3); said("RAMMED!", hex("#ff6b6b")); break;
+      case "geyser": this.sound.geyser(); if (near) this.shake = Math.max(this.shake, 0.25); break;
+      case "clang": this.sound.clang(); this.shake = Math.max(this.shake, 0.4); said("WRECKED!", hex("#ffd23f")); break;
+      case "impact": this.sound.explode(near); if (near) this.shake = Math.max(this.shake, 0.35); break;
+      case "honk": this.sound.honk(); break;
     }
   }
 
@@ -763,6 +790,11 @@ class Game {
         : { steer: 0, throttle: 0, brake: 0, drift: false };
       r.update(dt, c);
       this.handleEvents(r, r.events);
+      // the police siren wails on while a car is after the player
+      if (r.obstacles.chasing && this.time > this.sirenAt) {
+        this.sound.siren();
+        this.sirenAt = this.time + 0.9;
+      }
       r.events = [];
       this.follow(this.cam, r, dt);
       const p = r.player;
@@ -783,10 +815,36 @@ class Game {
 
   /** Draw the world from ``cam`` into ``scr`` (the screen, or with ``mirror`` a rear-view mirror:
    * the ratio of the screen's focal length to the mirror's and the screen's width, for the sky). */
-  private drawWorld(race: Race, sky: Sky, cam: Camera, scr: Screen = this.scr,
+  /** Inside the neon tunnel's tube: the camera, given in the race's flat terms, put where it really
+   * is round the tube (a little in off the surface under it) and turned with that surface; the road
+   * point it is at; and where anything else given in flat terms really is. */
+  private tubeCamera(race: Race, flat: Camera): {
+    cam: Camera; idx: number; at: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; tilt: number };
+  } {
+    const t = race.track, p = race.player;
+    // as far along the road from the kart as the camera is (behind it, or ahead of it for the
+    // rear-view mirror: the flat terms stretch and squeeze across a bend, the tube does not), and as
+    // far round the tube as the camera is
+    const along = t.along(flat.x, flat.y, p.idx);
+    const idx = t.wrap(p.idx + Math.round(along / SPACING)), round = t.offset(flat.x, flat.y, t.nearest(flat.x, flat.y, p.idx));
+    const q = tubePoint(t, idx, round, flat.height - (t.elev[idx] ?? 0));
+    const at = (x: number, y: number, h: number, hint?: number) => {
+      const i = t.nearest(x, y, hint ?? idx);
+      const r = tubePoint(t, i, t.offset(x, y, i), h - (t.elev[i] ?? 0));
+      return { X: r.p[0], Y: r.p[1], Z: r.p[2], tilt: r.tilt };
+    };
+    return { cam: { ...flat, x: q.p[0], y: q.p[1], height: q.p[2], roll: q.tilt }, idx, at };
+  }
+
+  private drawWorld(race: Race, sky: Sky, flat: Camera, scr: Screen = this.scr,
                     mirror?: { ratio: number; fullW: number }): void {
     const t = race.track;
-    sky.draw(scr, cam.heading, mirror ? { horizon: cam.horizon, ratio: mirror.ratio, fullW: mirror.fullW } : undefined);
+    // inside the neon tunnel's tube there is no sky and no ground, only the tube: the camera (given
+    // in the race's flat terms) is put where it really is round the tube, turned to match
+    const inTube = race.setup.theme.tube ? this.tubeCamera(race, flat) : null;
+    const cam = inTube?.cam ?? flat;
+    if (inTube) scr.clear(race.setup.theme.fog);
+    else sky.draw(scr, cam.heading, mirror ? { horizon: cam.horizon, ratio: mirror.ratio, fullW: mirror.fullW } : undefined);
     let mist: ((x: number, y: number) => number) | undefined;
     if (!t.locked && t.count > 0) {
       // the frontier of the dream: road beyond this point has not been imagined yet
@@ -802,17 +860,19 @@ class Game {
     const now = this.time;
     const it = race.items;
     // oil on the ground is painted into it, flat; on raised road, a sprite stands in for it
-    drawGround(scr, cam, race.tex, theme.fog, {
-      mist, light: theme.underwater ? { color: CAUSTIC, at: caustics(now) } : undefined, lava: lavaShift(now),
-      paint: slickPaint(it.slicks.filter((sl) => sl.elev < 0.3), now, cam.heading),
-    });
+    if (!inTube) {
+      drawGround(scr, cam, race.tex, theme.fog, {
+        mist, light: theme.underwater ? { color: CAUSTIC, at: caustics(now) } : undefined, lava: lavaShift(now),
+        paint: slickPaint(it.slicks.filter((sl) => sl.elev < 0.3), now, cam.heading),
+      });
+    }
     const extras: WorldSprite[] = [];
     it.boxes.forEach((b, i) => {
       if (b.respawn > 0) return;
       const art = this.boxArt[(Math.floor(now * 10) + i * 3) % this.boxArt.length];
       extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i), base: b.elev });
     });
-    for (const sl of it.slicks) if (sl.elev >= 0.3) extras.push({ x: sl.x, y: sl.y, art: this.slickArt, base: sl.elev });
+    for (const sl of it.slicks) if (sl.elev >= 0.3 || inTube) extras.push({ x: sl.x, y: sl.y, art: this.slickArt, base: sl.elev });
     for (const o of it.orbs) {
       extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: t.elev[o.idx] ?? 0 });
     }
@@ -856,17 +916,26 @@ class Game {
     if (theme.underwater) extras.push(...fishSprites(this.schools(race), now, cam.heading));
     const faces: Face[] = [];
     const painter = { cam, scr, fog: race.setup.theme.fog, faces };
-    landformFaces(painter, race.scenery.landforms, theme);
-    bridgeFaces(painter, t, race.setup.theme);
-    hillFaces(painter, t, theme, race.features.pads, now);
-    tunnelFaces(painter, t, race.features, theme);
-    rampFaces(painter, t, race.features, race.setup.theme);
-    padFaces(painter, t, race.features, now);
+    if (inTube) {
+      tubeFaces(painter, t, theme, inTube.idx, race.features, now);
+      rampFaces(painter, t, race.features, race.setup.theme);
+    } else {
+      landformFaces(painter, race.scenery.landforms, theme);
+      bridgeFaces(painter, t, race.setup.theme);
+      hillFaces(painter, t, theme, race.features.pads, now);
+      tunnelFaces(painter, t, race.features, theme);
+      rampFaces(painter, t, race.features, race.setup.theme);
+      padFaces(painter, t, race.features, now);
+      obstacleFaces(painter, race.obstacles, t, now);
+    }
     // the player's aiming arrows while an aimed item is ready: sweeping in front (on the screen)
     // and, mirrored, behind (in the mirror); a press locks one and it turns blue. Something the
     // back button throws straight back gets a straight arrow in the mirror.
+    extras.push(...obstacleSprites(race.obstacles, t, cam, now, this.obstacleArt));
     const me = race.player;
-    if (me.item && me.roulette <= 0 && me.rocket <= 0 && !me.falling && race === this.race) {
+    // (in the tube, on the floor only: an arrow is drawn on flat road)
+    if (me.item && me.roulette <= 0 && me.rocket <= 0 && !me.falling && race === this.race &&
+        (!inTube || Math.abs(me.offset) < HALF_WIDTH)) {
       if (AIMED.has(me.item)) {
         const locked = me.aimLocked;
         const reach = mirror ? 1.6 : 1;
@@ -884,8 +953,11 @@ class Game {
       grabber: this.grabArt,
       dome: !!(theme.underwater || theme.helmets),
       drone: this.droneArt,
-      underDeck: (x: number, y: number) => t.bridges.some((b) => (x - t.xs[b.lower]) ** 2 + (y - t.ys[b.lower]) ** 2 < 24 * 24),
+      underDeck: inTube ? undefined
+        : (x: number, y: number) => t.bridges.some((b) => (x - t.xs[b.lower]) ** 2 + (y - t.ys[b.lower]) ** 2 < 24 * 24),
       hide: mirror ? race.player : undefined,
+      tube: inTube?.at,
+      viewFrom: inTube ? flat : undefined,
     }, theme.fog, extras, faces);
     if (mirror) return; // (the screen's own overlays are not seen in the mirror)
     if (theme.underwater) waterOverlay(this.scr, now);

@@ -10,6 +10,7 @@
 
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import type { Kart } from "./kart";
+import { TUBE_FLOOR, TUBE_R } from "../world/tube";
 import { DEFAULT_PADS, DEFAULT_RAMPS, type PadRule, type RampRule } from "./tracktypes";
 
 export const RAMP_LEN = 11; // m
@@ -39,7 +40,7 @@ export interface Tunnel {
 
 /** What a race builds: tunnels (Tokyo, the building site), the jump rule (null: no jumps) and the pad rule;
  * ``gravity``, relative to the usual, sets how far a jump flies (on the moon, three times as far). */
-export interface FeatureRules { tunnels: boolean; ramps: RampRule | null; pads: PadRule; gravity: number }
+export interface FeatureRules { tunnels: boolean; ramps: RampRule | null; pads: PadRule; gravity: number; tube: boolean }
 
 /** Where a top-up may build: ``free(s, len)`` says whether arc lengths [s, s + len) are clear of
  * bridges, item rows and karts. */
@@ -62,6 +63,7 @@ export class Features {
    * gravity is weaker (the ramp itself is no longer). */
   readonly flight: number;
   private readonly straightFor: number; // m of straight road that earns a jump (room for the flight too)
+  private readonly tube: boolean; // in the neon tunnel's tube: pads go on its walls and ceiling too
 
   /** ``rules``: what to build (true/false: the defaults, with or without tunnels). */
   constructor(rules: Partial<FeatureRules> | boolean = {}) {
@@ -71,6 +73,7 @@ export class Features {
     this.padRule = r.pads ?? DEFAULT_PADS;
     this.flight = RAMP_LEN + (FLIGHT - RAMP_LEN) / (r.gravity ?? 1);
     this.straightFor = (this.rampRule?.straight ?? DEFAULT_RAMPS.straight) + this.flight - FLIGHT;
+    this.tube = !!r.tube;
   }
 
   /** Whether arc lengths [s, s + len) overlap a tunnel (with a margin either side). */
@@ -143,9 +146,19 @@ export class Features {
   private tryPad(track: Track, i: number, blocked: (s: number, len: number) => boolean, rng: () => number): boolean {
     const s = track.s[i];
     if (blocked(s - 5, PAD_LEN + 10) || track.fromStart(i) <= 60 || this.tunnelNear(s - 5, PAD_LEN + 10, 5)) return false;
-    this.pads.push({ start: i, s0: s, offset: (rng() * 2 - 1) * (HALF_WIDTH - PAD_HALF - 1.2) });
+    this.pads.push({ start: i, s0: s, offset: this.padOffset(rng) });
     this.lastPad = s;
     return true;
+  }
+
+  /** Where across the road a pad goes: anywhere on it; in the tube, as often up a wall, and now and
+   * then on the ceiling (where only a kart going fast enough to loop can reach it). */
+  private padOffset(rng: () => number): number {
+    if (!this.tube) return (rng() * 2 - 1) * (HALF_WIDTH - PAD_HALF - 1.2); // (one draw, as ever, outside the tube)
+    const side = rng() < 0.5 ? 1 : -1, r = rng();
+    if (r < 0.4) return (rng() * 2 - 1) * (HALF_WIDTH - PAD_HALF - 1.2);
+    if (r < 0.82) return side * (TUBE_FLOOR + 1.5 + rng() * (Math.PI * TUBE_R - 3));
+    return side * (TUBE_FLOOR + Math.PI * TUBE_R + 3.2);
   }
 
   /** Whether a jump (or where its karts land) is on arc lengths [s, s + len). */
@@ -213,7 +226,7 @@ export class Features {
       const s0 = track.s[i];
       if (this.pads.some((p) => Math.abs(p.s0 - s0) < 70) || this.rampNear(s0 - 20, PAD_LEN + 40) ||
           this.tunnelNear(s0 - 5, PAD_LEN + 10, 5) || !free(s0 - 5, PAD_LEN + 10)) continue;
-      this.pads.push({ start: i, s0, offset: (rng() * 2 - 1) * (HALF_WIDTH - PAD_HALF - 1.2) });
+      this.pads.push({ start: i, s0, offset: this.padOffset(rng) });
       added += 1;
     }
     this.pads.sort((a, b) => a.s0 - b.s0);

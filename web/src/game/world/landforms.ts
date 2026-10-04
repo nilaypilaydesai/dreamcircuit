@@ -1,5 +1,5 @@
 // The land around a circuit, so that the ground is not one flat plane: knolls in the meadows,
-// buttes and dunes in the desert, glowing peaks on the neon grid, cinder cones in the lava, heaps
+// buttes and dunes in the desert, cinder cones in the lava, heaps
 // of spoil on the building site, rocks crowned with coral on the reef and old crater rims on the
 // moon, and blocks of towers in Tokyo. Each is a solid of a few dozen faces (render/landforms.ts), set out
 // when the circuit locks, always beyond the fence that keeps karts near the road, so nothing ever
@@ -7,7 +7,7 @@
 
 import { HALF_WIDTH } from "./track";
 
-export type LandformKind = "knoll" | "gridpeak" | "butte" | "dune" | "reefrock" | "cone" | "spoil" | "rim" | "block";
+export type LandformKind = "knoll" | "butte" | "dune" | "reefrock" | "cone" | "spoil" | "rim" | "block";
 
 export interface Landform {
   kind: LandformKind;
@@ -23,7 +23,6 @@ export interface Landform {
 /** How big each kind comes: the radius of its foot and its height (m), and how long it is. */
 export const LANDFORM_SIZE: Record<LandformKind, { r: [number, number]; h: [number, number]; stretch: [number, number] }> = {
   knoll: { r: [22, 46], h: [6, 13], stretch: [1, 1.6] },
-  gridpeak: { r: [16, 32], h: [16, 32], stretch: [1, 1.15] },
   butte: { r: [14, 28], h: [10, 22], stretch: [1, 1.8] },
   dune: { r: [16, 28], h: [5, 9], stretch: [1.8, 2.6] },
   reefrock: { r: [10, 22], h: [5, 11], stretch: [1, 1.5] },

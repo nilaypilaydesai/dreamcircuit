@@ -2,15 +2,16 @@
 
 import { hex } from "./core/gfx";
 import {
-  type HillRule, MESA_HILLS, MOON_HILLS, NEON_HILLS, REEF_HILLS, SITE_HILLS, TOKYO_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
+  type HillRule, MESA_HILLS, MOON_HILLS, REEF_HILLS, SITE_HILLS, TOKYO_HILLS, TUBE_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
 } from "./race/tracktypes";
+import type { ObstacleKind } from "./race/obstacles";
 import type { HazardKind } from "./world/hazards";
 import type { LandformKind } from "./world/landforms";
 import type { HillStyle } from "./world/track";
 
 export type SceneryKind =
-  | "pine" | "oak" | "bush" | "rock" | "flowers" | "cactus" | "palm" | "crystal" | "neonpalm"
-  | "mesa" | "lamp" | "tire" | "cone" | "chevron"
+  | "pine" | "oak" | "bush" | "rock" | "flowers" | "cactus" | "palm"
+  | "mesa" | "tire" | "cone" | "chevron"
   | "kelp" | "coral" | "anemone" | "shell" | "wreck" // the reef
   | "streetlamp" | "vending" | "lantern" | "neonsign" | "pole" | "sakura" // Tokyo's streets
   | "tower" | "apartment" | "billboard" | "pagoda" // and its skyline
@@ -38,11 +39,12 @@ export interface Theme {
   edge: number;
   kerb: [number, number];
   barrier: number;
-  grid: number; // 0 = none (neon grid lines on the ground)
   near: SceneryKind[]; // decorations beside the road
   far: SceneryKind[]; // landscape across the infield and beyond
   underwater?: boolean; // bubble helmets, rising bubbles, light shafts, caustics, fish
   winding?: boolean; // a more winding road (the dream leans wild): Tokyo's streets, for drifting
+  smooth?: boolean; // a smoother road (the dream leans calm): the tube's bends wide enough to drive round inside
+  tube?: boolean; // the whole race is run inside a tube (world/tube.ts), up its walls and round over its ceiling
   farAmp?: number; // how tall the far hills on the horizon are (default 26 px)
   volcano?: boolean; // a lake of lava around a rock road (drive into it and a drone fishes you
   // out), crater walls with lava falls all around, embers in the air
@@ -60,6 +62,7 @@ export interface Theme {
   ripples?: boolean; // sand: ripples the wind has drawn across it
   landforms?: LandformKind[]; // the land around the circuit: knolls, buttes, dunes, peaks (3D, off the road)
   hazard?: HazardKind; // what a kart can drive into off the road (the rescue drone fishes it out)
+  obstacle?: ObstacleKind; // what gets in the way on the road (race/obstacles.ts): cows, police...
 }
 
 export const THEMES: Theme[] = [
@@ -70,22 +73,23 @@ export const THEMES: Theme[] = [
     ground: [hex("#4caf50"), hex("#43a047")], groundSpeck: hex("#66bb6a"),
     shoulder: hex("#c8b27a"), road: hex("#5b5f6b"), roadSpeck: hex("#666b77"),
     edge: hex("#f2f2f2"), kerb: [hex("#e53935"), hex("#f5f5f5")], barrier: hex("#2e3b2f"),
-    grid: 0,
     near: ["bush", "oak", "pine", "flowers", "rock", "tire", "cone"],
     far: ["oak", "pine", "pine", "bush", "rock", "flowers"],
-    hills: VALLEY_HILLS, hillStyle: "meadow", relief: 7, landforms: ["knoll"], hazard: "pond",
+    hills: VALLEY_HILLS, hillStyle: "meadow", relief: 7, landforms: ["knoll"], hazard: "pond", obstacle: "cow",
   },
   {
-    id: "neon", name: "NEON NIGHT", blurb: "A NEON SKYWAY OVER A SYNTHWAVE GRID OF CRYSTALS",
-    skyTop: hex("#0b0420"), skyHorizon: hex("#6d1b7b"), fog: hex("#3b1650"), sun: hex("#ff6ad5"),
-    stars: true, farHills: hex("#2a0f4a"), nearHills: hex("#16082e"), clouds: 0,
-    ground: [hex("#140a26"), hex("#170c2c")], groundSpeck: hex("#24123f"),
-    shoulder: hex("#2b1748"), road: hex("#22202e"), roadSpeck: hex("#2b2938"),
+    // the neon tunnel: the whole race inside a tube of light (world/tube.ts). Ride up its walls,
+    // and fast enough right round over its ceiling; boost pads on the walls and the ceiling;
+    // traffic on the floor to weave through or ride the walls past. Its circuits are drawn bigger,
+    // and dreamed calmer, so the bends are wide enough to drive round the inside of
+    id: "neon", name: "NEON TUNNEL", blurb: "A TUBE OF LIGHT: RIDE THE WALLS, LOOP THE CEILING, PASS THE TRAFFIC",
+    skyTop: hex("#0b0420"), skyHorizon: hex("#6d1b7b"), fog: hex("#2a0838"), sun: 0, stars: false,
+    farHills: hex("#2a0f4a"), nearHills: hex("#16082e"), clouds: 0,
+    ground: [hex("#1c0f3a"), hex("#25144b")], groundSpeck: hex("#24123f"),
+    shoulder: hex("#2b1748"), road: hex("#15121f"), roadSpeck: hex("#2b2938"),
     edge: hex("#2de2e6"), kerb: [hex("#ff2bd6"), hex("#2de2e6")], barrier: hex("#ff2bd6"),
-    grid: hex("#3d1f6b"),
-    near: ["neonpalm", "crystal", "lamp", "cone", "crystal"],
-    far: ["crystal", "neonpalm", "crystal", "lamp"],
-    hills: NEON_HILLS, hillStyle: "skyway", relief: 3, landforms: ["gridpeak"], hazard: "void",
+    near: [], far: [],
+    tube: true, smooth: true, scale: 1.6, hills: TUBE_HILLS, hillStyle: "earth", obstacle: "traffic",
   },
   {
     id: "mesa", name: "SUNSET MESA", blurb: "UP ONTO THE MESAS AND OVER THE DUNES AT DUSK",
@@ -94,10 +98,9 @@ export const THEMES: Theme[] = [
     ground: [hex("#d9a35b"), hex("#d29b52")], groundSpeck: hex("#e4b46c"),
     shoulder: hex("#b5763c"), road: hex("#5e534c"), roadSpeck: hex("#6a5f57"),
     edge: hex("#fff3d6"), kerb: [hex("#ff7043"), hex("#fff3d6")], barrier: hex("#6b3b1f"),
-    grid: 0,
     near: ["cactus", "rock", "palm", "tire", "cone", "rock"],
     far: ["mesa", "cactus", "rock", "cactus", "palm"],
-    hills: MESA_HILLS, hillStyle: "mesa", relief: 4, ripples: true, landforms: ["butte", "dune", "dune"], hazard: "quicksand",
+    hills: MESA_HILLS, hillStyle: "mesa", relief: 4, ripples: true, landforms: ["butte", "dune", "dune"], hazard: "quicksand", obstacle: "tumbleweed",
   },
   {
     id: "reef", name: "CORAL REEF", blurb: "OVER CORAL RIDGES UNDER THE SEA, IN BUBBLE HELMETS",
@@ -106,10 +109,9 @@ export const THEMES: Theme[] = [
     ground: [hex("#d8c497"), hex("#cfba8c")], groundSpeck: hex("#f4e9cf"),
     shoulder: hex("#b8a37a"), road: hex("#3f5566"), roadSpeck: hex("#4b6476"),
     edge: hex("#7ff6ff"), kerb: [hex("#ff7f6e"), hex("#fff1e0")], barrier: hex("#1f4a5c"),
-    grid: 0,
     near: ["kelp", "coral", "anemone", "rock", "shell", "kelp", "coral"],
     far: ["kelp", "coral", "kelp", "rock", "wreck", "coral", "anemone"],
-    underwater: true, hills: REEF_HILLS, hillStyle: "coral", relief: 3, ripples: true, landforms: ["reefrock"], hazard: "trench",
+    underwater: true, hills: REEF_HILLS, hillStyle: "coral", relief: 3, ripples: true, landforms: ["reefrock"], hazard: "trench", obstacle: "jelly",
   },
   {
     // Tokyo at night, for drifting: winding streets between lit towers, vending machines and paper
@@ -121,11 +123,10 @@ export const THEMES: Theme[] = [
     ground: [hex("#25282f"), hex("#22252c")], groundSpeck: hex("#3a3e4a"),
     shoulder: hex("#3e424c"), road: hex("#1d1f26"), roadSpeck: hex("#272a33"),
     edge: hex("#f2f2f2"), kerb: [hex("#e23b3b"), hex("#f2f2f2")], barrier: hex("#c9ced6"),
-    grid: 0,
     near: ["streetlamp", "vending", "lantern", "neonsign", "pole", "sakura", "streetlamp", "vending"],
     far: ["tower", "apartment", "tower", "billboard", "sakura", "pagoda", "tower", "apartment"],
     winding: true, farAmp: 34, hills: TOKYO_HILLS, hillStyle: "expressway", tunnels: "city", terrain: "city",
-    skyline: "tokyo", wall: hex("#b8bcc4"), landforms: ["block"], hazard: "canal",
+    skyline: "tokyo", wall: hex("#b8bcc4"), landforms: ["block"], hazard: "canal", obstacle: "police",
   },
   {
     // inside a volcano: the road is a causeway of rock across a lake of lava ("ground" is the
@@ -136,10 +137,9 @@ export const THEMES: Theme[] = [
     ground: [hex("#2e2427"), hex("#2a2124")], groundSpeck: hex("#4a3a3c"),
     shoulder: hex("#3a3034"), road: hex("#2d2a33"), roadSpeck: hex("#3c3843"),
     edge: hex("#ff8a2a"), kerb: [hex("#e0301a"), hex("#1d1518")], barrier: hex("#3a1a14"),
-    grid: 0,
     near: ["magmarock", "basalt", "obsidian", "vent", "magmarock", "basalt"],
     far: ["spire", "basalt", "vent", "obsidian", "spire", "magmarock", "basalt"],
-    volcano: true, farAmp: 58, wall: hex("#4a3a3e"), hills: VOLCANO_HILLS, hillStyle: "basalt", landforms: ["cone"],
+    volcano: true, farAmp: 58, wall: hex("#4a3a3e"), hills: VOLCANO_HILLS, hillStyle: "basalt", landforms: ["cone"], obstacle: "geyser",
   },
   {
     // a building site: the road climbs onto concrete foundations, along scaffolding and high
@@ -151,11 +151,10 @@ export const THEMES: Theme[] = [
     ground: [hex("#a8835a"), hex("#9e7a52")], groundSpeck: hex("#c09a6a"),
     shoulder: hex("#8a8478"), road: hex("#4c4e55"), roadSpeck: hex("#5a5c63"),
     edge: hex("#ffd23f"), kerb: [hex("#ffb000"), hex("#1f2026")], barrier: hex("#ff8a1f"),
-    grid: 0,
     near: ["barrier", "drum", "cone", "pipes", "barrier", "drum", "girders"],
     far: ["crane", "skeleton", "mixer", "digger", "pipes", "girders", "skeleton", "crane"],
     hills: SITE_HILLS, hillStyle: "scaffold", tunnels: "frame", terrain: "dirt", skyline: "city",
-    wall: hex("#ff8a1f"), relief: 2.5, landforms: ["spoil"], hazard: "pit",
+    wall: hex("#ff8a1f"), relief: 2.5, landforms: ["spoil"], hazard: "pit", obstacle: "wrecker",
   },
   {
     // the moon: low gravity (a fast kart floats over every crater's rim, and a jump carries it
@@ -168,10 +167,9 @@ export const THEMES: Theme[] = [
     ground: [hex("#8d8e93"), hex("#86878c")], groundSpeck: hex("#b3b4b8"),
     shoulder: hex("#6d6e74"), road: hex("#2e3038"), roadSpeck: hex("#3b3d46"),
     edge: hex("#7fe7ff"), kerb: [hex("#e8ecf2"), hex("#3a5bd8")], barrier: hex("#9aa0aa"),
-    grid: 0,
     near: ["boulder", "boulder", "dish", "habitat", "boulder", "lander"],
     far: ["boulder", "lander", "dish", "habitat", "rover", "boulder", "boulder"],
     gravity: 0.3, scale: 1.6, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
-    wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"], hazard: "chasm",
+    wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"], hazard: "chasm", obstacle: "meteor",
   },
 ];

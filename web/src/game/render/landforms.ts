@@ -2,7 +2,7 @@
 // its middle: rings of points from its foot up (each a little ragged), joined into faces lit by the
 // sun from the north-west, in its world's colours: bands of grass on a knoll, strata of sandstone
 // on a butte, a crown of coral on a reef rock, a crater of lava on a cinder cone,
-// glowing ridges and rings on a neon peak, floors of lit windows on a tower block.
+// floors of lit windows on a tower block.
 
 import { hex, mix, shade } from "../core/gfx";
 import type { Theme } from "../themes";
@@ -17,7 +17,6 @@ interface Look {
   band: (theme: Theme, ring: number, side: number, l: Landform) => number; // between rings ring and ring + 1
   cap?: (theme: Theme) => number; // a flat top in this colour
   capLit?: boolean; // the sun lights the top too (else it glows: a crater of lava)
-  ridges?: (theme: Theme, side: number) => number; // glowing lines up its edges, and rings around it
   glows?: (ring: number) => boolean; // bands that give light rather than take the sun's (lit windows)
 }
 
@@ -34,10 +33,6 @@ const LOOKS: Record<LandformKind, Look> = {
   knoll: {
     sides: 12, profile: [[1, 0], [0.8, 0.4], [0.52, 0.76], [0.22, 0.96], [0, 1]], jitter: 0.07,
     band: (t, k) => mix(shade(t.ground[1], 0.92), shade(t.ground[0], 1.1), k / 3),
-  },
-  gridpeak: {
-    sides: 5, profile: [[1, 0], [0, 1]], jitter: 0.12, band: () => hex("#21103f"),
-    ridges: (t, q) => (q & 1 ? t.edge : t.kerb[0]),
   },
   butte: {
     sides: 11, profile: [[1, 0], [0.97, 0.22], [0.94, 0.45], [0.91, 0.68], [0.88, 0.88], [0.85, 1]], jitter: 0.15,
@@ -94,7 +89,6 @@ function normal(pts: P3[], mid: P3): P3 {
 }
 
 const lit = (c: number, n: P3) => shade(c, 0.58 + 0.62 * Math.max(0, n[0] * SUN[0] + n[1] * SUN[1] + n[2] * SUN[2]));
-const along = (a: P3, b: P3, t: number): P3 => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
 function build(p: Painter, l: Landform, look: Look, theme: Theme): void {
   const { sides, profile } = look, K = profile.length;
@@ -117,20 +111,6 @@ function build(p: Painter, l: Landform, look: Look, theme: Theme): void {
       const n = normal(pts, mid);
       const band = look.band(theme, k, q, l);
       face(p, pts, look.glows?.(k) ? band : lit(band, n), n);
-      if (look.ridges && apex) {
-        // a ring of light around it a third and two thirds of the way up, and a line up its edge
-        const top = rings[k + 1][0], ring = shade(theme.grid || hex("#3d1f6b"), 2.3);
-        for (const f of [0.33, 0.62]) {
-          face(p, [along(pts[0], top, f), along(pts[1], top, f), along(pts[1], top, f + 0.035), along(pts[0], top, f + 0.035)],
-               ring, n, -0.05);
-        }
-        const prev = rings[k][(q + sides - 1) % sides], next = rings[k][q2];
-        const tx = next[0] - prev[0], ty = next[1] - prev[1], tl = Math.hypot(tx, ty) || 1;
-        const w = 0.8 / tl, wt = 0.22 / tl, b = rings[k][q];
-        face(p, [[b[0] - tx * w, b[1] - ty * w, b[2]], [b[0] + tx * w, b[1] + ty * w, b[2]],
-                 [top[0] + tx * wt, top[1] + ty * wt, top[2]], [top[0] - tx * wt, top[1] - ty * wt, top[2]]],
-             look.ridges(theme, q), [b[0] - l.x, b[1] - l.y, l.r * 0.5], -0.06);
-      }
     }
   }
   if (profile[K - 1][0] > 0 && look.cap) {

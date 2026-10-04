@@ -5,6 +5,7 @@
 
 import type { FallKind } from "../world/hazards";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
+import { TUBE_HALF, TUBE_LOOP_SPEED, holdSpeed, wrapTube } from "../world/tube";
 import type { ItemKind } from "./odds";
 import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "./parts";
 
@@ -129,6 +130,8 @@ export class Kart {
   slope = 0; // dz/ds of the road under the kart (set by the race)
   bend = 0; // d2z/ds2 of the road under it: how sharply it crests (< 0) or dips (set by the race)
   walled = false; // in a tunnel, between its walls (set by the race)
+  tube = false; // racing inside the neon tunnel's tube: its offset is how far round the tube it is (world/tube.ts)
+  slipping = false; // in the tube, too slow to hold on where it is: sliding back down the wall
   trick: TrickGrade = 0; // pending: paid out as a boost on landing
   burnout = 0; // s of wheelspin after a too-early start
   trickAngle = 0; // the sprite's extra rotation during a trick
@@ -247,8 +250,16 @@ export class Kart {
     }
     this.idx = track.nearest(this.x, this.y, this.idx);
     this.offset = track.offset(this.x, this.y, this.idx);
+    if (this.tube && Math.abs(this.offset) > TUBE_HALF) {
+      // round over the middle of the ceiling: on round, from the other edge of the unrolled tube
+      const [tx, ty] = track.tangent(this.idx), d = wrapTube(this.offset) - this.offset;
+      this.x -= ty * d;
+      this.y += tx * d;
+      this.offset += d;
+    }
     const a = Math.abs(this.offset);
-    this.surface = a < HALF_WIDTH - 1.3 ? "road" : a < HALF_WIDTH ? "kerb" : a < HALF_WIDTH + 1.8 ? "shoulder" : "grass";
+    this.surface = this.tube ? "road"
+      : a < HALF_WIDTH - 1.3 ? "road" : a < HALF_WIDTH ? "kerb" : a < HALF_WIDTH + 1.8 ? "shoulder" : "grass";
     if (!this.air && this.surface !== "grass") this.safeIdx = this.idx;
     let landed: TrickGrade | -1 = -1;
 
@@ -295,7 +306,7 @@ export class Kart {
       this.elev = this.ground;
     }
     // guard rails on raised road (no falling off a bridge or a hill), and a tunnel's walls
-    if (!this.air && (this.ground > 0.8 || this.walled) && a > HALF_WIDTH - 0.7) {
+    if (!this.air && !this.tube && (this.ground > 0.8 || this.walled) && a > HALF_WIDTH - 0.7) {
       const [tx, ty] = track.tangent(this.idx);
       const sgn = Math.sign(this.offset), push = a - (HALF_WIDTH - 0.7);
       this.x += ty * sgn * push;
@@ -370,8 +381,20 @@ export class Kart {
     this.x += Math.cos(dir) * this.v * dt;
     this.y += Math.sin(dir) * this.v * dt;
 
+    // in the tube, too slow for where it is on the wall: it slides back down toward the floor (fast
+    // off the upper half, where it peels off)
+    if (this.tube && !this.air) {
+      const need = holdSpeed(this.offset), speed = Math.abs(this.v);
+      this.slipping = need > 0 && speed < need;
+      if (this.slipping) {
+        const upper = need >= TUBE_LOOP_SPEED, slide = (upper ? 9 : 3) + (need - speed) * (upper ? 0.6 : 0.5);
+        const [tx, ty] = track.tangent(this.idx), d = -Math.sign(this.offset) * Math.min(slide * dt, Math.abs(this.offset));
+        this.x -= ty * d;
+        this.y += tx * d;
+      }
+    }
     // soft outer fence
-    if (a > HALF_WIDTH + 17) {
+    if (!this.tube && a > HALF_WIDTH + 17) {
       const [tx, ty] = track.tangent(this.idx);
       const s = Math.sign(this.offset);
       this.x += ty * s * (a - HALF_WIDTH - 17);

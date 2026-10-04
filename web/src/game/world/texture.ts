@@ -63,7 +63,7 @@ export class WorldTexture {
   private readonly rows: Float64Array[]; // a row of each scale of noise, as it is painted
   constructor(readonly theme: Theme, readonly seed: number) {
     this.lava = !!theme.volcano;
-    this.size = texSize(theme.scale);
+    this.size = theme.tube ? 256 : texSize(theme.scale); // (inside the tube the ground is never seen)
     this.half = (this.size * RES) / 2;
     this.rg = this.size / RELIEF_STEP + 1;
     this.rows = [0, 1, 2, 3].map(() => new Float64Array(this.size));
@@ -307,10 +307,6 @@ export class WorldTexture {
         }
         const h = hash2(tx, ty, this.seed);
         if (h > 0.985) c = t.groundSpeck;
-        if (t.grid) {
-          const gx = Math.abs(((wx % 10) + 10) % 10 - 5), gy = Math.abs(((wy % 10) + 10) % 10 - 5);
-          if (gx > 4.85 || gy > 4.85) c = t.grid;
-        }
         tex[ty * this.size + tx] = shade(c, this.lightAt(tx, ty));
       }
     }

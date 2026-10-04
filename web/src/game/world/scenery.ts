@@ -67,6 +67,7 @@ export class Scenery {
 
   /** New road was committed: index it, clear anything on it, decorate beside it. */
   onCommit(track: Track, from: number, to: number): void {
+    if (this.theme.tube) return; // (inside the tube nothing outside is ever seen)
     for (let i = from; i < to; i++) {
       const k = this.key(track.xs[i], track.ys[i]);
       const list = this.road.get(k);
@@ -99,6 +100,7 @@ export class Scenery {
 
   /** A bridge was built: pillars under its deck, clear of the road it crosses. */
   onBridge(track: Track, b: Bridge): void {
+    if (this.theme.tube) return; // (inside the tube nothing outside is ever seen)
     const lower = (x: number, y: number) => {
       let best = Infinity;
       for (let k = -140; k <= 140; k += 2) {
@@ -124,6 +126,7 @@ export class Scenery {
 
   /** The circuit locked: fill in the landscape and the start/finish furniture. */
   onLock(track: Track): void {
+    if (this.theme.tube) return;
     const t = this.theme;
     this.placeLandforms(track);
     // (as thick on the ground in a bigger world)
@@ -137,7 +140,7 @@ export class Scenery {
       const d = this.roadDistance(track, x, y, need + 10);
       if (d < need) continue;
       // forests cluster: drop a few neighbours around trees
-      const n = ["pine", "oak", "cactus", "crystal", "kelp", "coral", "sakura", "basalt", "boulder", "drum"].includes(kind)
+      const n = ["pine", "oak", "cactus", "kelp", "coral", "sakura", "basalt", "boulder", "drum"].includes(kind)
         ? this.rng.int(1, 4) : 1;
       for (let m = 0; m < n; m++) {
         const xx = x + this.rng.range(-6, 6) * (m > 0 ? 1 : 0), yy = y + this.rng.range(-6, 6) * (m > 0 ? 1 : 0);

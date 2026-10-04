@@ -38,12 +38,12 @@ export function bridgeLift(ds: number): number {
   return BRIDGE_HEIGHT * (1 - u * u * (3 - 2 * u));
 }
 
-/** What a climb is built as: an earth embankment, a concrete foundation, a steel girder (a
- * crane's arm), scaffolding, a crater's rim, a grassy rise in a meadow, a neon skyway on pylons, a
- * low roller of the neon grid, a mesa, a sand dune, a ridge of coral, a causeway of basalt, an
- * elevated expressway on concrete piers, or the ramp of a parking garage. */
+/** What a climb is built as: an earth embankment (or, in the neon tunnel, the tube rising), a
+ * concrete foundation, a steel girder (a crane's arm), scaffolding, a crater's rim, a grassy rise
+ * in a meadow, a mesa, a sand dune, a ridge of coral, a causeway of basalt, an elevated expressway
+ * on concrete piers, or the ramp of a parking garage. */
 export type HillStyle =
-  | "earth" | "foundation" | "girder" | "scaffold" | "crater" | "meadow" | "skyway" | "wave"
+  | "earth" | "foundation" | "girder" | "scaffold" | "crater" | "meadow"
   | "mesa" | "dune" | "coral" | "basalt" | "expressway" | "garage";
 
 /** A climb: the road rises and falls back over ``len`` m from arc length ``s0``, as a smooth hump

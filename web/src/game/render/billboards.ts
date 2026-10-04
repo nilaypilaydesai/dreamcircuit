@@ -13,7 +13,7 @@ import { ORBITS, type ItemKind } from "../race/items";
 import type { FallKind } from "../world/hazards";
 import type { Placed } from "../world/scenery";
 import type { Camera } from "./mode7";
-import type { Face } from "./poly";
+import { type Face, toCamera } from "./poly";
 import { KART_ANCHOR, KART_PX, KART_VIEWS, type KartViews, type SceneryArt } from "./sprites";
 import { drawDome } from "./underwater";
 
@@ -39,6 +39,10 @@ export interface KartLook {
   underDeck?: (x: number, y: number) => boolean; // whether a spot on the ground is under a bridge's deck
   hide?: Kart; // a kart not to draw (the player's own, seen past in the rear-view mirror)
   drone?: SceneryArt[]; // the rescue drone's frames (the volcano)
+  /** Inside the neon tunnel's tube: where a point given in the race's flat terms (x, y, and h m up)
+   * really is, round the tube, and how far its surface is turned (``hint``: a road point near it). */
+  tube?: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; tilt: number };
+  viewFrom?: { x: number; y: number }; // where the camera is in the race's flat terms (in the tube), to pick each kart's view
 }
 
 interface Item {
@@ -46,6 +50,7 @@ interface Item {
   sx: number;
   gy: number;
   ppm: number; // pixels per meter at this depth
+  rot?: number; // radians it is drawn turned (up a wall of the neon tunnel's tube, from the camera's)
   draw: () => void;
 }
 
@@ -57,7 +62,16 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   const rx = Math.sin(cam.heading), ry = -Math.cos(cam.heading);
   const items: Item[] = [];
   const now = performance.now() / 1000;
-  const project = (x: number, y: number, h = 0) => {
+  const tube = look.tube;
+  const project = (x: number, y: number, h = 0, hint?: number): Projected | null => {
+    if (tube) {
+      // round the tube, seen by a camera turned with it: a sprite there is drawn turned as much
+      const q = tube(x, y, h, hint), [z, lat, up] = toCamera(cam, q.X, q.Y, q.Z);
+      if (z < 1.2 || z > cam.far) return null;
+      const ppm = cam.focal / z, sx = W / 2 + lat * ppm;
+      if (sx < -200 || sx > W + 200) return null;
+      return { z, sx, gy: cam.horizon - up * ppm, ppm, rot: q.tilt - (cam.roll ?? 0) };
+    }
     const dx = x - cam.x, dy = y - cam.y;
     const z = dx * fx + dy * fy;
     if (z < 1.2 || z > cam.far) return null;
@@ -67,6 +81,12 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     if (sx < -200 || sx > W + 200) return null;
     return { z, sx, gy: cam.horizon + (cam.height - h) * ppm, ppm };
   };
+  /** ``draw`` turned about q's point, as q is round the tube from the camera. */
+  const turn = (q: Projected, draw: () => void) => (!q.rot ? draw : () => {
+    scr.pivot = { x: q.sx, y: q.gy, a: q.rot! };
+    draw();
+    scr.pivot = null;
+  });
   // things at ground level under a bridge's deck, seen from up on it, must be drawn before the deck
   // (only there: a kart coming down a ramp, under a camera still up on the deck, is not under it)
   const lowAt = (x: number, y: number, z: number) => (cam.height - z > 3 && look.underDeck?.(x, y) ? 2.5 : 0);
@@ -83,10 +103,10 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     items.push({
       ...p,
       z: p.z + bias,
-      draw: () => {
+      draw: turn(p, () => {
         if (up > 0 && shadowed) shadow(scr, p.sx, p.gy, w * 0.42, Math.max(1, w * 0.12));
         scr.blitScaled(art.sprite, p.sx - w / 2, p.gy - h - up, w, h, flip, fog, fogAt(p.z));
-      },
+      }),
     });
   };
 
@@ -97,14 +117,14 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     if (h < 1.5) continue;
     const w = (h * it.art.sprite.w) / it.art.sprite.h;
     items.push({ ...p, z: p.z + lowAt(it.x, it.y, 0),
-      draw: () => scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h, w, h, it.flip, fog, fogAt(p.z)) });
+      draw: turn(p, () => scr.blitScaled(it.art.sprite, p.sx - w / 2, p.gy - h, w, h, it.flip, fog, fogAt(p.z))) });
   }
   for (const it of extras) {
     const base = it.base ?? 0;
     const draw = it.draw;
     if (draw) {
       const p = project(it.x, it.y, base + (it.lift ?? 0));
-      if (p) items.push({ ...p, z: p.z + (base > 1 ? -0.5 : lowAt(it.x, it.y, base)), draw: () => draw(p.sx, p.gy, p.ppm) });
+      if (p) items.push({ ...p, z: p.z + (base > 1 ? -0.5 : lowAt(it.x, it.y, base)), draw: turn(p, () => draw(p.sx, p.gy, p.ppm)) });
       continue;
     }
     billboard(it.art, it.x, it.y, base, it.lift ?? 0, base > 1 ? -0.5 : lowAt(it.x, it.y, base), true, 1, it.flip);
@@ -119,11 +139,12 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       if (k.fall >= FALL_SINK && k.fall < FALL_SWAP && !drop) continue; // under the surface
     }
     const falling = drop && k.fall >= 0 && k.fall < FALL_SWAP;
-    const p = project(k.x, k.y, k.elev);
-    const ps = project(k.x, k.y, falling ? 0 : k.ground);
+    const p = project(k.x, k.y, k.elev, k.idx);
+    const ps = project(k.x, k.y, falling ? 0 : k.ground, k.idx);
     if (!p || !ps) continue;
     const sprites = look.sprites(k);
-    const view = Math.atan2(k.y - cam.y, k.x - cam.x); // camera -> kart, world frame
+    const eye = look.viewFrom ?? cam;
+    const view = Math.atan2(k.y - eye.y, k.x - eye.x); // camera -> kart, world frame
     let rel = view - (k.heading + k.slip + k.visualSpin);
     if (k.isPlayer) rel -= k.steer * 0.18; // lean into the steer
     const vi = (((Math.round((rel / (Math.PI * 2)) * KART_VIEWS) % KART_VIEWS) + KART_VIEWS) % KART_VIEWS);
@@ -145,18 +166,22 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : heat > 0 ? heat : fogAt(p.z);
     // on raised road (a deck, a climb, a ramp) a kart is drawn over the road it stands on
     const bias = k.ground > 0.05 || k.elev > 1 ? -0.5 : lowAt(k.x, k.y, k.elev);
+    // (the kart itself is drawn turned with the tube; its shadow, projected for itself, is not)
+    const body = () => {
+      const top = p.gy - h * KART_ANCHOR + bounce;
+      scr.blitScaled(s, p.sx - w / 2, top, w, h, false, k.phantom > 0 ? hex("#c9b8ff") : tint,
+                     k.phantom > 0 ? 0.35 : tintAmount, sinking ? Math.round(ps.gy + 0.2 * ps.ppm) : H, k.phantom > 0);
+      const head = look.dome && k.rocket <= 0 ? sprites.heads?.[vi] : undefined;
+      if (head) drawDome(scr, p.sx - w / 2 + (head[0] * w) / s.w, top + (head[1] * h) / s.h, (5.6 * 1.55 * h) / s.h);
+      const sp = look.sparks(k);
+      if (sp) drawSparks(scr, p.sx, p.gy, p.ppm, sp, k.driftDir);
+    };
     items.push({
       ...p,
       z: p.z + bias,
       draw: () => {
         if (!sinking && !falling) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink);
-        const top = p.gy - h * KART_ANCHOR + bounce;
-        scr.blitScaled(s, p.sx - w / 2, top, w, h, false, k.phantom > 0 ? hex("#c9b8ff") : tint,
-                       k.phantom > 0 ? 0.35 : tintAmount, sinking ? Math.round(ps.gy + 0.2 * ps.ppm) : H, k.phantom > 0);
-        const head = look.dome && k.rocket <= 0 ? sprites.heads?.[vi] : undefined;
-        if (head) drawDome(scr, p.sx - w / 2 + (head[0] * w) / s.w, top + (head[1] * h) / s.h, (5.6 * 1.55 * h) / s.h);
-        const sp = look.sparks(k);
-        if (sp) drawSparks(scr, p.sx, p.gy, p.ppm, sp, k.driftDir);
+        turn(p, body)();
       },
     });
     // fire from the exhaust while boosting (the flamethrower always shows off), and the rocket's plume
@@ -165,7 +190,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     if (flames) {
       const back = k.rocket > 0 ? 2.6 : 1.3;
       const q = project(k.x - c * back, k.y - sn * back, k.elev + (k.rocket > 0 ? 0.55 : 0.3));
-      if (q) items.push({ ...q, z: q.z + bias - 0.05, draw: () => drawFlames(scr, q.sx, q.gy, q.ppm, flames) });
+      if (q) items.push({ ...q, z: q.z + bias - 0.05, draw: turn(q, () => drawFlames(scr, q.sx, q.gy, q.ppm, flames)) });
     }
     // what it carries: the item it will use next floats over the driver's head, spare shots (a
     // triple turbo, boomerangs) circle the kart slowly, and oil, an orb or a bomb held out behind
@@ -219,7 +244,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
 
 const LAVA_GLOW = hex("#ff6a1a");
 const SPLASH = ["#fff0a0", "#ffb03a", "#ff6a1a", "#c2300c"].map(hex);
-type Projected = { z: number; sx: number; gy: number; ppm: number };
+type Projected = { z: number; sx: number; gy: number; ppm: number; rot?: number };
 type Project = (x: number, y: number, h?: number) => Projected | null;
 type Push = (q: Projected, z: number, draw: () => void) => void;
 
@@ -277,7 +302,7 @@ const WATER = ["#ffffff", "#bfe6ff", "#63a7e6", "#2f6fb0"].map(hex);
 const DUST = ["#e8e2d4", "#b9ad94", "#8a7f6a", "#5a5244"].map(hex);
 const SPLASHES: Partial<Record<FallKind, number[]>> = {
   pond: WATER, trench: WATER, quicksand: ["#f0cf94", "#d9a35b", "#b07b44", "#7a5430"].map(hex),
-  void: ["#ff2bd6", "#2de2e6", "#7a3fd0", "#3d1f6b"].map(hex), canal: ["#ffffff", "#ffc1e3", "#5fd3e6", "#2f6fb0"].map(hex),
+  canal: ["#ffffff", "#ffc1e3", "#5fd3e6", "#2f6fb0"].map(hex),
   chasm: ["#e6e7ec", "#b3b4b8", "#8d8e93", "#5a5c66"].map(hex),
 };
 

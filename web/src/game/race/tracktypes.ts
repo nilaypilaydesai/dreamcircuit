@@ -78,13 +78,10 @@ export const VALLEY_HILLS: HillRule = {
   len: [100, 160], h: [2.5, 4.5], gap: [90, 170], segs: [24, 186],
   kinds: [{ style: "meadow", shape: "sine", len: [100, 160], h: [2.5, 4.5] }],
 };
-/** Neon Night's: up onto a skyway on pylons, and over low rollers of the grid. */
-export const NEON_HILLS: HillRule = {
-  len: [60, 170], h: [1.8, 6], gap: [70, 150], segs: [24, 186],
-  kinds: [
-    { style: "skyway", shape: "plateau", len: [130, 175], h: [4.5, 6] },
-    { style: "wave", shape: "sine", len: [60, 90], h: [1.8, 2.6] },
-  ],
+/** The neon tunnel's: the tube rising and dipping as it runs. */
+export const TUBE_HILLS: HillRule = {
+  len: [90, 150], h: [3, 5.5], gap: [80, 160], segs: [24, 186],
+  kinds: [{ style: "earth", shape: "sine", len: [90, 150], h: [3, 5.5] }],
 };
 /** Sunset Mesa's: up onto the top of a mesa, and over dunes. */
 export const MESA_HILLS: HillRule = {

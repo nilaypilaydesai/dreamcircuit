@@ -165,6 +165,16 @@ export class Sound {
   /** Into water or sand: a plop and a spray. */
   splash(): void { this.tone(420, 0.25, "sine", 0.14, 0, 120); this.noise(0.6, 0.16, 1800); }
   /** Off an edge, into a hole: a whistle falling away. */
+  // what gets in the way (race/obstacles.ts)
+  moo(): void { this.tone(150, 0.8, "sawtooth", 0.07, 0, 105); this.tone(156, 0.6, "triangle", 0.06, 0.06, 112); }
+  puff(): void { this.noise(0.22, 0.1, 900); }
+  zap(): void { this.tone(1800, 0.25, "square", 0.06, 0, 380); this.noise(0.22, 0.1, 6000); }
+  siren(): void { this.tone(650, 0.42, "square", 0.04, 0, 1050); this.tone(1050, 0.42, "square", 0.04, 0.44, 650); }
+  ram(): void { this.noise(0.28, 0.24, 500); this.tone(70, 0.22, "square", 0.12); }
+  geyser(): void { this.noise(0.9, 0.18, 1400); this.tone(90, 0.7, "sawtooth", 0.07, 0, 40); }
+  clang(): void { this.tone(520, 0.6, "square", 0.08, 0, 470); this.tone(1040, 0.35, "triangle", 0.06); this.noise(0.12, 0.16, 3000); }
+  honk(): void { this.tone(392, 0.18, "square", 0.07); this.tone(330, 0.24, "square", 0.07, 0.2); }
+
   fall(): void { this.tone(880, 0.7, "triangle", 0.1, 0, 160); }
   /** The rescue drone: rotors whining up, and a two-note beep. */
   rescue(): void {

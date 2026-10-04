@@ -1,6 +1,5 @@
 // What a kart can drive into off the road, in every world, and be fished out of by the rescue
-// drone, as from the volcano's lava: a pond in the meadows, a hole in the neon grid, quicksand in
-// the desert, a trench in the reef, a canal in Tokyo, a dug-out pit on the building site and a
+// drone, as from the volcano's lava: a pond in the meadows, quicksand in the desert, a trench in the reef, a canal in Tokyo, a dug-out pit on the building site and a
 // chasm on the moon. Each is an ellipse set out when the lap locks, past the shoulder
 // (never on the road), mostly on the outside of the bends, where karts run wide. They are painted
 // into the ground (world/texture.ts); a kart on the ground inside one goes in (race/race.ts).
@@ -8,7 +7,7 @@
 import { hash2, hex, mix, shade, valueNoise } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "./track";
 
-export type HazardKind = "pond" | "void" | "quicksand" | "trench" | "canal" | "pit" | "chasm";
+export type HazardKind = "pond" | "quicksand" | "trench" | "canal" | "pit" | "chasm";
 /** What a kart fell into: a hazard, the lava, or off the edge of raised road. */
 export type FallKind = HazardKind | "lava" | "drop";
 
@@ -26,7 +25,6 @@ export const HAZARD_CLEAR = HALF_WIDTH + 3.8;
 const MAX = 7;
 const SIZE: Record<HazardKind, { rx: [number, number]; ry: [number, number] }> = {
   pond: { rx: [7, 12], ry: [4, 7] },
-  void: { rx: [5, 9], ry: [4, 6] },
   quicksand: { rx: [6, 10], ry: [4, 7] },
   trench: { rx: [9, 15], ry: [3, 5] },
   canal: { rx: [11, 17], ry: [2.6, 3.6] },
@@ -86,13 +84,6 @@ const LOOKS: Record<HazardKind, (d: number, a: number, u: number, v: number, wx:
     const ring = Math.abs(((d * 6 + valueNoise(wx, wy, 4, 9) * 0.6) % 1) - 0.5) < 0.05;
     return ring ? shade(deep, 1.25) : deep;
   },
-  // a hole in the grid: black, the grid lines sinking into it, a glowing rim
-  void: (d, _a, u, v) => {
-    if (d > 0.92) return C("#ff2bd6");
-    if (d > 0.86) return C("#2de2e6");
-    const line = Math.abs((u % 4 + 4) % 4 - 2) > 1.85 || Math.abs((v % 4 + 4) % 4 - 2) > 1.85;
-    return line && d > 0.45 ? mix(C("#05010d"), C("#3d1f6b"), (d - 0.45) / 0.45) : C("#05010d");
-  },
   // wet sand, darker, turning slowly round its middle
   quicksand: (d, a, _u, _v, wx, wy, c) => {
     if (d > 0.9) return mix(c, C("#e4b46c"), 0.5);
@@ -138,5 +129,5 @@ export function hazardColor(h: Hazard, wx: number, wy: number, c: number): numbe
 /** The colour the screen darkens to as a kart goes in (the drone lifts it out under it). */
 export const FALL_TINT: Record<FallKind, number> = {
   lava: hex("#1c0603"), drop: hex("#0b0b14"), pond: hex("#04122a"), trench: hex("#020a14"), quicksand: hex("#1f140a"),
-  void: hex("#05010d"), canal: hex("#030a16"), pit: hex("#0b0806"), chasm: hex("#000000"),
+  canal: hex("#030a16"), pit: hex("#0b0806"), chasm: hex("#000000"),
 };

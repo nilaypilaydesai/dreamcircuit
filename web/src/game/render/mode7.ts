@@ -17,6 +17,7 @@ export interface Camera {
   lift: number; // m, smoothed height of the ground under the kart being followed
   fx: number; // 0..1, speed effects (wider view, speed lines) while boosting
   clear?: number; // m: scenery nearer than this is not drawn (scripted film cameras only)
+  roll?: number; // radians the view is turned about its forward axis (inside the neon tunnel's tube)
 }
 
 /** The screen's height relative to the 216 rows the view was composed for: the horizon and the

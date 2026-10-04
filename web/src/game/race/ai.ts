@@ -31,7 +31,9 @@ export class RivalDriver {
     this.skill = 1 - rank * 0.008 + rng.range(-0.01, 0.01); // slight spread across the field
   }
 
-  act(dt: number, track: Track, cls: ClassParams, player: Kart, others: Kart[], items?: Items): Controls {
+  /** ``dangers``: what is in the way on the road (race/obstacles.ts), to steer round. */
+  act(dt: number, track: Track, cls: ClassParams, player: Kart, others: Kart[], items?: Items,
+      dangers: readonly { x: number; y: number; r: number }[] = []): Controls {
     const k = this.kart;
     const v = Math.max(k.v, 0);
     if (this.rng.next() < dt * 0.3) this.laneTarget = this.rng.range(-3, 3);
@@ -43,12 +45,24 @@ export class RivalDriver {
       const lat = -dx * Math.sin(k.heading) + dy * Math.cos(k.heading);
       if (fwd > 0 && fwd < 7 && Math.abs(lat) < 2.2) this.laneTarget = lat > 0 ? -3.2 : 3.2;
     }
+    // and to anything in the way (a cow, a geyser, the ring where a meteor will land), more the
+    // sharper the class: a lane on the far side of it, from far enough off to make it
+    const seen = 18 + 40 * cls.aiCorner;
+    for (const o of dangers) {
+      const dx = o.x - k.x, dy = o.y - k.y;
+      const fwd = dx * Math.cos(k.heading) + dy * Math.sin(k.heading);
+      const lat = -dx * Math.sin(k.heading) + dy * Math.cos(k.heading);
+      if (fwd > 0 && fwd < seen && Math.abs(lat) < o.r + 1.6) {
+        const room = k.tube ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.4; // (in the tube, the foot of a wall will do)
+        this.laneTarget = Math.max(-room, Math.min(room, k.offset + (lat > 0 ? -1 : 1) * (o.r + 2.4)));
+      }
+    }
     this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * 1.2);
 
     const look = track.ahead(k.idx, 7 + v * 0.5);
     const kappa = track.curvature(look);
-    const line = Math.max(-HALF_WIDTH + 1.5, Math.min(HALF_WIDTH - 1.5,
-      this.lane + Math.sign(kappa) * Math.min(2.8, Math.abs(kappa) * 120)));
+    const edge = k.tube ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.5;
+    const line = Math.max(-edge, Math.min(edge, this.lane + Math.sign(kappa) * Math.min(2.8, Math.abs(kappa) * 120)));
     const [tx, ty] = track.tangent(look);
     const gx = track.xs[look] - ty * line, gy = track.ys[look] + tx * line;
     const ang = Math.atan2(gy - k.y, gx - k.x) - k.heading;
@@ -68,7 +82,7 @@ export class RivalDriver {
     const gap = k.dist - player.dist;
     if (gap < -70) vt *= 1.06;
     else if (gap > 60) vt *= 0.93;
-    if (Math.abs(k.offset) > HALF_WIDTH + 2) vt = Math.min(vt, 14);
+    if (Math.abs(k.offset) > HALF_WIDTH + 2 && !k.tube) vt = Math.min(vt, 14);
     if (k.staticT > 0) vt *= 0.93;
     const throttle = v < vt ? 1 : 0;
     const brake = v > vt + 2 ? Math.min(1, (v - vt) / 6) : 0;

@@ -31,6 +31,10 @@ import {
 } from "../src/game/world/trackgen";
 import { BANK_EDGE, worldHalf } from "../src/game/world/texture";
 import { SHOWCASE } from "../src/game/world/maps";
+import { TUBE_HALF, TUBE_LOOP_SPEED, TUBE_R, TUBE_WALL_SPEED, holdSpeed, tubeAt } from "../src/game/world/tube";
+import {
+  COW_GRAZE, COW_WALK, GEYSER_BLOW, GEYSER_WARN, METEOR_BURST, METEOR_FALL, type Obstacle, Obstacles, WRECKER_PERIOD,
+} from "../src/game/race/obstacles";
 import circuits from "./circuits.json";
 
 // Every race allocates a 35 MB ground texture outside the JS heap, which a lazy collector lets pile
@@ -560,7 +564,8 @@ describe("a crowded race", () => {
   });
 
   it("races a figure-eight over its bridge: everyone finishes, nobody falls off", async () => {
-    const race = new Race({ rivals: 5, difficulty: "pro", theme: THEMES[1], seed: 3, replay: figure8() }, null, () => {});
+    const plain = { ...THEMES[0], hills: undefined, obstacle: undefined };
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: plain, seed: 3, replay: figure8() }, null, () => {});
     await race.prepare();
     const pilot = new RivalDriver(new Rand(2), race.player, 0);
     let onDeck = 0;
@@ -1053,7 +1058,8 @@ describe("the new items", () => {
   });
 
   it("turn the last kart into a rocket that flies itself up the road, past two karts at most", async () => {
-    const race = new Race({ rivals: 7, difficulty: "pro", theme: THEMES[0], seed: 5, replay: twisty() }, null, () => {});
+    const race = new Race({ rivals: 7, difficulty: "pro", theme: { ...THEMES[0], obstacle: undefined }, seed: 5, replay: twisty() },
+                          null, () => {});
     await race.prepare();
     const coast = { steer: 0, throttle: 1, brake: 0, drift: false };
     const stay = { steer: 0, throttle: 0, brake: 0, drift: false };
@@ -1605,9 +1611,9 @@ describe("what a track type confirms", () => {
 });
 
 describe("the lie of the land", () => {
-  it("gives every world climbs of its own: meadows, a neon skyway, mesas and dunes, coral, basalt", { timeout: 60000 }, async () => {
+  it("gives every world climbs of its own: meadows, the tube's rises, mesas and dunes, coral, basalt", { timeout: 60000 }, async () => {
     const want: Record<string, string[]> = {
-      valley: ["meadow"], neon: ["skyway", "wave"], mesa: ["dune", "mesa"], reef: ["coral"], volcano: ["basalt"],
+      valley: ["meadow"], neon: ["earth"], mesa: ["dune", "mesa"], reef: ["coral"], volcano: ["basalt"],
     };
     for (const [id, styles] of Object.entries(want)) {
       // (a world's kinds of climb take turns, so one lap shows them all)
@@ -1620,13 +1626,13 @@ describe("the lie of the land", () => {
 
   it("leaves the jumps their straights: climbs go elsewhere, never over a jump or where it lands", async () => {
     for (const pts of [calm, twisty]) {
-      // the jumps a lap gets with no climbs at all (the same in every world without tunnels)
-      const flat = new Race({ rivals: 0, difficulty: "pro", theme: { ...THEMES[0], hills: undefined }, seed: 3, replay: pts() },
-                            null, () => {});
-      const jumps = flat.features.ramps.length;
       for (const id of ["valley", "neon", "reef"]) {
-        const hilly = new Race({ rivals: 0, difficulty: "pro", theme: THEMES.find((t) => t.id === id)!, seed: 3, replay: pts() },
-                               null, () => {});
+        // the jumps the lap gets in that world with no climbs at all
+        const theme = THEMES.find((t) => t.id === id)!;
+        const flat = new Race({ rivals: 0, difficulty: "pro", theme: { ...theme, hills: undefined }, seed: 3, replay: pts() },
+                              null, () => {});
+        const jumps = flat.features.ramps.length;
+        const hilly = new Race({ rivals: 0, difficulty: "pro", theme, seed: 3, replay: pts() }, null, () => {});
         expect(hilly.track.hills.length, id).toBeGreaterThan(0);
         expect(hilly.features.ramps.length, id).toBe(jumps);
         for (const r of hilly.features.ramps) {
@@ -1638,7 +1644,7 @@ describe("the lie of the land", () => {
 
   it("sets out landforms beyond the fence, with nothing growing inside them", { timeout: 60000 }, async () => {
     const { LANDFORM_CLEAR, onLandform, reach } = await import("../src/game/world/landforms");
-    for (const theme of THEMES) {
+    for (const theme of THEMES.filter((th) => th.landforms?.length)) { // (inside the tube there is no land)
       const race = new Race({ rivals: 0, difficulty: "pro", theme, seed: 5, replay: twisty() }, null, () => {});
       await race.prepare();
       const t = race.track, forms = race.scenery.landforms;
@@ -1835,10 +1841,10 @@ describe("drawing the worlds", () => {
 
   it("builds every style of climb out of faces, and draws them", async () => {
     const { hillFaces } = await import("../src/game/render/structures");
-    for (const style of ["earth", "expressway", "garage", "foundation", "girder", "scaffold", "crater", "meadow", "skyway", "wave",
+    for (const style of ["earth", "expressway", "garage", "foundation", "girder", "scaffold", "crater", "meadow",
                          "mesa", "dune", "coral", "basalt"] as const) {
       const t = Track.fromPoints(calm());
-      const plateau = ["expressway", "garage", "foundation", "girder", "scaffold", "skyway", "mesa", "basalt"].includes(style);
+      const plateau = ["expressway", "garage", "foundation", "girder", "scaffold", "mesa", "basalt"].includes(style);
       t.addHill({ s0: 200, len: 160, h: 6, shape: plateau ? "plateau" : "sine", style, side: 1 });
       const { cam, scr, faces, painter } = await scene();
       look(cam, t, t.s.findIndex((s) => s >= 215));
@@ -1853,7 +1859,7 @@ describe("drawing the worlds", () => {
     const { hillFaces, padFaces } = await import("../src/game/render/structures");
     const { toCamera } = await import("../src/game/render/poly");
     const { W } = await import("../src/game/core/gfx");
-    for (const style of ["earth", "skyway", "crater"] as const) {
+    for (const style of ["earth", "expressway", "crater"] as const) {
       const t = Track.fromPoints(calm());
       t.addHill({ s0: 200, len: 160, h: 6, shape: "sine", style, side: 1 });
       const i = t.s.findIndex((s) => s >= 228); // on the way up
@@ -1972,7 +1978,8 @@ describe("the rescue drone, in every world", () => {
   });
 
   it("drops a kart that flies off the open edge of a bridge, and lifts it back onto the deck", async () => {
-    const race = new Race({ rivals: 0, difficulty: "pro", theme: THEMES[1], seed: 3, replay: figure8() }, null, () => {});
+    const plain = { ...THEMES[0], hills: undefined, obstacle: undefined };
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: plain, seed: 3, replay: figure8() }, null, () => {});
     await race.prepare();
     race.phase = "racing";
     const t = race.track, b = t.bridges[0], p = race.player;
@@ -2174,5 +2181,261 @@ describe("the volcano", () => {
 describe("the garage", () => {
   it("has a one-line note for every part", () => {
     for (const part of [...BODIES, ...WHEELS, ...SPOILERS, ...EXHAUSTS]) expect(part.note.length).toBeLessThanOrEqual(NOTE_MAX);
+  });
+});
+
+describe("what gets in the way", () => {
+  const pilotFor = (k: Kart) => new RivalDriver(new Rand(2), k, 0);
+  /** A kart ``back`` m before road point ``i``, on the centerline. */
+  const kartBefore = (t: Track, i: number, back: number, id = 0) => {
+    const k = new Kart(id, "K" + id, id, id === 0);
+    k.placeOn(t, t.wrap(i - Math.round(back / SPACING)), 0);
+    return k;
+  };
+  const drive = (t: Track, ob: Obstacles, karts: Kart[], player: Kart, secs: number, each?: () => void) => {
+    const pilots = karts.map(pilotFor);
+    for (let i = 0; i < 60 * secs; i++) {
+      karts.forEach((k, n) => k.update(1 / 60, pilots[n].act(1 / 60, t, CLASSES.pro, player, karts, undefined, ob.dangers()), t, CLASSES.pro));
+      ob.update(1 / 60, t, karts, player, true);
+      each?.();
+    }
+  };
+
+  it("is something of its own in every world", () => {
+    const kinds = THEMES.filter((t) => t.id !== "neon").map((t) => t.obstacle);
+    expect(kinds.every(Boolean)).toBe(true);
+    expect(new Set(kinds).size).toBe(kinds.length);
+  });
+
+  it("sends cows across the road as karts come, and a kart that runs into one spins out", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("cow", new Rand(2));
+    ob.place(t, t.count, () => true);
+    expect(ob.list.length).toBeGreaterThan(1);
+    for (const c of ob.list) expect(t.elev[c.idx]).toBe(0);
+    const cow = ob.list[0], idle = new Kart(9, "far", 9, false);
+    idle.placeOn(t, t.wrap(cow.idx + 400), 0);
+    const p = kartBefore(t, cow.idx, 120);
+    let crossed = false;
+    for (let i = 0; i < 60 * 8; i++) {
+      ob.update(1 / 60, t, [idle], p, true);
+      if (cow.state === COW_WALK && Math.abs(cow.offset) < HALF_WIDTH) crossed = true;
+    }
+    expect(crossed).toBe(true);
+    const k = new Kart(1, "K", 1, false);
+    k.placeOn(t, cow.idx, cow.offset);
+    ob.update(1 / 60, t, [k], p, true);
+    expect(k.spin).toBeGreaterThan(0);
+    expect(ob.events.some((e) => e.sound === "moo")).toBe(true);
+  });
+
+  it("sends a police car out of an alley after the player, which rams them, and in the end gives up", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("police", new Rand(3));
+    ob.place(t, t.count, () => true);
+    expect(ob.sites.length).toBeGreaterThan(1);
+    const p = kartBefore(t, ob.sites[0].idx, 60);
+    let seen = false, rammed = 0, gaveUp = false;
+    drive(t, ob, [p], p, 70, () => {
+      if (ob.chasing) seen = true;
+      if (seen && !ob.chasing) gaveUp = true;
+      for (const e of ob.events) if (e.sound === "ram") rammed++;
+      ob.events = [];
+    });
+    expect(seen).toBe(true);
+    expect(rammed).toBeGreaterThan(0);
+    expect(gaveUp).toBe(true);
+  });
+
+  it("swings a wrecking ball from side to side of the road, low enough to hit only at the bottom", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("wrecker", new Rand(4));
+    ob.place(t, t.count, () => true);
+    const w = ob.list[0], p = kartBefore(t, 40, 0);
+    expect(w).toBeDefined();
+    let left = false, right = false, lowFar = false;
+    for (let i = 0; i < 60 * WRECKER_PERIOD; i++) {
+      ob.update(1 / 60, t, [], p, true);
+      if (w.offset > 5) left = true;
+      if (w.offset < -5) right = true;
+      if (w.hot && Math.abs(w.offset) > 7.5) lowFar = true;
+    }
+    expect(left && right).toBe(true);
+    expect(lowFar).toBe(false);
+    for (let i = 0; i < 600 && !(w.hot && Math.abs(w.offset) < 1); i++) ob.update(1 / 60, t, [], p, true);
+    const k = new Kart(1, "K", 1, false);
+    k.placeOn(t, w.idx, w.offset);
+    ob.update(1 / 60, t, [k], p, true);
+    expect(k.spin).toBeGreaterThan(0);
+  });
+
+  it("rings where a meteor will land, and knocks only the karts there when it does", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("meteor", new Rand(5));
+    const p = kartBefore(t, 400, 0);
+    let m: Obstacle | undefined;
+    for (let i = 0; i < 60 * 10 && !m; i++) {
+      ob.update(1 / 60, t, [], p, true);
+      m = ob.list.find((o) => o.kind === "meteor");
+    }
+    expect(m).toBeDefined();
+    const there = new Kart(1, "there", 1, false), away = new Kart(2, "away", 2, false);
+    there.placeOn(t, m!.idx, m!.offset);
+    away.placeOn(t, t.wrap(m!.idx + Math.round(12 / SPACING)), m!.offset);
+    for (let i = 0; i < 60 * 3 && m!.state === METEOR_FALL; i++) ob.update(1 / 60, t, [there, away], p, true);
+    expect(m!.state).toBe(METEOR_BURST);
+    expect(there.spin).toBeGreaterThan(0);
+    expect(away.spin).toBe(0);
+  });
+
+  it("warns before a geyser blows, and throws a kart on it into the air", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("geyser", new Rand(6));
+    ob.place(t, t.count, () => true);
+    const g = ob.list[0], p = kartBefore(t, 40, 0);
+    let last = g.state, blows = 0;
+    for (let i = 0; i < 60 * 20; i++) {
+      ob.update(1 / 60, t, [], p, true);
+      if (g.state !== last) {
+        if (g.state === GEYSER_BLOW) { expect(last).toBe(GEYSER_WARN); blows++; }
+        last = g.state;
+      }
+    }
+    expect(blows).toBeGreaterThan(1);
+    for (let i = 0; i < 60 * 10 && g.state !== GEYSER_BLOW; i++) ob.update(1 / 60, t, [], p, true);
+    const k = new Kart(1, "K", 1, false);
+    k.placeOn(t, g.idx, g.offset);
+    ob.update(1 / 60, t, [k], p, true);
+    expect(k.air).toBe(true);
+    expect(k.spin).toBeGreaterThan(0);
+  });
+
+  it("blows tumbleweeds across the road as the player comes, and stings only from a low jellyfish", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("tumbleweed", new Rand(7));
+    ob.place(t, t.count, () => true);
+    let rolled = 0;
+    for (const st of ob.sites.slice(0, 4)) {
+      const p = kartBefore(t, st.idx, 100);
+      ob.update(1 / 60, t, [], p, true);
+      rolled += ob.list.length;
+      ob.list = [];
+    }
+    expect(rolled).toBeGreaterThan(0);
+    const jelly = new Obstacles("jelly", new Rand(8));
+    jelly.place(t, t.count, () => true);
+    const j = jelly.list[0], p = kartBefore(t, 40, 0), k = new Kart(1, "K", 1, false);
+    for (let i = 0; i < 6000 && !(j.z > 1.8); i++) jelly.update(1 / 60, t, [], p, true);
+    k.placeOn(t, j.idx, j.offset);
+    jelly.update(1 / 60, t, [k], p, true);
+    expect(k.spin).toBe(0); // it floats over the kart
+    for (let i = 0; i < 6000 && !(j.z < 0.6); i++) jelly.update(1 / 60, t, [], p, true);
+    k.placeOn(t, j.idx, j.offset);
+    jelly.update(1 / 60, t, [k], p, true);
+    expect(k.spin).toBeGreaterThan(0);
+  });
+
+  it("has rivals steer round something standing in the road", () => {
+    const t = Track.fromPoints(calm());
+    let hit = 0;
+    for (const seed of [1, 2, 3]) {
+      const ob = new Obstacles("cow", new Rand(seed));
+      ob.place(t, t.count, () => true);
+      const cow = ob.list[0];
+      ob.list = [cow];
+      cow.offset = 0;
+      cow.state = COW_GRAZE;
+      cow.wait = 1e9; // grazing in the middle of the road
+      const far = new Kart(9, "far", 9, false);
+      far.placeOn(t, t.wrap(cow.idx + 900), 0);
+      const k = kartBefore(t, cow.idx, 90, 1);
+      k.v = 24;
+      drive(t, ob, [k], far, 6);
+      if (k.spin > 0 || ob.events.some((e) => e.sound === "moo")) hit++;
+    }
+    expect(hit).toBe(0);
+  });
+});
+
+describe("the neon tunnel", () => {
+  const neon = THEMES.find((t) => t.id === "neon")!;
+
+  it("is a tube that closes on itself: a floor as wide as the road, walls, a ceiling, no seams", () => {
+    expect(neon.tube).toBe(true);
+    let prev = tubeAt(-TUBE_HALF);
+    for (let u = -TUBE_HALF + 0.05; u <= TUBE_HALF + 1e-9; u += 0.05) {
+      const q = tubeAt(u);
+      expect(Math.hypot(q.lat - prev.lat, q.z - prev.z)).toBeLessThan(0.051); // one step round the tube: one step apart
+      prev = q;
+    }
+    const a = tubeAt(TUBE_HALF), b = tubeAt(-TUBE_HALF);
+    expect(Math.hypot(a.lat - b.lat, a.z - b.z)).toBeLessThan(1e-9);
+    expect(tubeAt(0)).toEqual({ lat: 0, z: 0, tilt: 0 });
+    expect(Math.abs(tubeAt(HALF_WIDTH).lat)).toBeCloseTo(HALF_WIDTH, 6);
+    expect(tubeAt(TUBE_HALF).z).toBeCloseTo(2 * TUBE_R, 6);
+    expect(holdSpeed(0)).toBe(0);
+    expect(holdSpeed(HALF_WIDTH + 2)).toBeLessThan(TUBE_WALL_SPEED);
+    expect(holdSpeed(TUBE_HALF - 2)).toBe(TUBE_LOOP_SPEED);
+  });
+
+  it("holds a fast kart on its walls and round over its ceiling, and lets a slow one slide back down", () => {
+    const t = Track.fromPoints(calm());
+    const at = (u: number, v: number, throttle: number) => {
+      const k = new Kart(0, "K", 0, true);
+      k.tube = true;
+      k.placeOn(t, 300, u);
+      k.v = v;
+      for (let i = 0; i < 60; i++) k.update(1 / 60, { steer: 0, throttle, brake: 0, drift: false }, t, CLASSES.legend);
+      return k;
+    };
+    expect(at(HALF_WIDTH + 4, TUBE_WALL_SPEED + 6, 1).offset).toBeGreaterThan(HALF_WIDTH + 2.5); // holds the wall
+    expect(at(HALF_WIDTH + 4, 3, 0).offset).toBeLessThan(HALF_WIDTH + 1.5); // too slow: down it slides
+    expect(Math.abs(at(TUBE_HALF - 3, TUBE_LOOP_SPEED + 4, 1).offset)).toBeGreaterThan(TUBE_HALF - 6); // on the ceiling
+    expect(Math.abs(at(TUBE_HALF - 3, TUBE_LOOP_SPEED - 9, 0).offset)).toBeLessThan(TUBE_HALF - 8); // peels off
+    // steering round and round at speed: over the ceiling and back down the other wall to the floor
+    const k = new Kart(0, "K", 0, true);
+    k.tube = true;
+    k.placeOn(t, 200, 0);
+    k.v = 30;
+    let most = 0, wrapped = false, last = 0;
+    for (let i = 0; i < 60 * 6 && !(wrapped && Math.abs(k.offset) < HALF_WIDTH); i++) {
+      k.boostTime = 1;
+      k.update(1 / 60, { steer: 0.55, throttle: 1, brake: 0, drift: false }, t, CLASSES.legend);
+      most = Math.max(most, Math.abs(k.offset));
+      if (Math.sign(k.offset) !== Math.sign(last) && Math.abs(k.offset) > TUBE_HALF - 4) wrapped = true;
+      last = k.offset;
+    }
+    expect(most).toBeGreaterThan(TUBE_HALF - 1);
+    expect(wrapped).toBe(true);
+    expect(Math.abs(k.offset)).toBeLessThan(HALF_WIDTH); // all the way round, back on the floor
+  });
+
+  it("puts pads up its walls and on its ceiling, traffic on its floor, and rivals race it to the end", async () => {
+    let up = 0, ceiling = 0, pads = 0;
+    for (const seed of [1, 2, 3]) {
+      const race = new Race({ rivals: 3, difficulty: "pro", theme: neon, seed, replay: calm(), trackType: "speedway" }, null, () => {});
+      for (const p of race.features.pads) {
+        pads++;
+        if (Math.abs(p.offset) > HALF_WIDTH) up++;
+        if (Math.abs(p.offset) > HALF_WIDTH + Math.PI * TUBE_R) ceiling++;
+      }
+      expect(race.scenery.items.length).toBe(0); // nothing outside the tube
+      expect(race.tex.size).toBeLessThan(512);
+    }
+    expect(pads).toBeGreaterThan(5);
+    expect(up).toBeGreaterThan(0);
+    expect(ceiling).toBeGreaterThanOrEqual(0);
+    const race = new Race({ rivals: 3, difficulty: "pro", theme: neon, seed: 4, replay: calm() }, null, () => {});
+    await race.prepare();
+    const pilot = new RivalDriver(new Rand(2), race.player, 0);
+    let traffic = 0;
+    for (let i = 0; i < 60 * 400 && race.phase !== "done"; i++) {
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts, race.items, race.obstacles.dangers()));
+      race.events = [];
+      traffic = Math.max(traffic, race.obstacles.list.filter((o) => o.kind === "traffic").length);
+      for (const k of race.karts) expect(Number.isFinite(k.x) && Math.abs(k.offset) <= TUBE_HALF + 1e-6).toBe(true);
+    }
+    expect(traffic).toBeGreaterThan(1);
+    expect(race.karts.filter((k) => k.finished).length).toBeGreaterThan(2);
   });
 });

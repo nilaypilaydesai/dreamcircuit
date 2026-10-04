@@ -85,6 +85,15 @@ export class Screen {
   onResize: (() => void) | null = null;
   /** A pinned size (the film tool records at exactly 384x216), or null to follow the window. */
   private pinned: [number, number] | null = null;
+  /** While set, sprites and rectangles are drawn turned ``a`` radians (clockwise) about (x, y): a
+   * kart up the wall of the neon tunnel's tube, seen from the floor. */
+  pivot: { x: number; y: number; a: number } | null = null;
+
+  /** Where (x, y) goes, turned about the pivot. */
+  private turned(x: number, y: number): [number, number] {
+    const p = this.pivot!, c = Math.cos(p.a), s = Math.sin(p.a), dx = x - p.x, dy = y - p.y;
+    return [p.x + dx * c - dy * s, p.y + dx * s + dy * c];
+  }
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext("2d", { alpha: false })!;
@@ -132,6 +141,7 @@ export class Screen {
   }
 
   fillRect(x: number, y: number, w: number, h: number, color: number): void {
+    if (this.pivot) [x, y] = this.turned(x + w / 2, y + h / 2).map((v, k) => v - (k ? h : w) / 2) as [number, number];
     const x0 = Math.max(0, x | 0), y0 = Math.max(0, y | 0);
     const x1 = Math.min(W, (x + w) | 0), y1 = Math.min(H, (y + h) | 0);
     for (let yy = y0; yy < y1; yy++) this.buf.fill(color, yy * W + x0, yy * W + x1);
@@ -139,6 +149,7 @@ export class Screen {
 
   /** Alpha-blend a rectangle (dims the scene behind HUD panels). */
   dimRect(x: number, y: number, w: number, h: number, color: number, alpha: number): void {
+    if (this.pivot) [x, y] = this.turned(x + w / 2, y + h / 2).map((v, k) => v - (k ? h : w) / 2) as [number, number];
     const x0 = Math.max(0, x | 0), y0 = Math.max(0, y | 0);
     const x1 = Math.min(W, (x + w) | 0), y1 = Math.min(H, (y + h) | 0);
     for (let yy = y0; yy < y1; yy++) {
@@ -170,6 +181,10 @@ export class Screen {
   blitScaled(s: Sprite, x: number, y: number, w: number, h: number, flip = false,
              tint = 0, tintAmount = 0, clipBottom = H, ghost = false): void {
     if (w < 1 || h < 1) return;
+    if (this.pivot && this.pivot.a) {
+      this.blitTurned(s, x, y, w, h, flip, tint, tintAmount, ghost);
+      return;
+    }
     const x0 = Math.max(0, Math.floor(x)), x1 = Math.min(W, Math.ceil(x + w));
     const y0 = Math.max(0, Math.floor(y)), y1 = Math.min(clipBottom, Math.ceil(y + h));
     const kx = s.w / w, ky = s.h / h;
@@ -187,6 +202,34 @@ export class Screen {
       }
     }
   }
+  /** blitScaled's rectangle turned about the pivot: every pixel of its turned outline looks back
+   * into the sprite. */
+  private blitTurned(s: Sprite, x: number, y: number, w: number, h: number, flip: boolean, tint: number,
+                     tintAmount: number, ghost: boolean): void {
+    const p = this.pivot!, c = Math.cos(p.a), sn = Math.sin(p.a);
+    let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity;
+    for (const [qx, qy] of [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]) {
+      const [rx, ry] = this.turned(qx, qy);
+      bx0 = Math.min(bx0, rx); bx1 = Math.max(bx1, rx); by0 = Math.min(by0, ry); by1 = Math.max(by1, ry);
+    }
+    const x0 = Math.max(0, Math.floor(bx0)), x1 = Math.min(W, Math.ceil(bx1));
+    const y0 = Math.max(0, Math.floor(by0)), y1 = Math.min(H, Math.ceil(by1));
+    const kx = s.w / w, ky = s.h / h;
+    for (let dy = y0; dy < y1; dy++) {
+      for (let dx = x0; dx < x1; dx++) {
+        if (ghost && ((dx + dy) & 1) === 0) continue;
+        const ox = dx + 0.5 - p.x, oy = dy + 0.5 - p.y;
+        const ux = p.x + ox * c + oy * sn, uy = p.y - ox * sn + oy * c; // back to the unturned frame
+        let sx = ((ux - x) * kx) | 0;
+        const sy = ((uy - y) * ky) | 0;
+        if (sx < 0 || sy < 0 || sx >= s.w || sy >= s.h || ux < x || uy < y) continue;
+        if (flip) sx = s.w - 1 - sx;
+        const col = s.data[sy * s.w + sx];
+        if (col) this.buf[dy * W + dx] = tintAmount > 0 ? mix(col, tint, tintAmount) : col;
+      }
+    }
+  }
+
 }
 
 /** Small, fast, seedable PRNG (mulberry32). */

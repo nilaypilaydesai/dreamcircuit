@@ -2,6 +2,7 @@
 // charge, standings, a minimap that shows the circuit being dreamed (and its bridges), what the
 // designer is dreaming for you, small pop-ups (tricks, rocket starts) and the big banners.
 
+import { TUBE_LOOP_SPEED, TUBE_WALL_SPEED } from "../world/tube";
 import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
 import type { Kart } from "../race/kart";
@@ -118,6 +119,21 @@ export class Hud {
       const c = p.boostLevel === 2 ? hex("#ffb347") : p.boostLevel === 1 ? hex("#63c8ff") : SILVER;
       f.draw(scr, p.boostLevel ? "BOOST READY" : "DRIFT", 108, H - 12, { color: c, outline: INK });
     }
+    // in the neon tunnel's tube: how fast is fast enough, to hold onto a wall and to loop right
+    // round over the ceiling (ticks on the speed bar, words that light up), and a warning when the
+    // kart is sliding back down
+    if (race.setup.theme.tube) {
+      const v = Math.abs(p.v), top = race.cls.vmax * 1.28;
+      for (const need of [TUBE_WALL_SPEED, TUBE_LOOP_SPEED]) scr.fillRect(11 + Math.round((90 * need) / top), H - 14, 1, 7, WHITE);
+      f.draw(scr, "WALL", 96, H - 22, { color: v >= TUBE_WALL_SPEED ? hex("#2de2e6") : hex("#5a5470"), outline: INK });
+      const loop = v >= TUBE_LOOP_SPEED;
+      f.draw(scr, "LOOP", 128, H - 22, {
+        color: loop ? (Math.floor(now * 6) % 2 ? hex("#ff2bd6") : WHITE) : hex("#5a5470"), outline: INK,
+      });
+      if (p.slipping && Math.floor(now * 5) % 2 === 0) {
+        f.draw(scr, "TOO SLOW!", W / 2, H - 36, { color: hex("#ff6b6b"), outline: INK, align: "center" });
+      }
+    }
 
     this.minimap(scr, race, now);
     this.dreamStatus(scr, race, now);
@@ -129,6 +145,11 @@ export class Hud {
       f.draw(scr, q.text, W / 2, mid + 34 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
     }
     this.itemSlot(scr, p, now);
+    // a police car after the player: red and blue flashing at the foot of the screen
+    if (race.obstacles.chasing) {
+      const red = Math.floor(now * 4) % 2 === 0;
+      f.draw(scr, "POLICE", W / 2, H - 22, { color: red ? hex("#ff2a2a") : hex("#4a8cff"), outline: INK, align: "center" });
+    }
     if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / ROCKET_TIME, hex("#ff8a1f"));
     else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));
     else if (p.phantom > 0) this.meter(scr, "PHANTOM", p.phantom / PHANTOM_TIME, hex("#c9b8ff"));
