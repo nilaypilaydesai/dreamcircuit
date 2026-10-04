@@ -327,6 +327,35 @@ export class Track {
     return this.wrap(i + Math.round(meters / SPACING));
   }
 
+  /** m along the road from point i forward to point j (round the lap, once it is locked). */
+  between(i: number, j: number): number {
+    const d = this.s[j] - this.s[i];
+    return d < 0 && this.locked ? d + this.length : d;
+  }
+
+  /** The point ``meters`` along the road from point i, and how far on from it towards the next
+   * point (0..1). By arc length: the points are a little under SPACING apart (a different little
+   * on each stretch of the lap), so counting them off as SPACING each falls short, by up to a
+   * meter in ten. */
+  stepAlong(i: number, meters: number): { i: number; w: number } {
+    let k = i, done = 0;
+    for (let guard = 0; guard < this.count; guard++) {
+      const j = this.wrap(k + 1);
+      if (j === k) break; // (the end of the road known so far)
+      const gap = this.between(k, j);
+      if (done + gap > meters) return { i: k, w: gap > 0 ? (meters - done) / gap : 0 };
+      done += gap;
+      k = j;
+    }
+    return { i: k, w: 0 };
+  }
+
+  /** The first point at arc length ``s`` or past it, searching back from point i. */
+  indexBack(i: number, s: number): number {
+    while (i > 0 && this.s[i - 1] >= s) i--;
+    return i;
+  }
+
   /** Point index of the frontier: how far around the lap the road exists. */
   get frontierSeg(): number {
     return this.nextSeg;

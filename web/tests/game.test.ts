@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Rand, hex } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
-import { Features, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
+import { Features, PAD_LEN, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
 import {
   AIM_MAX, BOMB_BLAST, BOX_SPACING, COMET_BLAST, type Field, GOLD_TIME, HORN_R, ITEM_KINDS, ITEM_NAMES, Items, JACKPOT,
   ROCKET_TIME, ROULETTE, STATIC_TIME, rocketPasses,
@@ -286,6 +286,62 @@ describe("jumps and boost pads", () => {
     expect(good.boost).toBeGreaterThan(0.5);
     const late = jump(null);
     expect(late.boost).toBe(0);
+  });
+
+  it("are drawn just where they are driven: measured along the road as the race measures them", () => {
+    // (the road's points are a little under SPACING apart, so counting them off as SPACING each put a
+    // ramp's wedge meters from where karts drove up it, and drew pads and tunnels short)
+    let ramps = 0, tunnels = 0;
+    for (const pts of [calm(), twisty(), figure8()]) {
+      const t = Track.fromPoints(pts);
+      const f = new Features(true);
+      f.onCommit(t, 0, t.count, () => false, () => 0.5);
+      const reach = (i: number, m: number) => {
+        const a = t.stepAlong(i, m);
+        return t.s[a.i] + a.w * t.between(a.i, t.wrap(a.i + 1));
+      };
+      for (const r of f.ramps) {
+        ramps++;
+        expect(t.s[r.start]).toBe(r.s0); // the foot drawn is the foot driven up
+        expect(reach(r.start, RAMP_LEN) - r.s0).toBeCloseTo(RAMP_LEN, 6); // and so is the lip
+        expect(f.rampAt(r.s0 + RAMP_LEN - 0.01, 0).u).toBeGreaterThan(0.99);
+      }
+      for (const tn of f.tunnels) {
+        tunnels++;
+        expect(t.s[tn.start]).toBe(tn.s0);
+        const len = t.between(tn.start, t.wrap(tn.start + tn.n));
+        expect(len).toBeGreaterThanOrEqual(TUNNEL_LEN);
+        expect(len).toBeLessThan(TUNNEL_LEN + SPACING);
+      }
+    }
+    expect(ramps).toBeGreaterThan(0);
+    expect(tunnels).toBeGreaterThan(0);
+  });
+
+  it("boost a kart on the whole pad and nowhere off it, and send it faster than it can go", () => {
+    const t = Track.fromPoints(calm());
+    const i = 400, f = new Features();
+    f.pads.push({ start: i, s0: t.s[i], offset: 0 });
+    const k = new Kart(0, "K", 0, true);
+    for (let j = i - 6; j < i + 20; j++) {
+      k.placeOn(t, j, 1.5);
+      expect(f.onPad(t, k), `point ${j - i}`).toBe(j >= i && t.between(i, j) < PAD_LEN);
+    }
+    // driven over one at full throttle (on the straight before a jump): faster than the kart can go
+    const { t: st, r } = onRamp();
+    const g = new Features(), at = st.wrap(r.start - Math.round(30 / SPACING));
+    g.pads.push({ start: at, s0: st.s[at], offset: 0 });
+    const fast = new Kart(0, "K", 0, true);
+    fast.placeOn(st, at, 0);
+    fast.v = CLASSES.pro.vmax;
+    let top = 0, boosted = 0;
+    for (let n = 0; n < 60; n++) {
+      if (g.onPad(st, fast)) { fast.boostTime = Math.max(fast.boostTime, 1.0); boosted++; }
+      fast.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false }, st, CLASSES.pro);
+      top = Math.max(top, fast.v);
+    }
+    expect(boosted).toBeGreaterThan(5);
+    expect(top).toBeGreaterThan(CLASSES.pro.vmax * 1.15);
   });
 });
 
@@ -1880,6 +1936,84 @@ describe("drawing the worlds", () => {
       expect(scr.buf[py * W + px], style).toBe(hex("#7a2e12")); // the pad's plate, not the road over it
       expect(scr.buf[(py - 3) * W + px], style).toBe(KART);
     }
+  });
+
+  it("draws a boost pad as long as it boosts", async () => {
+    const { padFaces } = await import("../src/game/render/structures");
+    const { toCamera } = await import("../src/game/render/poly");
+    const { W, H } = await import("../src/game/core/gfx");
+    for (const pts of [calm(), twisty()]) {
+      const t = Track.fromPoints(pts);
+      const i = 400, f = new Features();
+      f.pads.push({ start: i, s0: t.s[i], offset: 0 });
+      const { cam, scr, faces, painter } = await scene();
+      const c = t.stepAlong(i, 1).i, [tx, ty] = t.tangent(c);
+      cam.x = t.xs[c]; cam.y = t.ys[c]; cam.heading = Math.atan2(ty, tx); cam.height = 2.5;
+      padFaces(painter, t, f, 0);
+      faces.sort((a, b) => b.z - a.z);
+      for (const fc of faces) fc.draw();
+      const drawn = (m: number) => { // 2 m left of the pad's middle, ``m`` m along it
+        const { i: a, w } = t.stepAlong(i, m), b = t.wrap(a + 1), [qx, qy] = t.tangent(a);
+        const x = t.xs[a] + (t.xs[b] - t.xs[a]) * w - qy * 2, y = t.ys[a] + (t.ys[b] - t.ys[a]) * w + qx * 2;
+        const q = toCamera(cam, x, y, 0.05);
+        const px = Math.round(W / 2 + (q[1] * cam.focal) / q[0]), py = Math.round(cam.horizon - (q[2] * cam.focal) / q[0]);
+        expect(px >= 0 && px < W && py >= 0 && py < H).toBe(true);
+        return scr.buf[py * W + px] !== 0;
+      };
+      expect(drawn(PAD_LEN - 0.35)).toBe(true);
+      expect(drawn(PAD_LEN + 0.35)).toBe(false);
+    }
+  });
+
+  it("lays oil flat on raised road: drawn from above it, and not from under it", async () => {
+    const { slickDecal, slickRaised } = await import("../src/game/render/decals");
+    const t = Track.fromPoints(calm());
+    t.addHill({ s0: 200, len: 160, h: 6, shape: "sine", style: "earth", side: 1 });
+    const f = new Features(), owner = new Kart(0, "K", 0, true);
+    const i = t.s.findIndex((s) => s >= 260), flat = t.s.findIndex((s) => s >= 450);
+    const slick = (j: number) => ({ x: t.xs[j], y: t.ys[j], elev: t.elev[j], idx: j, ttl: 9, owner, armed: 0 });
+    expect(slickRaised(t, f, slick(i))).toBe(true);
+    expect(slickRaised(t, f, slick(flat))).toBe(false); // (painted into the ground there)
+    const above = await scene();
+    look(above.cam, t, i);
+    above.cam.height = t.elev[i] + 2.5;
+    slickDecal(above.painter, t, f, slick(i), 0, above.cam.heading, false);
+    expect(above.faces.length).toBeGreaterThan(30);
+    const depth = above.faces[0].z;
+    expect(above.faces.every((fc) => fc.z === depth)).toBe(true); // one decal
+    const under = await scene();
+    look(under.cam, t, i);
+    under.cam.height = t.elev[i] - 1.5;
+    slickDecal(under.painter, t, f, slick(i), 0, under.cam.heading, false);
+    expect(under.faces.length).toBe(0);
+  });
+
+  it("shows the floor of the tube where the road climbs above the camera, and oil on it", async () => {
+    const { tubeFaces, tubePoint } = await import("../src/game/render/tube");
+    const { slickDecal } = await import("../src/game/render/decals");
+    const { toCamera } = await import("../src/game/render/poly");
+    const { W, H } = await import("../src/game/core/gfx");
+    const t = Track.fromPoints(calm());
+    t.addHill({ s0: 200, len: 160, h: 9, shape: "sine", style: "earth", side: 1 });
+    const f = new Features({ tube: true }), owner = new Kart(0, "K", 0, true);
+    const neon = THEMES.find((th) => th.tube)!;
+    const i = t.s.findIndex((s) => s >= 205), up = t.s.findIndex((s) => s >= 235);
+    const { cam, scr, faces, painter } = await scene();
+    look(cam, t, i);
+    cam.height = t.elev[i] + 2.5;
+    expect(t.elev[up]).toBeGreaterThan(cam.height + 0.5); // the floor up ahead is over the camera
+    slickDecal(painter, t, f, { x: t.xs[up], y: t.ys[up], elev: t.elev[up], idx: up, ttl: 9, owner, armed: 0 }, 0, cam.heading, true);
+    expect(faces.length).toBeGreaterThan(30);
+    faces.length = 0;
+    tubeFaces(painter, t, neon, i, f, 0);
+    faces.sort((a, b) => b.z - a.z);
+    for (const fc of faces) fc.draw();
+    // a point of the floor up there, 1.5 m left of its middle line, is drawn (taken as facing
+    // straight up, it faced away from the camera below it, and was culled)
+    const q = toCamera(cam, ...tubePoint(t, up, 1.5).p);
+    const px = Math.round(W / 2 + (q[1] * cam.focal) / q[0]), py = Math.round(cam.horizon - (q[2] * cam.focal) / q[0]);
+    expect(px >= 0 && px < W && py >= 0 && py < H).toBe(true);
+    expect(scr.buf[py * W + px]).not.toBe(0);
   });
 
   it("builds every kind of landform out of lit faces", async () => {

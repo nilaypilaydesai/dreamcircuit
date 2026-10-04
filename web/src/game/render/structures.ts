@@ -10,7 +10,7 @@ import { hex, mix, shade } from "../core/gfx";
 import { PAD_HALF, PAD_LEN, RAMP_HEIGHT, RAMP_LEN, TUNNEL_H, type Features, type Pad, type Tunnel } from "../race/features";
 import type { Theme } from "../themes";
 import { BANK_AT, BANK_LEAN, type Bank } from "../world/banks";
-import { HALF_WIDTH, SPACING, type Track } from "../world/track";
+import { HALF_WIDTH, type Track } from "../world/track";
 import { type P3, type Painter, face, toCamera } from "./poly";
 
 const DECK = 0.9; // m deck thickness
@@ -23,6 +23,16 @@ const STRIPE = [hex("#ffd23f"), hex("#262433")];
 function edgePoint(track: Track, i: number, off: number, z: number): P3 {
   const [tx, ty] = track.tangent(i);
   return [track.xs[i] - ty * off, track.ys[i] + tx * off, z];
+}
+
+/** The point ``u`` m along the road from point ``from`` (by arc length, as the race measures
+ * ramps and pads), ``off`` m left of the centerline, at height ``z``. */
+function alongPoint(track: Track, from: number, u: number, off: number, z: number): P3 {
+  const { i, w } = track.stepAlong(from, u);
+  const a = edgePoint(track, i, off, z);
+  if (w <= 0) return a;
+  const b = edgePoint(track, track.wrap(i + 1), off, z);
+  return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, z];
 }
 
 function near(p: Painter, track: Track, i: number, margin = 40): boolean {
@@ -570,7 +580,11 @@ function padsOn(c: Piece, pads: readonly Pad[], time: number): void {
   if (!Number.isFinite(c.top)) return;
   for (const pad of pads) {
     // the pad's steps between dense points i..j (step k lies between pad.start + k and + k + 1)
-    const ua = Math.max(0, (c.i - pad.start) * SPACING), ub = Math.min(PAD_LEN, (c.j - pad.start) * SPACING);
+    const past = (q: number) => { // m from the pad's start on to point q (before it: negative)
+      const d = c.track.s[q] - pad.s0, L = c.track.length;
+      return c.track.locked ? ((((d % L) + L * 1.5) % L) - L / 2) : d;
+    };
+    const ua = Math.max(0, past(c.i)), ub = Math.min(PAD_LEN, past(c.j));
     if (ub <= ua) continue;
     const faces = c.p.faces, from = faces.length;
     padPart(c.p, c.track, pad, ua, ub, time);
@@ -847,27 +861,24 @@ function frameTunnel(p: Painter, track: Track, tn: Tunnel): void {
   }
 }
 
+/** Jump ramps: a wedge in yellow and black stripes from its foot to its lip, measured along the
+ * road the way the race measures it, so a kart drives up exactly the wedge it is seen on. */
 export function rampFaces(p: Painter, track: Track, f: Features, theme: Theme): void {
-  const hw = HALF_WIDTH;
-  const n = Math.round(RAMP_LEN / SPACING);
+  const hw = HALF_WIDTH, stripes = 9, len = RAMP_LEN / stripes;
   for (const r of f.ramps) {
     if (!near(p, track, r.start)) continue;
-    const step = 2;
-    for (let k = 0; k < n; k += step) {
-      const i = track.wrap(r.start + k), j = track.wrap(r.start + Math.min(n, k + step));
-      const hi = (RAMP_HEIGHT * k) / n, hj = (RAMP_HEIGHT * Math.min(n, k + step)) / n;
-      const P = (q: number, off: number, z: number) => edgePoint(track, q, off, z);
-      const [tx, ty] = track.tangent(i);
-      const color = STRIPE[Math.floor((k * SPACING) / 1.6) & 1];
-      face(p, [P(i, -hw, hi), P(j, -hw, hj), P(j, hw, hj), P(i, hw, hi)], color, [0, 0, 1], -0.3, 1, true);
+    const P = (u: number, off: number, z: number) => alongPoint(track, r.start, u, off, z);
+    for (let k = 0; k < stripes; k++) {
+      const u0 = k * len, u1 = (k + 1) * len, h0 = (RAMP_HEIGHT * u0) / RAMP_LEN, h1 = (RAMP_HEIGHT * u1) / RAMP_LEN;
+      const [tx, ty] = track.tangent(track.stepAlong(r.start, u0).i);
+      face(p, [P(u0, -hw, h0), P(u1, -hw, h1), P(u1, hw, h1), P(u0, hw, h0)], STRIPE[k & 1], [0, 0, 1], -0.3, 1, true);
       // the sides wear the circuit's kerb colours, so a ramp reads from across the infield
-      const side = shade(theme.kerb[(k / step) & 1], 0.82);
-      face(p, [P(i, hw, 0), P(j, hw, 0), P(j, hw, hj), P(i, hw, hi)], side, [-ty, tx, 0], -0.2);
-      face(p, [P(j, -hw, 0), P(i, -hw, 0), P(i, -hw, hi), P(j, -hw, hj)], side, [ty, -tx, 0], -0.2);
+      const side = shade(theme.kerb[k & 1], 0.82);
+      face(p, [P(u0, hw, 0), P(u1, hw, 0), P(u1, hw, h1), P(u0, hw, h0)], side, [-ty, tx, 0], -0.2);
+      face(p, [P(u1, -hw, 0), P(u0, -hw, 0), P(u0, -hw, h0), P(u1, -hw, h1)], side, [ty, -tx, 0], -0.2);
     }
-    const lip = track.wrap(r.start + n);
-    const [tx, ty] = track.tangent(lip);
-    const L = (off: number, z: number) => edgePoint(track, lip, off, z);
+    const [tx, ty] = track.tangent(track.stepAlong(r.start, RAMP_LEN).i);
+    const L = (off: number, z: number) => P(RAMP_LEN, off, z);
     face(p, [L(-hw, 0), L(hw, 0), L(hw, RAMP_HEIGHT), L(-hw, RAMP_HEIGHT)], UNDER, [tx, ty, 0], -0.2);
     face(p, [L(-hw, RAMP_HEIGHT - 0.35), L(hw, RAMP_HEIGHT - 0.35), L(hw, RAMP_HEIGHT), L(-hw, RAMP_HEIGHT)],
          theme.edge, [tx, ty, 0], -0.25);
@@ -901,8 +912,7 @@ export function aimArrow(p: Painter, k: { x: number; y: number; heading: number;
 /** A point ``u`` m along a boost pad from its start and ``v`` m across it from its middle, on
  * the road under it (following the road's bends). */
 function padPoint(track: Track, pad: Pad, u: number, v: number): P3 {
-  const f = u / SPACING, k = Math.floor(f), w = f - k;
-  const i = track.wrap(pad.start + k), j = track.wrap(pad.start + k + 1);
+  const { i, w } = track.stepAlong(pad.start, u), j = track.wrap(i + 1);
   const a = edgePoint(track, i, pad.offset + v, 0), b = edgePoint(track, j, pad.offset + v, 0);
   const z = (track.elev[i] ?? 0) * (1 - w) + (track.elev[j] ?? 0) * w + 0.05;
   return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, z];
@@ -954,16 +964,18 @@ function padPart(p: Painter, track: Track, pad: Pad, ua: number, ub: number, tim
 
 /** Boost pads on the ground (hillFaces draws the parts of them on a climb). */
 export function padFaces(p: Painter, track: Track, f: Features, time: number): void {
-  const steps = Math.ceil(PAD_LEN / SPACING);
   for (const pad of f.pads) {
     if (!near(p, track, pad.start)) continue;
     const from = p.faces.length;
-    // runs of the pad's steps on the ground
+    // the pad's steps between road points (m along it where each starts), and runs of them on the ground
+    const us: number[] = [];
+    for (let k = 0, u = 0; u < PAD_LEN && k < 40; k++, u = track.between(pad.start, track.wrap(pad.start + k))) us.push(u);
+    const steps = us.length, end = (k: number) => (k < steps ? us[k] : PAD_LEN);
     for (let k = 0; k < steps;) {
-      if (climbPieceAt(track, pad.start + k) >= 0) { k++; continue; }
+      if (climbPieceAt(track, track.wrap(pad.start + k)) >= 0) { k++; continue; }
       const k0 = k;
-      while (k < steps && climbPieceAt(track, pad.start + k) < 0) k++;
-      padPart(p, track, pad, k0 * SPACING, Math.min(PAD_LEN, k * SPACING), time);
+      while (k < steps && climbPieceAt(track, track.wrap(pad.start + k)) < 0) k++;
+      padPart(p, track, pad, us[k0], end(k), time);
     }
     // one decal at one depth, its far end's (the sort is stable: the plate goes down first, then
     // the chevrons on it), so every kart on it is drawn over it

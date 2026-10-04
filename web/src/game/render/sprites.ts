@@ -1777,22 +1777,6 @@ export function itemBoxFrames(): SceneryArt[] {
   });
 }
 
-/** An oil slick, as a sprite: the puddle a slick on raised road shows (on the ground, slicks
- * are painted into the road itself; see render/decals.ts). */
-export function slickArt(): SceneryArt {
-  const s = makeSprite(40, 12);
-  for (let y = 0; y < 12; y++) {
-    for (let x = 0; x < 40; x++) {
-      const e = ((x - 19.5) / 19.5) ** 2 + ((y - 5.5) / 5.8) ** 2;
-      if (e > 1) continue;
-      const sheen = Math.abs(e - 0.45) < 0.07;
-      px(s, x, y, sheen ? SHEEN[Math.floor(x / 3) % SHEEN.length] : e > 0.85 ? hex("#2c2838") : hex("#14121c"));
-    }
-  }
-  for (let x = 9; x < 17; x++) px(s, x, 3, hex("#8a8aa0")); // the shine
-  return { sprite: s, height: 1.38, solid: false }; // 4.6 m across, as on the ground
-}
-
 /** A dream orb: a glassy violet ball with a pale swirl turning inside it. */
 export function orbArt(k = 1): SceneryArt {
   const n = Math.round(20 * k), r = n / 2 - 0.7;

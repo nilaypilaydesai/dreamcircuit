@@ -132,7 +132,9 @@ export function rocketPasses(place: number): number {
 
 export interface ItemBox { x: number; y: number; elev: number; respawn: number; idx: number }
 export interface CoinSpot { x: number; y: number; elev: number; respawn: number; idx: number }
-export interface Slick { x: number; y: number; elev: number; ttl: number; owner: Kart; armed: number }
+/** An oil slick: where it lies, how high (the road under the kart that dropped it), and the road
+ * point it was dropped from (where to look for the road under it, on a deck over another road). */
+export interface Slick { x: number; y: number; elev: number; idx: number; ttl: number; owner: Kart; armed: number }
 export interface Orb {
   idx: number; carry: number; x: number; y: number; offset: number; v: number; ttl: number;
   owner: Kart; target: Kart | null;
@@ -377,7 +379,7 @@ export class Items {
         break;
       case "oil":
       case "oil3":
-        this.slicks.push({ x: k.x - c * 3.4, y: k.y - s * 3.4, elev: k.ground, ttl: 30, owner: k, armed: 1.0 });
+        this.slicks.push({ x: k.x - c * 3.4, y: k.y - s * 3.4, elev: k.ground, idx: k.idx, ttl: 30, owner: k, armed: 1.0 });
         break;
       case "puck":
       case "puck3":

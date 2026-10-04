@@ -39,10 +39,14 @@ export function tubePoint(track: Track, i: number, u: number, h = 0): { p: P3; t
   return { p: [track.xs[i] + lx * off, track.ys[i] + ly * off, (track.elev[i] ?? 0) + q.z + nz * h], tilt: q.tilt };
 }
 
-/** The inward normal of the tube's surface at ``u`` m round it, at road point i. */
+/** The inward normal of the tube's surface at ``u`` m round it, at road point i (tipped back
+ * where the road climbs, forward where it falls: taken level, the floor of a climb ahead faced
+ * away from a camera below it, and was culled). Not of unit length. */
 export function normalAt(track: Track, i: number, u: number): P3 {
-  const [tx, ty] = track.tangent(i), t = tubeAt(u).tilt, s = -Math.sin(t);
-  return [-ty * s, tx * s, Math.cos(t)];
+  const [tx, ty] = track.tangent(i), t = tubeAt(u).tilt, s = Math.sin(t), c = Math.cos(t);
+  const a = track.wrap(i - 1), b = track.wrap(i + 1), run = track.between(a, b);
+  const g = run > 0 ? ((track.elev[b] ?? 0) - (track.elev[a] ?? 0)) / run : 0; // the road's rise per m
+  return [ty * s - g * tx * c, -tx * s - g * ty * c, c];
 }
 
 /** Arc lengths around which the tube is not drawn while the camera is at ``s``: the other pass of
@@ -108,7 +112,7 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
     }
     if (n % 2 === 0) {
       face(p, [tubePoint(track, i, -0.12, 0.02).p, tubePoint(track, j, -0.12, 0.02).p, tubePoint(track, j, 0.12, 0.02).p,
-               tubePoint(track, i, 0.12, 0.02).p], line, [0, 0, 1], BACKDROP - 0.1);
+               tubePoint(track, i, 0.12, 0.02).p], line, normalAt(track, i, 0), BACKDROP - 0.1);
     }
     // a ring of light where one falls in this piece, pulsing gently
     const r0 = Math.floor(track.s[i] / RING_GAP), r1 = Math.floor(track.s[j] / RING_GAP);
@@ -132,9 +136,9 @@ function pads(p: Painter, track: Track, f: Features, from: number, now: number, 
     const ahead = dir * around(track, s0, pad.s0);
     if (ahead < -10 || ahead > 150) continue;
     const at = (u: number, v: number): P3 => {
-      const k = u / SPACING, i0 = Math.floor(k), w = k - i0;
-      const a = tubePoint(track, track.wrap(pad.start + i0), pad.offset + v, 0.05).p;
-      const b = tubePoint(track, track.wrap(pad.start + i0 + 1), pad.offset + v, 0.05).p;
+      const { i, w } = track.stepAlong(pad.start, u); // (by arc length, as the race measures the pad)
+      const a = tubePoint(track, i, pad.offset + v, 0.05).p;
+      const b = tubePoint(track, track.wrap(i + 1), pad.offset + v, 0.05).p;
       return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, a[2] + (b[2] - a[2]) * w];
     };
     const nrm = normalAt(track, pad.start, pad.offset), from0 = p.faces.length;

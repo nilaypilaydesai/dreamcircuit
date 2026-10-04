@@ -102,8 +102,8 @@ export class Features {
       this.straight = k < (rr?.bend ?? DEFAULT_RAMPS.bend) && track.elev[i] === 0 ? this.straight + SPACING : 0;
       // a ramp in the middle of a long straight
       if (rr && this.straight > this.straightFor && s - this.lastRamp > rr.gap) {
-        const s0 = s - this.flight;
-        const start = i - Math.round(this.flight / SPACING);
+        // (its foot on a road point, so the wedge drawn and the one driven up are the same)
+        const start = track.indexBack(i, s - this.flight), s0 = track.s[start];
         if (!blocked(s0 - 30, RAMP_LEN + 70) && track.fromStart(start) > 140 && !this.tunnelNear(s0 - 30, RAMP_LEN + 70) &&
             !this.padNear(s0 - 15, this.flight + 15)) {
           this.ramps.push({ start, s0 });
@@ -113,10 +113,11 @@ export class Features {
       // a tunnel on a long, gently curving stretch (under a building in Tokyo, through one going up on the site)
       this.tunnelRun = k < 1 / 110 && track.elev[i] === 0 ? this.tunnelRun + SPACING : 0;
       if (this.withTunnels && this.tunnelRun > TUNNEL_LEN + 12 && s - this.lastTunnel > TUNNEL_GAP) {
-        const s0 = s - TUNNEL_LEN - 6, start = i - Math.round((TUNNEL_LEN + 6) / SPACING);
+        // (its mouths on road points: the tunnel drawn is the one whose walls keep karts in)
+        const start = track.indexBack(i, s - TUNNEL_LEN - 6), s0 = track.s[start];
         const rampHere = this.ramps.some((r) => r.s0 < s0 + TUNNEL_LEN + 30 && r.s0 + RAMP_LEN > s0 - 30);
         if (!rampHere && !blocked(s0 - 10, TUNNEL_LEN + 20) && track.fromStart(start) > 160) {
-          this.tunnels.push({ start, s0, n: Math.round(TUNNEL_LEN / SPACING) });
+          this.tunnels.push({ start, s0, n: track.indexBack(i, s0 + TUNNEL_LEN) - start });
           this.lastTunnel = s;
           this.tunnelRun = 0;
         }
@@ -238,8 +239,14 @@ export class Features {
 
   /** Height of a ramp's surface under the kart (0 off ramps) and how far up it is (0..1). */
   rampUnder(track: Track, k: Kart, along = 0): { height: number; u: number } {
-    if (Math.abs(k.offset) > HALF_WIDTH) return { height: 0, u: -1 };
-    const s = track.s[k.idx] + along; // (where the kart is between road points: the wedge rises smoothly)
+    // (where the kart is between road points: the wedge rises smoothly)
+    return this.rampAt(track.s[k.idx] + along, k.offset);
+  }
+
+  /** How high a jump ramp lifts the road at arc length ``s``, ``offset`` m left of the centerline,
+   * and how far up the ramp that is (0 at its foot, 1 at the lip; -1 off any ramp). */
+  rampAt(s: number, offset: number): { height: number; u: number } {
+    if (Math.abs(offset) > HALF_WIDTH) return { height: 0, u: -1 };
     for (const r of this.ramps) {
       const u = (s - r.s0) / RAMP_LEN;
       if (u >= 0 && u < 1) return { height: RAMP_HEIGHT * u, u };

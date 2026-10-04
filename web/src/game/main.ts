@@ -28,12 +28,12 @@ import { landformFaces } from "./render/landforms";
 import { Sky } from "./render/sky";
 import {
   LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, coinFrames, cometArt, droneFrames, flareFrames,
-  grabberFrames, heldArt, itemBoxFrames, kartSprites, orbArt, puckFrames, slickArt, trailArt,
+  grabberFrames, heldArt, itemBoxFrames, kartSprites, orbArt, puckFrames, trailArt,
 } from "./render/sprites";
 import { hornRing, staticOverlay } from "./render/screenfx";
 import { THEMES } from "./themes";
 import { CAUSTIC, caustics, fishSprites, makeSchools, waterOverlay } from "./render/underwater";
-import { slickPaint } from "./render/decals";
+import { slickDecal, slickPaint, slickRaised } from "./render/decals";
 import { emberOverlay } from "./render/volcano";
 import { lavaShift } from "./world/lava";
 import { Ceremony, STANDINGS_SETTLE, drawStandings } from "./ui/ceremony";
@@ -106,7 +106,6 @@ class Game {
   private designerReady: Promise<void> = Promise.resolve();
   private waitingForDesigner = false;
   private readonly boxArt: SceneryArt[] = itemBoxFrames();
-  private readonly slickArt: SceneryArt = slickArt();
   private readonly orbArt: SceneryArt = orbArt();
   private readonly boomArt: SceneryArt[] = boomerangFrames();
   private readonly bombArt: SceneryArt[] = bombFrames();
@@ -869,11 +868,13 @@ class Game {
     const theme = race.setup.theme;
     const now = this.time;
     const it = race.items;
-    // oil on the ground is painted into it, flat; on raised road, a sprite stands in for it
+    // oil lies flat on the road: painted into the ground where the road is the ground, and laid on
+    // the road as faces where it is not (a deck, a climb, a jump ramp, round the tube)
+    const laid = it.slicks.filter((sl) => inTube || slickRaised(t, race.features, sl));
     if (!inTube) {
       drawGround(scr, cam, race.tex, theme.fog, {
         mist, light: theme.underwater ? { color: CAUSTIC, at: caustics(now) } : undefined, lava: lavaShift(now),
-        paint: slickPaint(it.slicks.filter((sl) => sl.elev < 0.3), now, cam.heading),
+        paint: slickPaint(it.slicks.filter((sl) => !laid.includes(sl)), now, cam.heading),
       });
     }
     const extras: WorldSprite[] = [];
@@ -882,7 +883,6 @@ class Game {
       const art = this.boxArt[(Math.floor(now * 10) + i * 3) % this.boxArt.length];
       extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i), base: b.elev });
     });
-    for (const sl of it.slicks) if (sl.elev >= 0.3 || inTube) extras.push({ x: sl.x, y: sl.y, art: this.slickArt, base: sl.elev });
     for (const o of it.orbs) {
       extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: t.elev[o.idx] ?? 0 });
     }
@@ -939,6 +939,7 @@ class Game {
       padFaces(painter, t, race.features, now);
       obstacleFaces(painter, race.obstacles, t, now);
     }
+    for (const sl of laid) slickDecal(painter, t, race.features, sl, now, cam.heading, !!inTube);
     // the player's aiming arrows while an aimed item is ready: sweeping in front (on the screen)
     // and, mirrored, behind (in the mirror); a press locks one and it turns blue. Something the
     // back button throws straight back gets a straight arrow in the mirror.
