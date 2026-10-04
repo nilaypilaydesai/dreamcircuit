@@ -237,7 +237,7 @@ grid every 1.2 m and multiplied into the terrain's colours, so meadows, desert a
 as rolling land, at about 50 ms per race (the sand's ripples cost more than the relief does). Oil slicks are painted into the ground the same way,
 per pixel as each row is drawn: a dark puddle with a wobbly edge, a slowly turning rainbow film
 and the sky shining on its far side, so it lies flat in perspective under the karts that drive
-over it. Where the road is not the ground (a deck, a climb, a jump ramp, the neon tunnel's tube)
+over it. Where the road is not the ground (a deck, a climb, a jump ramp, the harbor tunnel's tube)
 the ground under the oil is hidden, so the same puddle is laid on the road as faces
 (`render/decals.ts`): rim, body, the film's ring and the shine, each point put on the road's
 surface where it is (up the climb's slope, round the tube's wall), all one decal at one depth:
@@ -270,8 +270,8 @@ rising only partway the camera lost the kart off the top of the screen.
 bridge: it is lifted 6 m over the road below, on 44 m smoothstep ramps either side of a 34 m
 level deck, with kerbed edges, a dashed center line, girder sides, guard rails with posts, and
 pillars placed clear of the road underneath. Crossings are found with a spatial hash as each arc
-is committed; road that was already built is lifted after the fact, its texture repainted and
-its scenery moved. Karts have a height: the ground under a kart is the deck, a ramp or the
+is committed; road that was already built is lifted after the fact, its texture repainted, its
+scenery moved and the boxes and coins on it lifted with it. Karts have a height: the ground under a kart is the deck, a ramp or the
 plain road, the guard rails keep it on the deck, and two karts only collide if they are at the
 same level, so traffic passes over and under freely. The height under a kart is read between the
 two road points either side of it (and a jump ramp's wedge by the kart's exact place along it):
@@ -399,7 +399,7 @@ garage (columns, strip lights under the floor above, a striped kerb) in Tokyo, a
 of basalt columns raised over the lava itself (Volcano Core), up
 onto concrete foundations, along scaffolding of pipes and planks and high along a tower crane's
 girder, a steel deck on a yellow truss with a column to the ground every so often and the crane
-standing beside it (Construction Zone), and over crater rims (Moon Base); in the Neon Tunnel the
+standing beside it (Construction Zone), and over crater rims (Moon Base); in the Harbor Tunnel the
 whole tube rises and falls over humps. A climb is a smooth
 sin^2 hump or a plateau (smoothstep ramps either side of a level top, long enough that a kart at
 full speed stays on the road over the top under normal gravity, and never steeper than about 22%).
@@ -414,7 +414,10 @@ the moon's bigger laps). The road a climb
 lifts was painted flat, so it is painted again, the boxes and coins on it ride up with it, and the
 scenery beside it is cleared. A Roller Coaster track sets climbs in any world, in that world's
 style. If the dream later crosses itself, the climbs near the new bridge and the road under it are
-flattened (the bridge needs the headroom) and the ground is repainted. Karts stay on a climb as on
+flattened (the bridge needs the headroom), the ground is repainted, the boxes, coins and oil on
+them come back down with the road, and the cuttings and whatever stands in the way there are
+cleared (left as they were, boxes hung in the air over the flattened road, as much as 5.4 m up,
+and oil floated out of reach of the karts). Karts stay on a climb as on
 a bridge: guard rails keep a kart on raised road, and the ground under a kart is the road's height
 where it is.
 
@@ -504,61 +507,90 @@ comes for it and lifts it back onto the deck. Over an embankment's slope (a mead
 crater's rim) a kart just lands on the road again, as before. Rivals keep to their racing lines and
 seldom go in.
 
-**The Neon Tunnel.** The whole race runs inside a tube (`world/tube.ts`): a flat floor as wide as
-any road, walls that curve up in half circles 4.5 m across to a flat ceiling as wide as the
-floor, the whole way round. A kart's offset (m left of the centerline, as everywhere) is how far
-round the tube it has gone from the middle of the floor: past the floor's edge it is up a wall,
-past the wall on the ceiling, and on round it comes down the other wall. So the race goes on in
-its usual flat terms (the tube unrolled is a road 54 m wide whose two edges are one line, the
-middle of the ceiling), and items, rivals, pads and laps work as anywhere else; only drawing
-bends it round. Up a wall a kart is held on by its speed, the more the higher it is (12 m/s where
-the wall stands upright), and anywhere on the upper half it needs 22.5 m/s; slower, it slides
-back down, fast from the ceiling. WALL and LOOP light up beside the speed, with ticks on the
-speed bar, when a kart is fast enough for each. Pads go up the walls and on the ceiling, where
-only a kart fast enough to loop can reach them, and up to four cars drive the floor in three
-lanes, 60 to 95 m apart and slower than any racer, to weave through or ride a wall past. Its
-circuits are drawn 1.6 times the size and dreamed calmer, so the bends are wide enough to drive
-round the inside of.
+**The Harbor Tunnel.** The whole race runs in a road tunnel, a tube (`world/tube.ts`): a flat
+floor as wide as any road, walls that curve up in half circles 4.5 m across to a flat roof as wide
+as the floor, the whole way round. A kart's offset (m left of the centerline, as everywhere) is
+how far round the tube it has gone from the middle of the floor: past the floor's edge it is up a
+wall, past the wall on the roof, and on round it comes down the other wall. So the race goes on
+in its usual flat terms (the tube unrolled is a road 54 m wide whose two edges are one line, the
+middle of the roof), and items, rivals, pads and laps work as anywhere else; only drawing bends
+it round. Up a wall a kart is held on by its speed, the more the higher it is (12 m/s where the
+wall stands upright), and anywhere on the upper half it needs 22.5 m/s; slower, it slides back
+down, fast from the roof. WALL and LOOP show beside the speed, gold when a kart is fast enough
+for each, with ticks on the speed bar. Up a wall or on the roof a kart turns no more than 45
+degrees off the way along the tunnel, the wall carries it round the tunnel's bends, and when the
+steering is let go it straightens out along the tunnel: so a loop is a spiral on down the
+tunnel, with the way on always in view, and a kart left alone rides the wall. Free to turn, a
+kart drove straight round and round the tube, seen side on, with the whole tunnel spinning past
+it: driven by a recording driver steering at random, the view turned 8 to 12 degrees a frame in
+two frames of five (now in one of fourteen, sliding off the roof or looping). Pads go up the
+walls and on the roof, where only a kart fast enough to loop can reach them, and up to four cars
+drive the floor in three lanes, 60 to 95 m apart and slower than any racer, to weave through or
+ride a wall past. Its circuits are drawn 1.6 times the size and dreamed calmer, so the bends are
+wide enough to drive round the inside of.
 
-In the tube there is no Mode-7 ground and no sky (`render/tube.ts`). The 230 m of tube ahead of
-the camera are drawn as rings of 20 panels (the floor in four, each wall in six facets, the
-ceiling in four), in pieces that lengthen with distance (3, 6, then 12 road points), with glowing
-strips along the floor's edges, the middle of each wall and the ceiling's edges, a dashed middle
-line, and a ring of light every 10.8 m, pulsing. Each piece starts at a whole multiple of its
-length and the panels are shaded in bands 12 road points long, so the pieces and their shades
-stay put while the camera moves through them; the dashes and the rings are set where they fall
-along the road (counted afresh each lap, so one by the line is the same from either side), and
-a ring fades out over the last 16 m before the camera (close up, half a meter deep, it swept
-across half the screen in a frame). The panels are the backdrop to everything in the tube:
-sorted 7 m deeper than they are, a panel always goes down before a kart, a pad or a strip of
-light lying on it, while anything a bend's wall really hides is much further behind it than
-that. Where a figure-eight's tube crosses itself, the other pass is left out near the camera
-(from inside it is never seen, and drawn it would show through the walls). Everything in the
-tube is placed where it lies between road points (`tubePlace`): snapped to the nearest point,
-half a meter apart, every kart shook as it moved, by about 10 px a frame on the screen.
+In the tube there is no Mode-7 ground and no sky (`render/tube.ts`). It is drawn as road tunnels
+are built: an asphalt road in three lanes with white edge lines, dashed lane lines and amber
+cat's eyes, a concrete walkway along each side, the walls faced with pale tiles to head height
+under a dark cable tray and bare concrete above, and a concrete roof with a row of lights down
+its middle, every 4.5 m, each throwing a pool of light on the road below; lane signals hang from
+the roof every 160 m, and a green emergency-phone niche is set into the right-hand wall every 96
+m. (It began as a tube of neon light, strips and pulsing rings, and was redrawn as a real
+tunnel.) The 260 m of tube ahead of the camera are drawn (past its far plane, where the fog is
+whole: drawn short of it, the far end of a straight showed as a dark disc), as rings of 22 panels
+(the road in four, a walkway each side, each wall in six facets, the roof in four), in pieces
+that lengthen with distance (3, 6, then 12 road points). Each piece starts at a whole multiple of
+its length and the lining is shaded in sections 12 road points long, so the pieces and their
+shades stay put while the camera moves through them; the dashes, lights and signs are set where
+they fall along the road (counted afresh each lap, so one by the line is the same from either
+side). The panels are the backdrop to everything in the tube: sorted 7 m deeper than they are, a
+panel always goes down before a kart, a pad or a line lying on it, while anything a bend's wall
+really hides is much further behind it than that. Where a figure-eight's tube crosses itself,
+the pass the camera is not on is left out (from inside it is never seen, and drawn it would show
+through the walls), and so is everything on it. Everything in the tube is placed where it lies
+between road points (`tubePlace`): snapped to the nearest point, half a meter apart, every kart
+shook as it moved, by about 10 px a frame on the screen.
 
 The chase camera is fixed to the kart's own frame round the tube: 6.2 m behind it along the
 tube, 2.9 m off the surface along the way the kart's surface faces (rising with the kart up a
 jump's ramp and partway into the air), looking along the tube and turned at most 9 degrees
 toward where the kart heads. So the kart stays upright in the middle of the foot of the
-screen, and the tube turns about it as it climbs a wall, loops over the ceiling or dips over a
+screen, and the tube turns about it as it climbs a wall, loops over the roof or dips over a
 crest. The first camera was put where the race's flat terms put it, behind the kart as they
 measure it, and up the way the surface faced there; driving round the tube it lagged far round
 the curve, stared at walls, moved up to 9 m in a frame and turned up to 15 degrees a frame, and
 the kart flew off the screen (thousands of pixels off, or behind the camera) or showed tipped
-every which way. The rear-view mirror rides just ahead of the kart looking back, and any other
-camera (the film's) goes where its flat terms say. Each sprite and its shadow are turned on the
+every which way. It looks down the tube the way the kart is going, and when the kart has turned
+round past 115 degrees from that, it swings round behind the kart the way the kart turned, in
+0.45 s, closer in and lower as it goes round, so the kart keeps its place on the screen (it cut
+round in a frame at first, the whole tunnel turning about at once; swung round at its usual
+distance, 6.2 m to the side, it would have been out through the wall). The rear-view mirror
+rides just ahead of the kart looking back, and any other camera (the film's) goes where its flat
+terms say. Each sprite and its shadow are turned on the
 screen by how the camera sees its surface's up. A surface's normal tips with the road's slope
 (eased from one road point to the next): taken as level, the floor of a climb ahead faced away
 from a camera below it and was culled.
 
 Round the tube the race's flat terms stretch the road's length away from its middle on a bend
 (round the outside) or squeeze it (round the inside), while the tube itself is never more than 11
-m from its middle; so a kart up a wall or on the ceiling moves along the road at the tube's own
+m from its middle; so a kart up a wall or on the roof moves along the road at the tube's own
 measure (`tubeStretch`), or through a bend it went as much as two and a half times as fast as its
 speed said, or crawled. Round the inside of a bend tight enough to squeeze the flat terms to under
-a third, near where they fold over themselves, no kart can hold on up a wall or on the ceiling at
-any speed, and it slides back down: in the fold, a kart on the ceiling jumped about the tube.
+a third, near where they fold over themselves, no kart can hold on up a wall or on the roof at
+any speed, and it slides back down: in the fold, a kart on the roof jumped about the tube.
+
+So in the tube a kart's place is kept in the tube's own terms: its road point, how far on it is
+to the next, and how far round the tube it is. It moves in those terms, along the road at the
+tube's own measure and round it, and its place in the flat terms, which the rest of the race
+goes by, follows from them; only when something else moves it in flat terms (a bump, a shove)
+is that carried back into its place round the tube. Kept in flat terms and found again from
+them each frame, a kart going round over the middle of the roof was put 5 to 20 m further along
+the tunnel in a frame (40 m round the inside of a tight bend, where the flat terms fold over and
+one flat place stands for meters of tube), and the camera fixed to it jumped with it. Karts are
+drawn, and the camera follows them, by those places, and which side of a kart the camera sees is
+worked out round the tube too (from where the camera stood in flat terms, a kart crossing the
+middle of the roof was seen from the wrong side for a frame). Sprites going by within 4 m of the
+camera, behind the kart it follows, are drawn see-through, and within 2.2 m not at all.
 
 **Something in the way.** Every world has its own (`race/obstacles.ts`), set out along the road as
 it is committed, each kind its own distance apart (a cow every 260 m, a geyser every 230, a
