@@ -522,19 +522,43 @@ round the inside of.
 
 In the tube there is no Mode-7 ground and no sky (`render/tube.ts`). The 230 m of tube ahead of
 the camera are drawn as rings of 20 panels (the floor in four, each wall in six facets, the
-ceiling in four), in pieces that lengthen with distance, with glowing strips along the floor's
-edges, the middle of each wall and the ceiling's edges, a dashed middle line, and a ring of
-light every 10.8 m, pulsing. The panels are the backdrop to everything in the tube: sorted 7 m
-deeper than they are, a panel always goes down before a kart, a pad or a strip of light lying on
-it, while anything a bend's wall really hides is much further behind it than that. Where a
-figure-eight's tube crosses itself, the other pass is left out near the camera (from inside it
-is never seen, and drawn it would show through the walls). The camera, given in the race's flat
-terms like everything else, is put where it really is round the tube and given its own forward,
-right and up (forward along the tube and round it, up the way the surface under it faces), so it
-can look up a wall it is partly up and turns with the kart over the ceiling; looking back (the
-rear-view mirror, a drone shot down the grid) it draws the tube behind. Each sprite is turned on
-the screen by how the camera sees its surface's up. A surface's normal tips with the road's slope:
-taken as level, the floor of a climb ahead faced away from a camera below it and was culled.
+ceiling in four), in pieces that lengthen with distance (3, 6, then 12 road points), with glowing
+strips along the floor's edges, the middle of each wall and the ceiling's edges, a dashed middle
+line, and a ring of light every 10.8 m, pulsing. Each piece starts at a whole multiple of its
+length and the panels are shaded in bands 12 road points long, so the pieces and their shades
+stay put while the camera moves through them; the dashes and the rings are set where they fall
+along the road (counted afresh each lap, so one by the line is the same from either side), and
+a ring fades out over the last 16 m before the camera (close up, half a meter deep, it swept
+across half the screen in a frame). The panels are the backdrop to everything in the tube:
+sorted 7 m deeper than they are, a panel always goes down before a kart, a pad or a strip of
+light lying on it, while anything a bend's wall really hides is much further behind it than
+that. Where a figure-eight's tube crosses itself, the other pass is left out near the camera
+(from inside it is never seen, and drawn it would show through the walls). Everything in the
+tube is placed where it lies between road points (`tubePlace`): snapped to the nearest point,
+half a meter apart, every kart shook as it moved, by about 10 px a frame on the screen.
+
+The chase camera is fixed to the kart's own frame round the tube: 6.2 m behind it along the
+tube, 2.9 m off the surface along the way the kart's surface faces (rising with the kart up a
+jump's ramp and partway into the air), looking along the tube and turned at most 9 degrees
+toward where the kart heads. So the kart stays upright in the middle of the foot of the
+screen, and the tube turns about it as it climbs a wall, loops over the ceiling or dips over a
+crest. The first camera was put where the race's flat terms put it, behind the kart as they
+measure it, and up the way the surface faced there; driving round the tube it lagged far round
+the curve, stared at walls, moved up to 9 m in a frame and turned up to 15 degrees a frame, and
+the kart flew off the screen (thousands of pixels off, or behind the camera) or showed tipped
+every which way. The rear-view mirror rides just ahead of the kart looking back, and any other
+camera (the film's) goes where its flat terms say. Each sprite and its shadow are turned on the
+screen by how the camera sees its surface's up. A surface's normal tips with the road's slope
+(eased from one road point to the next): taken as level, the floor of a climb ahead faced away
+from a camera below it and was culled.
+
+Round the tube the race's flat terms stretch the road's length away from its middle on a bend
+(round the outside) or squeeze it (round the inside), while the tube itself is never more than 11
+m from its middle; so a kart up a wall or on the ceiling moves along the road at the tube's own
+measure (`tubeStretch`), or through a bend it went as much as two and a half times as fast as its
+speed said, or crawled. Round the inside of a bend tight enough to squeeze the flat terms to under
+a third, near where they fold over themselves, no kart can hold on up a wall or on the ceiling at
+any speed, and it slides back down: in the fold, a kart on the ceiling jumped about the tube.
 
 **Something in the way.** Every world has its own (`race/obstacles.ts`), set out along the road as
 it is committed, each kind its own distance apart (a cow every 260 m, a geyser every 230, a
@@ -674,6 +698,22 @@ hidden page gets no animation frames. A dev-only hook (`window.__dc`, stripped f
 builds) advances the simulation a fixed number of steps with given keys held (or an AI pilot),
 processes queued menu input and renders once, so whole races can be driven, measured and
 captured deterministically.
+
+**Hunting glitches frame by frame.** Through the same hook, 40 seconds of racing in every world
+(and in the tunnel, a kart turning round the tube every nine seconds) are recorded with the
+game's own camera and HUD, every second step saved with where the camera is and which way it
+looks, and where the kart lands on the screen. A script then flags a camera that moves or turns
+too far in a frame, a kart that jumps about the screen or leaves it, and pixels outside the HUD
+that change and change straight back (A, B, A). Besides the tunnel's camera and its shaking karts
+(above), it caught, in every world, the camera lagging the kart's height coming down a climb or
+landing a jump: the kart sank to the foot of the screen, and for a frame or two after a landing
+below it. The camera now leads the kart on a slope by as much as it would lag, and never rides
+more than 0.3 m over it. It also caught the jump ramps' stripes strobing under a kart at speed
+(once narrowed to 1.2 m; 1.6 m again), the wrecking ball and its cable swinging through the camera
+(a black bar across half the screen for a frame; both are left out that close), and the police
+and tunnel warnings printed over the kart (they hang in the sky now). What is left is the
+shimmer of fine pixel art moving across the screen (a city's lit windows panning past, a banner's
+letters as it nears), which is the motion itself.
 
 ## 4. The world
 
