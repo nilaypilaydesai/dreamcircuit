@@ -597,9 +597,20 @@ it is committed, each kind its own distance apart (a cow every 260 m, a geyser e
 wrecking ball every 360), and on flat road if it stands on the ground. Cows graze beside the road
 and walk across it as karts come, and three in ten stop dead half way. Tumbleweeds blow across
 the mesa, some from the foot of a cutting's wall. Jellyfish drift and bob over the reef road and
-sting only when they are low. Police cars wait in alleys between Tokyo's buildings, pull out
-after the player with a siren and a flashing warning, ram them from behind, back off for a
-moment and come again, and give up after two hits, 22 s or once the player is 260 m clear.
+sting only when they are low. Police cars wait in alleys between Tokyo's buildings and pull out
+after the player, with a siren and a flashing warning, once the player is 14 to 40 m past.
+A police car goes no faster than a stock kart's top speed in the race's class (by 4%), nor round a
+bend faster than the class's grip allows, so a player at full speed holds it off and a boost pulls
+away; it gains on a player who is slower (off the line, off the road, after a spin). It steers
+across the road onto the player's line at 3 m/s at most, and only 9 m behind them, on their line
+and two and a half seconds into the chase, does it go for the ram: it holds that line and lunges,
+the warning turns to DODGE! and flashes faster, and a sidestep then makes it miss (it falls back
+and comes again). It rams only as it lunges, never a kart that is stopped or spinning; the
+player's items stop it (run over oil, hit by a puck, an orb, a flare or a boomerang, caught in a
+bomb's blast or a horn's ring, it spins out and comes on again); and it gives up after two rams
+or spin-outs, after 26 s, or once it is 110 m behind (SHAKEN OFF!). As it was, it was always 4 to
+9 m/s faster than the player, up to 155 km/h, and moved across the road as fast as they did, so
+every chase ended in two rams whatever the player did.
 Geysers in the volcano's road glow and bubble for a second before they blow a column of lava 7.5
 m up. A wrecking ball swings across the building site's road on a 12.3 m cable from a crane's jib,
 once every 3.8 s, low enough to hit only near the bottom of its swing. On the moon, meteors are
@@ -620,6 +631,21 @@ containers stacked behind on the building site, banks of regolith on the moon. T
 bridges, tunnels, jumps, the line and whatever comes in from the side (cows, the police's alleys,
 a crane's mast); a wall holds a kart at the edge of the shoulder, and hazards and scenery keep
 off its land.
+
+**Buildings beside the road are solid, and give way to the dream.** A cutting's walls, the
+buildings Tokyo's tunnels run under (9 m out past the tunnel's walls) and the police alleys (two
+buildings 8 to 13 m wide and 14 to 22 m tall facing the road 10.5 m out from its middle, 11 m
+deep, the alley between them) and the grandstand by the start (a picture of one, solid only 1.3 m
+round its middle, though it is 13 m wide) are footprints in the race's road terms. A kart that drives into one
+is put back out the way it came in: off its front onto the road, off its back onto the land
+behind, off an end (head on into one, most of the way to a stop). Only a cutting's front used to
+hold: a kart on Tokyo's pavement drove into the buildings over its tunnels and into the police
+alleys, and one coming round the end of a street was snapped back through its wall onto the
+road. The alleys were a sprite, a flat picture of two buildings that turned to face the camera;
+they are buildings of faces now (rows of windows, most of them lit, a neon sign by the mouth, a
+lamp over it, a light down at the far end). None is set out where another stretch of road would
+run into it (or come within half a road's width), and when new road is dreamed, any it would run
+into is taken away, as scenery is; hazards and scenery keep off all of them.
 
 **The Grand Prix.** A cup (`race/cup.ts`) runs one race in every world, back to back. The rivals
 keep the same karts throughout (their builds come from the cup's seed, not each race's), and each
