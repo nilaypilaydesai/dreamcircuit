@@ -22,7 +22,7 @@ import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./ren
 import type { Face } from "./render/poly";
 import { aimArrow, bankFaces, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
 import { type ObstacleArt, obstacleArt, obstacleFaces, obstacleSprites } from "./render/obstacles";
-import { tubeFaces, tubePoint } from "./render/tube";
+import { normalAt, tubeFaces, tubePoint } from "./render/tube";
 import type { ObstacleSound } from "./race/obstacles";
 import { landformFaces } from "./render/landforms";
 import { Sky } from "./render/sky";
@@ -819,7 +819,8 @@ class Game {
    * is round the tube (a little in off the surface under it) and turned with that surface; the road
    * point it is at; and where anything else given in flat terms really is. */
   private tubeCamera(race: Race, flat: Camera): {
-    cam: Camera; idx: number; at: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; tilt: number };
+    cam: Camera; idx: number; back: boolean;
+    at: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; n: [number, number, number] };
   } {
     const t = race.track, p = race.player;
     // as far along the road from the kart as the camera is (behind it, or ahead of it for the
@@ -828,12 +829,21 @@ class Game {
     const along = t.along(flat.x, flat.y, p.idx);
     const idx = t.wrap(p.idx + Math.round(along / SPACING)), round = t.offset(flat.x, flat.y, t.nearest(flat.x, flat.y, p.idx));
     const q = tubePoint(t, idx, round, flat.height - (t.elev[idx] ?? 0));
+    // its view: forward is the way it faces, along the tube and round it (up a wall that is partly
+    // up), up is the way the tube's surface under it faces, and right is square to both
+    const [tx, ty] = t.tangent(idx), lx = -ty, ly = tx;
+    const ct = Math.cos(q.tilt), st = Math.sin(q.tilt);
+    const up: [number, number, number] = [-st * lx, -st * ly, ct], A = [ct * lx, ct * ly, st]; // A: the way round the tube
+    const psi = Math.atan2(Math.sin(flat.heading - Math.atan2(ty, tx)), Math.cos(flat.heading - Math.atan2(ty, tx)));
+    const cf = Math.cos(psi), sf = Math.sin(psi);
+    const f: [number, number, number] = [cf * tx + sf * A[0], cf * ty + sf * A[1], sf * A[2]];
+    const r: [number, number, number] = [f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]];
     const at = (x: number, y: number, h: number, hint?: number) => {
-      const i = t.nearest(x, y, hint ?? idx);
-      const r = tubePoint(t, i, t.offset(x, y, i), h - (t.elev[i] ?? 0));
-      return { X: r.p[0], Y: r.p[1], Z: r.p[2], tilt: r.tilt };
+      const i = t.nearest(x, y, hint ?? idx), u = t.offset(x, y, i);
+      const pt = tubePoint(t, i, u, h - (t.elev[i] ?? 0));
+      return { X: pt.p[0], Y: pt.p[1], Z: pt.p[2], n: normalAt(t, i, u) };
     };
-    return { cam: { ...flat, x: q.p[0], y: q.p[1], height: q.p[2], roll: q.tilt }, idx, at };
+    return { cam: { ...flat, x: q.p[0], y: q.p[1], height: q.p[2], basis: { f, r, u: up } }, idx, back: Math.abs(psi) > Math.PI / 2, at };
   }
 
   private drawWorld(race: Race, sky: Sky, flat: Camera, scr: Screen = this.scr,
@@ -917,7 +927,7 @@ class Game {
     const faces: Face[] = [];
     const painter = { cam, scr, fog: race.setup.theme.fog, faces };
     if (inTube) {
-      tubeFaces(painter, t, theme, inTube.idx, race.features, now);
+      tubeFaces(painter, t, theme, inTube.idx, race.features, now, inTube.back);
       rampFaces(painter, t, race.features, race.setup.theme);
     } else {
       landformFaces(painter, race.scenery.landforms, theme);

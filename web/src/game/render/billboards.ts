@@ -41,7 +41,7 @@ export interface KartLook {
   drone?: SceneryArt[]; // the rescue drone's frames (the volcano)
   /** Inside the neon tunnel's tube: where a point given in the race's flat terms (x, y, and h m up)
    * really is, round the tube, and how far its surface is turned (``hint``: a road point near it). */
-  tube?: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; tilt: number };
+  tube?: (x: number, y: number, h: number, hint?: number) => { X: number; Y: number; Z: number; n: [number, number, number] };
   viewFrom?: { x: number; y: number }; // where the camera is in the race's flat terms (in the tube), to pick each kart's view
 }
 
@@ -70,7 +70,10 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       if (z < 1.2 || z > cam.far) return null;
       const ppm = cam.focal / z, sx = W / 2 + lat * ppm;
       if (sx < -200 || sx > W + 200) return null;
-      return { z, sx, gy: cam.horizon - up * ppm, ppm, rot: q.tilt - (cam.roll ?? 0) };
+      // its surface's up, as the camera sees it: how far to turn it on the screen
+      const B = cam.basis, n = q.n;
+      const rot = B ? Math.atan2(n[0] * B.r[0] + n[1] * B.r[1] + n[2] * B.r[2], n[0] * B.u[0] + n[1] * B.u[1] + n[2] * B.u[2]) : 0;
+      return { z, sx, gy: cam.horizon - up * ppm, ppm, rot };
     }
     const dx = x - cam.x, dy = y - cam.y;
     const z = dx * fx + dy * fy;

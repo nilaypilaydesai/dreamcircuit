@@ -40,7 +40,7 @@ export function tubePoint(track: Track, i: number, u: number, h = 0): { p: P3; t
 }
 
 /** The inward normal of the tube's surface at ``u`` m round it, at road point i. */
-function normalAt(track: Track, i: number, u: number): P3 {
+export function normalAt(track: Track, i: number, u: number): P3 {
   const [tx, ty] = track.tangent(i), t = tubeAt(u).tilt, s = -Math.sin(t);
   return [-ty * s, tx * s, Math.cos(t)];
 }
@@ -65,25 +65,28 @@ function around(track: Track, a: number, b: number): number {
   return ((((b - a) % L) + L * 1.5) % L) - L / 2;
 }
 
-export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, f: Features, now: number): void {
+/** The tube around road point ``from`` (where the camera is), drawn the way the camera looks: on up
+ * the road, or (``back``, the rear-view mirror, a drone looking back at the grid) back down it. */
+export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, f: Features, now: number, back = false): void {
   if (track.count < 2) return;
-  const s0 = track.s[from];
+  const s0 = track.s[from], dir = back ? -1 : 1;
   const skip = hidden(track, s0);
   const out = (s: number) => skip.some(([a, b]) => around(track, a, s) >= 0 && around(track, s, b) >= 0);
   const panel = [theme.ground[0], theme.ground[1]], floor = theme.road, ceiling = shade(theme.ground[1], 0.78);
   const ringCols = [theme.kerb[0], theme.kerb[1]], strip = theme.edge, line = mix(theme.edge, hex("#ffffff"), 0.5);
-  let i = track.wrap(from - Math.round(12 / SPACING)), guard = 0;
+  let i = track.wrap(from - dir * Math.round(12 / SPACING)), guard = 0;
   while (guard++ < 2000) {
-    const ahead = around(track, s0, track.s[i]);
+    const ahead = dir * around(track, s0, track.s[i]);
     const step = ahead < 60 ? 3 : ahead < 120 ? 6 : 12;
-    let j = i + step;
-    if (!track.locked && j >= track.count) break;
+    let j = i + dir * step;
+    if (!track.locked && (j >= track.count || j < 0)) break;
     j = track.wrap(j);
     if (ahead > SEEN) break;
-    if (!out(track.s[i])) piece(i, j, ahead);
+    const [a, b] = dir > 0 ? [i, j] : [j, i];
+    if (!out(track.s[a])) piece(a, b, ahead);
     i = j;
   }
-  pads(p, track, f, from, now);
+  pads(p, track, f, from, now, dir);
   startLine(p, track, s0);
 
   function piece(i: number, j: number, ahead: number): void {
@@ -123,10 +126,10 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
 
 /** Boost pads round the tube: a plate and three chevrons, laid on the surface wherever the pad is,
  * each one decal at one depth. */
-function pads(p: Painter, track: Track, f: Features, from: number, now: number): void {
+function pads(p: Painter, track: Track, f: Features, from: number, now: number, dir: number): void {
   const s0 = track.s[from];
   for (const pad of f.pads) {
-    const ahead = around(track, s0, pad.s0);
+    const ahead = dir * around(track, s0, pad.s0);
     if (ahead < -10 || ahead > 150) continue;
     const at = (u: number, v: number): P3 => {
       const k = u / SPACING, i0 = Math.floor(k), w = k - i0;

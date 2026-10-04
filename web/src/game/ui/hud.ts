@@ -125,9 +125,9 @@ export class Hud {
     if (race.setup.theme.tube) {
       const v = Math.abs(p.v), top = race.cls.vmax * 1.28;
       for (const need of [TUBE_WALL_SPEED, TUBE_LOOP_SPEED]) scr.fillRect(11 + Math.round((90 * need) / top), H - 14, 1, 7, WHITE);
-      f.draw(scr, "WALL", 96, H - 22, { color: v >= TUBE_WALL_SPEED ? hex("#2de2e6") : hex("#5a5470"), outline: INK });
+      f.draw(scr, "WALL", 104, H - 22, { color: v >= TUBE_WALL_SPEED ? hex("#2de2e6") : hex("#5a5470"), outline: INK });
       const loop = v >= TUBE_LOOP_SPEED;
-      f.draw(scr, "LOOP", 128, H - 22, {
+      f.draw(scr, "LOOP", 144, H - 22, {
         color: loop ? (Math.floor(now * 6) % 2 ? hex("#ff2bd6") : WHITE) : hex("#5a5470"), outline: INK,
       });
       if (p.slipping && Math.floor(now * 5) % 2 === 0) {
