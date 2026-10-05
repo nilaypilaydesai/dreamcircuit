@@ -30,6 +30,7 @@ interface Kart {
   staticT: number; // s left with a rival's static over its screen
   wings: number; // s left with a wing pad's wings (the tunnel: its walls are for winged karts)
   rampU: number; // 0..1 up a jump's ramp, -1 off it
+  driftDir: number; // which way it is drifting (1: left)
 }
 interface Hill { s0: number; len: number; h: number; style?: string; side?: number }
 interface Track {
@@ -39,6 +40,8 @@ interface Track {
   curvature(i: number): number;
   wrap(i: number): number;
   fromStart(i: number): number;
+  nearest(x: number, y: number, hint: number, window?: number): number;
+  offset(x: number, y: number, i: number): number;
 }
 interface Race {
   track: Track; player: Kart; standings: Kart[]; karts: Kart[]; phase: string; countdown: number;
@@ -47,6 +50,7 @@ interface Race {
   items: { blasts: unknown[]; rowS: number[]; comets: { phase: string; x: number; y: number; z: number; target: Kart | null }[] };
   aimPhase: number; // the player's aiming arrow (where it is in its sweep)
   obstacles: { list: { kind: string; state: number; t: number; wait: number; s: number; offset: number; idx: number; x: number; y: number }[] };
+  hazards: { kind: string; x: number; y: number; rx: number; ry: number }[]; // what a kart can drive into off the road
 }
 interface Scr {
   buf: Uint32Array;
@@ -70,7 +74,7 @@ interface Game {
   render(): void;
 }
 interface Dc {
-  step(n: number, keys?: string[], draw?: boolean): void;
+  step(n: number, keys?: string[], draw?: boolean, dt?: number): void; // (dt: each step's length, for slow motion)
   shot(cam: Record<string, number>): void;
   state(): Record<string, unknown>;
   race(points: number[], theme?: number, rivals?: number, type?: string): void;
@@ -111,10 +115,11 @@ export const TRAILER: Variant[] = [
 // the aiming arrow's sweep (race/items.ts)
 const AIM_MAX = 0.75, AIM_RATE = 3.1;
 const THEME = { valley: 0, tunnel: 1, mesa: 2, reef: 3, tokyo: 4, volcano: 5, construction: 6, moon: 7 };
-const COW_WALK = 1, POLICE_CHASE = 1, POLICE_LUNGE = 4, GEYSER_QUIET = 0; // (race/obstacles.ts)
+const POLICE_CHASE = 1, POLICE_LUNGE = 4, GEYSER_QUIET = 0; // (race/obstacles.ts)
 const FALL_SWAP = 0.72; // into the lava: lifted out (race/kart.ts)
 const PAN = 1536, FRAME_W = 384; // the sky's panorama for a full turn, and the film's width (render/sky.ts)
 const W = 384, H = 216;
+const HALF_WIDTH = 6.5; // m (world/track.ts)
 
 // the music: the title song under the opening (and the end card), Dream Valley's from GO; every
 // shot from GO on is a whole number of its bars (at 150 bpm and 30 fps, 48 frames each)
@@ -351,6 +356,21 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     g.scr.fillRect(12, H - 27, 2, 12, HOT);
     text(name, 19, H - 25, { color: WHITE, outline: INK });
   });
+  /** An item's name, low on the right, as it is used. */
+  const label = (name: string, f: number, at = 6, len = 44) => faded(swell(f, at, at + len), () =>
+    text(name, W - 14, H - 25, { color: HOT, outline: INK, align: "right" }));
+  /** The picture in blocks of ``b`` x ``b`` pixels, each the colour of its top left corner (the
+   * classics' mosaic). */
+  const mosaic = (b: number) => {
+    if (b <= 1) return;
+    const buf = g.scr.buf;
+    for (let y0 = 0; y0 < H; y0 += b) {
+      for (let x0 = 0; x0 < W; x0 += b) {
+        const c = buf[y0 * W + x0];
+        for (let y = y0; y < Math.min(H, y0 + b); y++) buf.fill(c, y * W + x0, y * W + Math.min(W, x0 + b));
+      }
+    }
+  };
   /** What a stretch of the trailer shows, bigger, high in the middle (over the sky, clear of the
    * karts low in the picture). */
   const banner = (s: string, f: number, at = 4, len = 66) => faded(swell(f, at, at + len), () =>
@@ -382,13 +402,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       for (let s = 0; s < steps; s++) plot(ax + ((bx - ax) * s) / steps, ay + ((by - ay) * s) / steps, color, glow);
     }
   };
-  const logo = (a: number, tagline: number) => {
-    faded(a, () => {
-      text("DREAM", W / 2, 38, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
-      text("CIRCUIT", W / 2, 82, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
-    });
-    faded(tagline, () => text("THE KART RACER AN AI DREAMS AS YOU DRIVE", W / 2, 132, { color: DREAM, outline: INK, align: "center" }));
-  };
+
 
   // ---------------------------------------------------------------- driving, and the cameras
   // the autopilot drives (and leaves the items to the script); at a start it waits, then hits the
@@ -398,15 +412,16 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     if (r.phase !== "countdown") return ["auto", "noitems", ...extra];
     return r.countdown <= 1.35 ? ["gas"] : [];
   };
-  const advance = (steps: number, extra: string[] = []) => {
-    dc.step(steps, keys(extra), false);
+  /** The race on by ``steps`` steps of ``dt`` s (shorter than the usual 1/60: slow motion). */
+  const advance = (steps: number, extra: string[] = [], dt = 1 / 60) => {
+    dc.step(steps, keys(extra), false, dt);
     // (the player is never filmed under a rival's static: it fills the screen, and the autopilot
     // would drive half blind)
     race().player.staticT = 0;
   };
-  const until = async (done: () => boolean, limit: number) => {
+  const until = async (done: () => boolean, limit: number, extra: () => string[] = () => []) => {
     for (let guard = 0; !done() && guard < limit; guard++) {
-      advance(1);
+      advance(1, extra());
       if (guard % 200 === 0) await tick();
     }
   };
@@ -453,13 +468,23 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     return { d: Math.hypot(dx, dy), off: wrapAngle(Math.atan2(dy, dx) - p.heading) };
   };
   const rivals = () => race().karts.filter((k) => !k.isPlayer && !k.finished);
-  // shots that ride with a kart: the game's chase camera (raised a little), and a tracking shot
-  // from ahead and to the side (side 1: the left), its heading smoothed (a drifting kart's heading
-  // swings, and a camera hung off it swung with it)
+  /** The rival right in front of the player, between ``near`` and ``far`` m up the road and
+   * within ``wide`` m of its line, if one is. */
+  const inFront = (near: number, far: number, wide = 3) => rivals().filter((k) => {
+    const d = k.dist - race().player.dist, s = seen(k);
+    return d > near && d < far && Math.abs(Math.sin(s.off) * s.d) < wide;
+  }).sort((a, b) => a.dist - b.dist)[0];
+  // shots that ride with a kart: a tracking shot from ahead and to the side (side 1: the left), its
+  // heading smoothed (a drifting kart's heading swings, and a camera hung off it swung with it)
   let calm: number | null = null; // the smoothed heading the riding cameras hang off
   const steady = (k: Kart, rate = 5) => {
     calm = calm === null ? k.heading : calm + wrapAngle(k.heading - calm) * Math.min(1, rate / fps);
     return calm;
+  };
+  const track = (k: Kart, side = 1, d = 6.5, h = 2.3, focal = 250) => {
+    const hd = steady(k), c = Math.cos(hd), sn = Math.sin(hd);
+    const x = k.x + c * d - sn * d * side, y = k.y + sn * d + c * d * side;
+    dc.shot({ x, y, heading: Math.atan2(k.y - y, k.x - x), height: h + k.elev, focal, fx: 0, clear: 3 });
   };
   /** Behind the kart, ``back`` m and ``h`` m up, the view tipped down to keep the kart low in the
    * picture (raised, the game's own camera lost the kart off the foot of the screen). */
@@ -467,10 +492,12 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     const hd = steady(k, 4), x = k.x - Math.cos(hd) * back, y = k.y - Math.sin(hd) * back;
     dc.shot({ x, y, heading: hd, height: k.ground + h, focal: 250, fx: 0, clear: 2.5, horizon: Math.round(row - (h / back) * 250) });
   };
-  const track = (k: Kart, side = 1, d = 6.5, h = 2.3) => {
-    const hd = steady(k), c = Math.cos(hd), sn = Math.sin(hd);
-    const x = k.x + c * d - sn * d * side, y = k.y + sn * d + c * d * side;
-    dc.shot({ x, y, heading: Math.atan2(k.y - y, k.x - x), height: h + k.elev, focal: 250, fx: 0, clear: 3 });
+  /** Out in front of kart ``k``, ``d`` m up the road and ``side`` m to its left, looking back at
+   * ``at`` (default: the kart): the shot of a kart coming at the camera, and of one passing another. */
+  const lead = (k: Kart, d = 10, side = 2, h = 1.4, at?: [number, number]) => {
+    const hd = steady(k, 4), c = Math.cos(hd), sn = Math.sin(hd);
+    const x = k.x + c * d - sn * side, y = k.y + sn * d + c * side;
+    stand(x, y, k.ground + h, at ?? [k.x, k.y], 250, 84, 8);
   };
   /** A camera standing at (x, y), ``h`` m up, turning to follow whatever ``at`` gives (smoothly:
    * a pan, not a snap; fast as a fly-by goes past, as a real one would be). */
@@ -480,60 +507,95 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     aim = aim === null ? want : aim + wrapAngle(want - aim) * Math.min(1, rate / fps);
     dc.shot({ x, y, heading: aim, height: h, focal, fx: 0, clear: 2, horizon });
   };
-  /** A shot of ``n`` frames: the race goes on (``extra``: keys pressed) while ``shoot`` frames it. */
+  /** A shot of ``n`` frames: the race goes on (``extra``: keys pressed; ``slow``: how many times
+   * slower than life, 1 for not at all) while ``shoot`` frames it. */
   const film = async (name: string, n: number, shoot: (f: number, n: number) => void,
-                      opt: { extra?: (f: number) => string[]; dress?: (f: number, n: number) => void; slow?: (f: number) => boolean } = {}) => {
+                      opt: { extra?: (f: number) => string[]; dress?: (f: number, n: number) => void; slow?: (f: number) => number;
+                             hero?: boolean } = {}) => {
+    begin(name, opt.hero ?? true);
+    calm = null;
+    aim = null;
+    for (let f = 0; f < n; f++) {
+      const slow = opt.slow?.(f) ?? 1, extra = opt.extra?.(f) ?? [];
+      if (slow > 1) advance(1, extra, 1 / (fps * slow));
+      else advance(per, extra);
+      shoot(f, n);
+      await save(name, opt.dress ? () => opt.dress!(f, n) : undefined);
+    }
+  };
+  /** The road point nearest (x, y) on the stretch ahead of the player. */
+  const footAhead = (x: number, y: number) => race().track.nearest(x, y, race().player.idx, 260);
+  /** Into a hazard of ``kind`` beside the road, and out again under the rescue drone: the player
+   * steers off the road at the nearest one ahead (off camera) and is filmed from across the road
+   * as it plunges in, the view darkening; then beside where the drone sets it down. */
+  const rescue = async (name: string, kind: string, n: number, dress?: (f: number, n: number) => void) => {
+    const t = race().track;
+    const pick = () => race().hazards.filter((h) => h.kind === kind).map((h) => {
+      const i = footAhead(h.x, h.y);
+      return { h, i, d: ahead(race().player, i), off: t.offset(h.x, h.y, i) };
+    }).filter((q) => q.d > 26 && q.d < 60 && Math.abs(q.off) < 24 && Math.abs(t.curvature(q.i)) < 1 / 35)
+      .sort((a, b) => a.d - b.d)[0];
+    await until(() => race().phase === "racing" && race().player.v > 14 && !!pick(), 60 * 150);
+    const q = pick();
+    if (!q) return false;
+    const hz = q.h, steer = () => {
+      const k = race().player;
+      if (k.fall >= 0) return [];
+      const a = wrapAngle(Math.atan2(hz.y - k.y, hz.x - k.x) - k.heading);
+      return ["gas", ...(a > 0.04 ? ["left"] : a < -0.04 ? ["right"] : [])];
+    };
+    // (steered at it, off the camera, until it is about to go in)
+    const close = () => Math.hypot(hz.x - race().player.x, hz.y - race().player.y) < Math.max(hz.rx, hz.ry) + 12;
+    for (let guard = 0; !close() && race().player.fall < 0 && guard < 60 * 6; guard++) dc.step(1, steer(), false);
+    const side = Math.sign(q.off) || 1, [cx, cy] = beside(q.i, -side * 9);
     begin(name);
     calm = null;
     aim = null;
     for (let f = 0; f < n; f++) {
-      advance(opt.slow?.(f) ? 1 : per, opt.extra?.(f) ?? []);
-      shoot(f, n);
-      await save(name, opt.dress ? () => opt.dress!(f, n) : undefined);
+      const k = race().player;
+      dc.step(per, steer(), false);
+      k.staticT = 0;
+      if (k.fall < FALL_SWAP) stand(cx, cy, 2.4 + (t.elev[q.i] ?? 0), [k.x, k.y], 250, 80, 9);
+      else {
+        // beside where the drone sets it down (high enough to keep the drone in the picture)
+        const [tx, ty] = t.tangent(t.wrap(k.idx));
+        const x = k.dropX + tx * 4 - ty * 9.5 * -side, y = k.dropY + ty * 4 + tx * 9.5 * -side;
+        dc.shot({ x, y, heading: Math.atan2(k.dropY - y, k.dropX - x), height: 3.6 + k.dropZ, focal: 250, fx: 0, clear: 3 });
+      }
+      await save(name, dress ? () => dress(f, n) : undefined);
     }
+    return true;
   };
 
   // ================================================================ the opening: a dream
   // 1. The designer dreaming a figure-eight: its noisy lap after each Heun step, from pure noise (a
   //    scribble) to the circuit, untangling as the noise comes off. (Interpolated between steps;
-  //    the steps' states are the model's own.)
+  //    the steps' states are the model's own.) The name comes at the end.
   {
     const n = Math.round(fps * TITLE_BAR * 2);
-    const kAt = (u: number) => (u < 0.12 ? 0 : u < 0.86 ? 19 * smooth((u - 0.12) / 0.74) : 19 + 5 * smooth((u - 0.86) / 0.14));
+    const kAt = (u: number) => (u < 0.1 ? 0 : u < 0.84 ? 19 * smooth((u - 0.1) / 0.74) : 19 + 5 * smooth((u - 0.84) / 0.16));
     begin("t_dream", false);
     for (let f = 0; f < n; f++) {
       const u = f / (n - 1), k = kAt(u);
       backdrop();
       drawLap(k, 1, mix(DREAM, HOT, smooth(clamp01((k - 13) / 11))));
-      faded(swell(f, 8, n - 4, 14), () =>
-        text("A DIFFUSION MODEL IS DREAMING A RACE TRACK", W / 2, 16, { color: DREAM, outline: INK, align: "center" }));
-      faded(swell(f, 8, n - 4, 14), () =>
+      faded(swell(f, 6, n - 2, 14), () =>
+        text("EVERY TRACK IS DREAMED BY AN AI", W / 2, 16, { color: DREAM, outline: INK, align: "center" }));
+      faded(swell(f, 6, n - 2, 14), () =>
         text(`DENOISING ${Math.round((k / 24) * 100)}%`, W / 2, H - 24, { color: DIM, outline: INK, align: "center" }));
-      black(1 - f / 10);
+      faded(smooth(clamp01((f - (n - 26)) / 14)), () =>
+        text("AS YOU RACE IT", W / 2, H - 38, { color: WHITE, outline: INK, align: "center" }));
+      black(Math.max(1 - f / 10, (f - (n - 8)) / 8));
       g.scr.present();
       await save("t_dream");
-    }
-  }
-  // 2. The name: the game's logo over the dreamed circuit, which dims behind it.
-  {
-    const n = Math.round(fps * TITLE_BAR);
-    begin("t_logo", false);
-    for (let f = 0; f < n; f++) {
-      backdrop();
-      drawLap(24, 1 - smooth(clamp01(f / 16)), HOT); // (the circuit gives way to the name)
-      logo(smooth(clamp01(f / 12)), smooth(clamp01((f - 10) / 12)));
-      faded(smooth(clamp01((f - 18) / 12)), () =>
-        text("A DIFFUSION MODEL DESIGNS EVERY TRACK", W / 2, H - 14, { color: DIM, outline: INK, align: "center" }));
-      black((f - (n - 10)) / 10);
-      g.scr.present();
-      await save("t_logo");
     }
   }
 
   // ================================================================ Dream Valley: the dream, raced
   await start(o.opening, THEME.valley, 7);
   const opening = race().track;
-  // 3. The countdown: a crane up from behind the grid and over it, as the lights count down.
+  // 2. The countdown: a crane up from behind the grid, rising and tipping down so the whole grid
+  //    stays in the picture and the road beyond the gantry comes into it, as the lights count down.
   {
     await until(() => race().countdown <= 3.98, 600); // (from the 3: the beeps a second apart)
     const t = opening, si = t.startIndex, h0 = heading(si);
@@ -541,9 +603,6 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     let f = 0, shown = 4;
     while (race().phase === "countdown" && f < frames(5)) {
       advance(per);
-      // (from behind the last row, rising and tipping down, so the whole grid stays in the picture
-      // and the road beyond the gantry comes into it; brought in over the grid, the camera ended up
-      // looking at the gantry, the karts under it)
       const u = smooth(clamp01(f / frames(2.6)));
       const back = 46 - 6 * u, x = t.xs[si] - Math.cos(h0) * back, y = t.ys[si] - Math.sin(h0) * back;
       dc.shot({ x, y, heading: h0, height: 2 + 9 * u, focal: 250, fx: 0, clear: 3, horizon: Math.round(74 - 30 * u) });
@@ -555,82 +614,75 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       const fresh = clamp01((race().countdown - 1 - (n - 1)) * 3); // (each number pops in, then fades)
       await save("a_grid", () => {
         faded(n > 0 ? Math.min(1, fresh * 1.5) : 0, () => text(String(n), W / 2, 70, { scale: 5, color: WHITE, outline: INK, align: "center" }));
-        black(1 - f / 8); // (up out of the black the name went into)
+        black(1 - f / 8);
       });
       f++;
     }
   }
-  // 4. GO: a fly-by on the start straight, low beside the road; the pack comes at the camera and
+  // 3. GO: a fly-by on the start straight, low beside the road; the pack comes at the camera and
   //    past it, the camera swinging round to watch it go. (The music comes in.)
   {
     cue.go = trailer.frames;
     cue.beeps.push(trailer.frames);
-    // (30 m on: from 52 m the pack was specks for most of the shot)
     const t = opening, si = t.startIndex, at = along(si, 30), [x, y] = beside(at, 7.5);
     await film("a_launch", bars(2), () => {
-      const p = race().player, lead = race().standings[0];
-      const target: [number, number] = [p.x * 0.5 + lead.x * 0.5, p.y * 0.5 + lead.y * 0.5];
-      stand(x, y, 0.9 + (t.elev[at] ?? 0), target, 250, 82, 9);
+      const p = race().player, lead0 = race().standings[0];
+      stand(x, y, 0.9 + (t.elev[at] ?? 0), [p.x * 0.5 + lead0.x * 0.5, p.y * 0.5 + lead0.y * 0.5], 250, 82, 9);
     }, { dress: (f) => {
       faded(1 - f / 12, () => text("GO!", W / 2, 70, { scale: 5, color: GO_GREEN, outline: INK, align: "center" }));
       caption("DREAM VALLEY", f, 20, 66);
     } });
   }
-  // 5. The jump: from beside where the karts land, looking back at the lip, the player flying off
-  //    it at the camera, in slow motion while it is in the air.
-  {
-    const r = race(), p = r.player;
-    const ramp = r.features.ramps.map((q) => q.start).sort((a, b) => ahead(p, a) - ahead(p, b))[0];
-    if (ramp !== undefined) {
-      const lip = along(ramp, 11);
-      await until(() => ahead(race().player, lip) / Math.max(race().player.v, 10) < 0.9 && ahead(race().player, lip) < 60, 60 * 60);
-      const [x, y] = beside(along(lip, 27), 5.5);
-      await film("a_jump", bars(2), () => {
+  /** Off the jump at ``lip``, from beside where karts land, looking back at it: the player hops right
+   * at the lip (a trick: it spins in the air), slowed ``slow`` times while it is in the air. */
+  const trickJump = async (name: string, lip: number, n: number, slow: number, dress?: (f: number, n: number) => void,
+                           hero = true, from = 27, off = 5.5, h = 1.0) => {
+    await until(() => race().phase === "racing" && ahead(race().player, lip) / Math.max(race().player.v, 10) < 0.9 &&
+                      ahead(race().player, lip) < 60, 60 * 60);
+    const [x, y] = beside(along(lip, from), off), z = race().track.elev[lip] ?? 0;
+    let hopped = false;
+    await film(name, n, () => {
+      const k = race().player;
+      stand(x, y, h + z, [k.x, k.y], 250, 88, 10);
+    }, {
+      hero, dress,
+      slow: () => (race().player.air ? slow : 1),
+      extra: () => {
         const k = race().player;
-        stand(x, y, 1.0 + (race().track.elev[lip] ?? 0), [k.x, k.y], 250, 88, 10);
-      }, { slow: () => race().player.air });
+        if (!hopped && k.rampU > 0.9) {
+          hopped = true;
+          return ["hop"];
+        }
+        return [];
+      },
+    });
+  };
+  // 4. A trick: off the jump, a hop right at the lip, the kart spinning through the air in slow
+  //    motion as it flies at the camera.
+  {
+    const p = race().player;
+    const ramp = race().features.ramps.map((q) => q.start).sort((a, b) => ahead(p, a) - ahead(p, b))[0];
+    if (ramp !== undefined) {
+      await trickJump("a_jump", along(ramp, 11), bars(2), 3, (f) => banner("TRICKS", f, 14, bars(2) - 16));
     }
   }
-  // 6. Under the bridge: on the road that passes under the deck, beyond it, the pack coming
+  // 5. Under the bridge: on the road that passes under the deck, beyond it, the pack coming
   //    through underneath.
   {
     const b = opening.bridges[0];
     if (b) {
       const under = b.lower;
-      await until(() => { const d = ahead(race().player, under); return d > 40 && d < 60; }, 60 * 60);
-      const [x, y] = beside(along(under, 24), 7.5);
-      await film("a_under", bars(2), () => {
+      await until(() => { const d = ahead(race().player, under); return d > 18 && d < 32; }, 60 * 60);
+      const [x, y] = beside(along(under, 22), 7.5);
+      await film("a_under", bars(1), () => {
         const k = race().player;
         stand(x, y, 1.5, [k.x, k.y], 250, 96, 6);
       });
     }
   }
-  // 7. Cows crossing the valley road in front of the player, who steers round them.
-  {
-    const cow = () => race().obstacles.list.find((q) => {
-      if (q.kind !== "cow" || q.state !== COW_WALK || Math.abs(q.offset) > 5) return false;
-      const t = race().track, d = (q.s - t.s[race().player.idx] + t.length) % t.length;
-      return d > 26 && d < 48;
-    });
-    await until(() => !!cow(), 60 * 30);
-    if (cow()) await film("v_cows", bars(2), () => behind(race().player, 7, 3.4));
-  }
-  // 8. Over the bridge: a drone high beside the crossing, looking down at the deck as the pack
-  //    goes over it, the road it crosses below.
-  {
-    const b = opening.bridges[0];
-    if (b) {
-      await until(() => { const d = ahead(race().player, b.center); return d > 50 && d < 70; }, 60 * 60);
-      const [x, y] = beside(b.center, 17), z = (opening.elev[b.center] ?? 0) + 7;
-      await film("a_bridge", bars(2), (f, n) => {
-        const k = race().player;
-        stand(x, y, z + 1.5 * smooth(f / n), [k.x, k.y], 250, 52, 5);
-      });
-    }
-  }
 
   // ================================================================ the Harbor Tunnel
-  // 9. Round the tube: over a wing pad (its walls are for winged karts), and on the gas (and a
+  // 6. Round the tube: over a wing pad (its walls are for winged karts), and on the gas (and a
   //    boost), the player turns up the wall, holds a line slanting round over the roof and down the
   //    other wall, and straightens out on the floor; the chase camera rolls round with it.
   await start(o.figure8, THEME.tunnel, 7);
@@ -666,13 +718,15 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       last = k.offset;
       dc.step(per, ["gas", ...press], false);
       dc.shot({ clear: 2.5 });
-      await save("n_loop", () => caption("HARBOR TUNNEL", f));
+      await save("n_loop", () => {
+        caption("HARBOR TUNNEL", f);
+        banner("WING PADS", f, 30, 80);
+      });
     }
   }
-  // 10. Traffic in the tube: on the game's chase camera, the pack weaves through the cars.
+  // 7. Through the traffic: on the game's chase camera, a car close ahead, overtaken.
   {
     await start(o.loops[4], THEME.tunnel, 7);
-    // (a car close ahead, overtaken in the shot)
     const cars = () => race().obstacles.list.filter((q) => {
       const d = (q.s - race().track.s[race().player.idx] + race().track.length) % race().track.length;
       return q.kind === "traffic" && d > 14 && d < 26;
@@ -682,49 +736,53 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   }
 
   // ================================================================ Sunset Mesa
-  // 11. Down a red-rock canyon: alongside the player between its walls, beds of rock in red and
-  //     ochre either side.
+  // 8. Down a red-rock canyon: alongside the player between its walls.
   {
     await start(o.loops[1], THEME.mesa, 7);
     const banks = (race() as unknown as { features: { banks: { s0: number; len: number }[] } }).features.banks;
     const inCanyon = () => {
       const s0 = race().track.s[race().player.idx];
-      return banks.some((b) => s0 > b.s0 + 6 && s0 < b.s0 + b.len - 30);
+      return banks.some((b) => s0 > b.s0 + 6 && s0 < b.s0 + b.len - 20);
     };
     if (banks.length) {
       await until(() => race().phase === "racing" && inCanyon(), 60 * 120);
-      await film("t_canyon", bars(2), (f, n) => track(race().player, 1, 5.5 + 2 * (f / n), 2.2), {
-        dress: (f) => caption("SUNSET MESA", f),
+      await film("t_canyon", bars(1), (f, n) => track(race().player, 1, 5.5 + 1.5 * (f / n), 2.2), {
+        dress: (f) => caption("SUNSET MESA", f, 4, 42),
       });
     }
   }
-  // 12. A boomerang: the arrow sweeps; one press locks it onto the rival straight up the road, the
-  //     next throws, and the boomerang goes out, spins the rival, and comes home.
+  // 9. A boomerang: the arrow locked on the rival up the road, the throw, and the hit, filmed from
+  //    in front of the rival as it comes round, spins it, and goes home.
   {
     await ready(o.loops[1], THEME.mesa, 60);
     const inSights = () => rivals().filter((k) => {
       const s = seen(k);
-      return s.d > 9 && s.d < 24 && Math.abs(s.off) < 0.4;
+      return s.d > 9 && s.d < 22 && Math.abs(s.off) < 0.4;
     }).sort((a, b) => seen(a).d - seen(b).d)[0];
     await until(() => !!inSights(), 60 * 40);
     const target = inSights();
     dc.give("boomerang");
     let locked = -1;
-    await film("i_boomerang", bars(2), () => behind(race().player, 6.5, 3.8), { extra: (f) => {
-      if (!target || f < frames(0.4)) return [];
-      if (locked < 0) {
-        // steer the sweep onto the rival, then press: the arrow locks there
-        const off = Math.max(-AIM_MAX * 0.98, Math.min(AIM_MAX * 0.98, seen(target).off));
-        race().aimPhase = Math.asin(off / AIM_MAX) - AIM_RATE / 60;
-        locked = f;
-        return ["item"];
-      }
-      return f === locked + 3 ? ["item"] : []; // let go, and press again: it flies along the arrow
-    } });
+    await film("i_boomerang", bars(2), () => (target ? track(target, 1, 9, 2.4) : dc.shot({ clear: 2.5 })), {
+      extra: (f) => {
+        if (!target || f < frames(0.3)) return [];
+        if (locked < 0) {
+          // steer the sweep onto the rival, then press: the arrow locks there
+          const off = Math.max(-AIM_MAX * 0.98, Math.min(AIM_MAX * 0.98, seen(target).off));
+          race().aimPhase = Math.asin(off / AIM_MAX) - AIM_RATE / 60;
+          locked = f;
+          return ["item"];
+        }
+        return f === locked + 3 ? ["item"] : []; // let go, and press again: it flies along the arrow
+      },
+      dress: (f) => { banner("22 ITEMS", f, 4, 60); label("BOOMERANG", f, 10); },
+    });
   }
+  // 10. Into the quicksand, and out under the rescue drone.
+  await rescue("m_sand", "quicksand", bars(2), (f) => banner("RESCUE DRONE", f, 18, 66));
 
   // ================================================================ Coral Reef
-  // 13. Alongside the pack over a ridge of coral: bubble helmets, rays of light, schools of fish.
+  // 11. Alongside the pack over a ridge of coral: bubble helmets, rays of light, schools of fish.
   await start(o.loops[3], THEME.reef, 7);
   await until(() => race().phase === "racing" && climb(race().player)?.style === "coral" && race().player.elev > 0.8 &&
                     race().player.slope > 0, 60 * 150);
@@ -732,65 +790,106 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   await film("w_reef", bars(2), (f, n) => track(race().player, -1, 6 + 1.5 * (f / n), 1.9), {
     dress: (f) => caption("CORAL REEF", f),
   });
+  // 12. A shock: filmed from in front of the pack, looking back at it: the white flash, and
+  //     everyone else spun, shrunk and slowed.
+  {
+    await ready(o.loops[3], THEME.reef, 30);
+    const close = () => rivals().filter((k) => { const d = k.dist - race().player.dist; return d > 4 && d < 26; });
+    await until(() => close().length >= 3, 60 * 30);
+    const ahead0 = close().sort((a, b) => b.dist - a.dist)[0];
+    dc.give("shock");
+    const at = frames(0.5);
+    await film("i_shock", bars(2), (f) => {
+      lead(ahead0 ?? race().player, 9, -1.5, 2.6, [race().player.x, race().player.y]);
+      const t = (f - at) / fps; // the game's own flash: white, gone in a fifth of a second
+      if (t >= 0 && t < 0.22) g.scr.dimRect(0, 0, W, H, WHITE, Math.min(0.85, (0.22 - t) * 4));
+      g.scr.present();
+    }, { extra: (f) => (f === at ? ["item"] : []), dress: (f) => label("SHOCK", f, 6) });
+  }
+  // 13. A drift: low beside the kart, sideways through a bend, the sparks charging a mini-turbo.
+  {
+    await until(() => race().player.drifting && race().player.boostLevel >= 1, 60 * 60);
+    const k = race().player, side = k.driftDir || 1;
+    await film("w_drift", bars(1), () => track(race().player, -side, 5, 1.0), { dress: (f) => label("DRIFT", f, 4, 36) });
+  }
 
   // ================================================================ Tokyo Nights
   await start(o.loops[9], THEME.tokyo, 7);
-  // 14. Up on the expressway: alongside the pack on the deck, its lamps over the road, the city's
-  //     lit towers and the lattice tower behind.
+  // 14. Up on the expressway: alongside the pack on the deck, the city's lit towers behind.
   // (high up: lower down, the shot opened on the side of the deck's ramp)
   await until(() => race().phase === "racing" && climb(race().player)?.style === "expressway" && race().player.elev > 4.5 &&
                     race().player.slope >= 0, 60 * 150);
   await film("e_express", bars(2), (f, n) => track(race().player, 1, 11 + 3 * (f / n), 3.6 + 1.2 * (f / n)), {
     dress: (f) => caption("TOKYO NIGHTS", f),
   });
-  // 15. The police on the player's tail: out of an alley and after them, lights flashing; filmed
-  //     from ahead, looking back down the street at the chase.
+  // 15. The police on the player's tail: filmed from ahead, looking back down the street.
   {
     const cop = () => race().obstacles.list.find((q) => q.kind === "police" && (q.state === POLICE_CHASE || q.state === POLICE_LUNGE));
-    const behind = () => {
+    const tail = () => {
       const c = cop();
       if (!c) return -1;
       const t = race().track;
       return (t.s[race().player.idx] - c.s + t.length) % t.length;
     };
-    // (right on the player's tail: it gains on them only slowly now, and filmed from 26 m back it
-    // was a small car far down the street)
-    await until(() => { const d = behind(); return d > 5 && d < 13; }, 60 * 240);
+    await until(() => { const d = tail(); return d > 5 && d < 13; }, 60 * 240);
     if (cop()) {
-      await film("e_police", bars(2), () => {
+      await film("e_police", bars(1), () => {
         const k = race().player, hd = steady(k), c = Math.cos(hd), sn = Math.sin(hd);
         dc.shot({ x: k.x + c * 9, y: k.y + sn * 9, heading: hd + Math.PI, height: 2.3 + k.ground, focal: 250, fx: 0, clear: 2 });
       });
     }
   }
+  // 16. An overtake: a turbo, and the player pulls out from behind the rival in front and past it,
+  //     filmed from up the road, the pair coming at the camera.
+  {
+    await until(() => race().phase === "racing" && !!inFront(4, 10, 2.5) && race().player.v > 18, 60 * 60);
+    const rival = inFront(4, 10, 2.5);
+    if (rival) {
+      dc.give("turbo");
+      await film("t_pass", bars(2), () => {
+        const p = race().player;
+        lead(rival, 11, 2.2, 1.3, [(p.x + rival.x) / 2, (p.y + rival.y) / 2]);
+      }, { extra: (f) => (f === frames(0.35) ? ["item"] : []), dress: (f) => label("TURBO", f, 8) });
+    }
+  }
 
   // ================================================================ Construction Zone
   await start(o.loops[7], THEME.construction, 7);
-  // 16. High on a crane's girder: alongside the pack on the steel deck, the crane beside it and
-  //     the city going up behind.
+  // 17. High on a crane's girder: alongside the pack on the steel deck, the city going up behind.
   // (high up: lower down, the shot opened on the girder's lattice)
   await until(() => race().phase === "racing" && climb(race().player)?.style === "girder" && race().player.elev > 4 &&
                     race().player.slope > 0, 60 * 150);
   await film("k_girder", bars(2), (f, n) => track(race().player, 1, 13 + 4 * (f / n), 4.6 + 1.6 * (f / n)), {
     dress: (f) => caption("CONSTRUCTION ZONE", f),
   });
-  // 17. The wrecking ball: swinging across the road under its crane's jib as the player comes up to it.
+  // 18. The wrecking ball, swinging across the road under its crane's jib.
   {
     const ball = () => race().obstacles.list.find((q) => {
       if (q.kind !== "wrecker") return false;
       const t = race().track, d = (q.s - t.s[race().player.idx] + t.length) % t.length;
-      return d > 34 && d < 46;
+      return d > 26 && d < 36;
     });
     await until(() => !!ball(), 60 * 200);
-    if (ball()) await film("k_wreck", bars(2), () => behind(race().player, 7.5, 4.2));
+    if (ball()) await film("k_wreck", bars(1), () => behind(race().player, 7.5, 4.2));
+  }
+  // 19. A bomb: lobbed at the kart in front, filmed from beside it as it lands and the blast
+  //     catches everyone near.
+  {
+    await ready(o.loops[7], THEME.construction, 50);
+    const next = () => race().karts.find((k) => k.place === race().player.place - 1);
+    const gap = () => { const a = next(); return a ? a.dist - race().player.dist : -1; };
+    await until(() => race().player.place > 1 && gap() > 8 && gap() < 18, 60 * 40);
+    const target = next();
+    dc.give("bomb");
+    await film("i_bomb", bars(2), () => (target ? track(target, -1, 10, 3.2) : dc.shot({ clear: 2.5 })), {
+      extra: (f) => (f === frames(0.2) || f === frames(0.6) ? ["item"] : []), dress: (f) => label("BOMB", f, 8),
+    });
   }
 
   // ================================================================ Moon Base
   await start(o.loops[8], THEME.moon, 7);
-  // 18. A jump in the low gravity, the Earth hanging in the black sky behind it: the camera set
-  //     where the Earth is behind the flight (side on to it, or looking back at the lip from where
-  //     the karts land, or along it from behind the lip), the flight in slow motion. (A float off
-  //     a crater's rim was hardly a hop once the moon's gravity was raised to six tenths.)
+  // 20. A jump in the low gravity, the Earth in the black sky behind it: the camera set where the
+  //     Earth is behind the flight, the flight (and a trick) in slow motion.
   {
     const at = dc.game.sky?.earthAt ?? -1;
     const toEarth = at >= 0 ? -((at - FRAME_W / 2) * Math.PI * 2) / PAN : 0;
@@ -810,39 +909,71 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       else [x, y] = beside(along(lip, -16), 3);
       await until(() => race().phase === "racing" && ahead(race().player, lip) / Math.max(race().player.v, 10) < 0.55 &&
                         ahead(race().player, lip) < 40, 60 * 120);
+      let hopped = false;
       await film("l_jump", bars(2), () => {
         const k = race().player;
         if (side) dc.shot({ x, y, heading: toEarth, height: ground + 1.4, focal: 250, fx: 0, clear: 8, horizon: 100 });
         else stand(x, y, ground + 1.3, [k.x, k.y], 250, 100, 6);
-      }, { slow: () => race().player.air, dress: (f) => caption("MOON BASE", f) });
+      }, {
+        slow: () => (race().player.air ? 2 : 1),
+        extra: () => {
+          if (!hopped && race().player.rampU > 0.9) {
+            hopped = true;
+            return ["hop"];
+          }
+          return [];
+        },
+        dress: (f) => caption("MOON BASE", f),
+      });
     }
   }
+  // 21. A rocket: the kart flies itself up the road, past the pack, filmed alongside.
+  {
+    await ready(o.loops[8], THEME.moon, 30);
+    dc.give("rocket");
+    await film("i_rocket", bars(1), () => track(race().player, 1, 9, 2.0), {
+      extra: (f) => (f === 1 ? ["item"] : []), dress: (f) => label("ROCKET", f, 4, 36),
+    });
+  }
+  // 22. Off the road into a chasm, and out again under the rescue drone.
+  await rescue("l_chasm", "chasm", bars(2));
 
   // ================================================================ Volcano Core
   await start(o.loops[6], THEME.volcano, 7);
-  // 20. A geyser: its vent glows and bubbles, and it blows a column of lava and fire across the road
-  //     as the player comes up to it.
+  // 23. A geyser blowing a column of lava and fire across the road as the player comes up to it.
   {
     const vent = () => race().obstacles.list.find((q) => {
       if (q.kind !== "geyser" || q.state !== GEYSER_QUIET || q.t < q.wait - 0.5) return false;
       const t = race().track, d = (q.s - t.s[race().player.idx] + t.length) % t.length;
-      return d > 40 && d < 75;
+      return d > 26 && d < 50;
     });
     await until(() => race().phase === "racing" && !!vent(), 60 * 200);
     if (vent()) {
-      await film("x_geyser", bars(2), () => behind(race().player, 7.5, 3.6), {
-        dress: (f) => caption("VOLCANO CORE", f),
-      });
+      await film("x_geyser", bars(1), () => behind(race().player, 7.5, 3.6), { dress: (f) => caption("VOLCANO CORE", f, 2, 44) });
     }
   }
-  // 21. Into the lava: the player turns off a straight, across the rock bank and in; the view goes
+  // 24. A comet: fired from the back, it flies up the road to the leader, hangs over them, and
+  //     comes down; filmed beside the leader as it arrives.
+  {
+    await ready(o.loops[6], THEME.volcano, 120);
+    await until(() => race().player.place >= 4, 60 * 40);
+    dc.give("comet");
+    advance(per, ["item"]);
+    const comet = () => race().items.comets[0];
+    await until(() => !comet() || comet().phase !== "fly" ||
+                      Math.hypot(comet().x - race().standings[0].x, comet().y - race().standings[0].y) < 60, 60 * 20);
+    await film("i_comet", bars(2), () => {
+      const leader = comet()?.target ?? race().standings[0];
+      track(leader, -1, 9, 3.4);
+    }, { dress: (f) => label("COMET", f, 4) });
+  }
+  // 25. Into the lava: the player steers off the rock bank (off the camera) and in; the view goes
   //     dark red, and the rescue drone lowers the kart back onto the road and lets it go.
   {
+    await start(o.loops[6], THEME.volcano, 7);
     const t = race().track;
     const fwd = (m: number) => t.wrap(race().player.idx + Math.round(m / 0.6));
     const straight = () => [0, 15, 30, 45].every((m) => Math.abs(t.curvature(fwd(m))) < 1 / 160);
-    // no jump or climb coming up, and nothing solid on the bank where it will leave the road (a
-    // rock would stop it short of the lava)
     const noRamp = () => race().features.ramps.every((q) => (t.s[q.start] - t.s[race().player.idx] + t.length) % t.length > 90);
     const flat = () => [0, 10, 20, 30, 40, 50].every((m) => t.elev[fwd(m)] < 0.05);
     const clear = () => [10, 14, 18, 22, 26, 30, 34, 38].every((m) => {
@@ -852,20 +983,18 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
         return !race().scenery.items.some((it) => it.art.solid && Math.hypot(it.x - x, it.y - y) < 3.2);
       });
     });
-    await until(() => straight() && noRamp() && flat() && clear() && race().player.v > 18, 60 * 90);
-    const side = -1; // off to the right (positive offsets are to the left of the road)
+    await until(() => race().phase === "racing" && straight() && noRamp() && flat() && clear() && race().player.v > 18, 60 * 90);
+    // (off the road onto the rock, off the camera)
+    for (let guard = 0; Math.abs(race().player.offset) < HALF_WIDTH + 1.5 && guard < 120; guard++) dc.step(1, ["gas", "right"], false);
     begin("x_rescue");
-    for (let f = 0, n = bars(3); f < n; f++) {
+    for (let f = 0, n = bars(2); f < n; f++) {
       const k = race().player;
-      // steer off until well onto the rock bank, then straight on into the lava
-      const steer = k.fall < 0 && Math.abs(k.offset) < 8 ? (side > 0 ? ["left"] : ["right"]) : [];
+      const steer = k.fall < 0 && Math.abs(k.offset) < 8 ? ["right"] : [];
       dc.step(per, k.fall < 0 ? ["gas", ...steer] : [], false);
       if (k.fall < FALL_SWAP) {
-        // the driver's view, from a little higher and further back: off the road, over the rock and in
         const h = dc.game.cam.heading;
         dc.shot({ x: k.x - Math.cos(h) * 9, y: k.y - Math.sin(h) * 9, height: 4.1 + k.ground, clear: 2.5 });
       } else {
-        // beside where the drone sets it down (high enough to keep the drone in the picture)
         const [tx, ty] = t.tangent(t.wrap(k.idx));
         const x = k.dropX + tx * 4 - ty * 9.5, y = k.dropY + ty * 4 + tx * 9.5;
         dc.shot({ x, y, heading: Math.atan2(k.dropY - y, k.dropX - x), height: 3.6 + k.dropZ, focal: 250, fx: 0, clear: 3 });
@@ -874,9 +1003,8 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     }
   }
 
-  // ================================================================ the garage, the items, the Grand Prix
-  // 22. Building a kart: bodies, wheels, a spoiler, an exhaust and a paint job, on the turntable, a
-  //     part on every half bar.
+  // ================================================================ the garage, the Grand Prix
+  // 26. Building a kart: a part on every half bar, on the snare.
   {
     dc.go("garage");
     const menu = g.garage.menu;
@@ -891,47 +1019,12 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       }
       g.time += 1 / fps;
       g.render();
-      await save("g_garage");
+      // (between the screen's name and its menu, the one clear strip on it)
+      await save("g_garage", () => faded(swell(f, 4, n - 2, 10), () =>
+        text("BUILD YOUR KART", 142, 4, { color: HOT, outline: INK, align: "center" })));
     }
   }
-  // 23. A rocket from mid-pack (it burns out once it has passed two karts): the kart flies itself
-  //     up the road, scattering whoever is in the way.
-  await ready(o.loops[0], THEME.mesa, 18);
-  dc.give("rocket");
-  await film("i_rocket", bars(1), () => dc.shot({ clear: 2.5 }), {
-    extra: (f) => (f === 1 ? ["item"] : []), dress: (f) => banner("22 ITEMS", f, 2, bars(4) - 4),
-  });
-  // 24. A shock under the sea: a white flash, and everyone else spins, shrinks and slows.
-  {
-    await ready(o.loops[3], THEME.reef, 30);
-    const close = () => rivals().filter((k) => { const d = k.dist - race().player.dist; return d > 4 && d < 28; }).length;
-    await until(() => close() >= 3, 60 * 30);
-    dc.give("shock");
-    const at = frames(0.25), from = bars(1);
-    await film("i_shock", bars(1), (f) => {
-      behind(race().player, 7, 4.1);
-      const t = (f - at) / fps; // the game's own flash: white, gone in a fifth of a second
-      if (t >= 0 && t < 0.22) g.scr.dimRect(0, 0, W, H, WHITE, Math.min(0.85, (0.22 - t) * 4));
-      g.scr.present();
-    }, { extra: (f) => (f === at ? ["item"] : []), dress: (f) => banner("22 ITEMS", from + f, 2, bars(4) - 4) });
-  }
-  // 25. A comet: fired from the back, it flies up the road to the leader, hangs over them, and
-  //     comes down; filmed beside the leader as it arrives.
-  {
-    await ready(o.loops[2], THEME.mesa, 120);
-    await until(() => race().player.place >= 4, 60 * 40);
-    dc.give("comet");
-    advance(per, ["item"]);
-    const comet = () => race().items.comets[0];
-    await until(() => !comet() || comet().phase !== "fly" ||
-                      Math.hypot(comet().x - race().standings[0].x, comet().y - race().standings[0].y) < 60, 60 * 20);
-    const from = bars(2);
-    await film("i_comet", bars(2), () => {
-      const lead = comet()?.target ?? race().standings[0];
-      track(lead, -1, 9, 3.4);
-    }, { dress: (f) => banner("22 ITEMS", from + f, 2, bars(4) - 4) });
-  }
-  // 26. The award ceremony: the top three on the podium, fireworks and confetti.
+  // 27. The award ceremony: the top three on the podium, fireworks and confetti.
   {
     dc.cup(true, 1);
     for (let i = 0; i < Math.round(60 * 5.6); i++) g.ceremony?.update(1 / 60, g.sound);
@@ -945,22 +1038,64 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     }
   }
 
-  // ================================================================ the end card
-  // 27. The name again, on the dreamed circuit, and where to play.
+  // ================================================================ the end: the name, in slow motion
+  // 28. Off Dream Valley's jump once more, the pack in the air, eight times slower than life: the
+  //     name over it, and where to play; then the whole picture breaks into ever bigger pixels
+  //     until it is gone.
   {
+    await start(o.opening, THEME.valley, 7);
+    const p = race().player;
+    const ramp = race().features.ramps.map((q) => q.start).sort((a, b) => ahead(p, a) - ahead(p, b))[0];
     cue.end = trailer.frames;
-    const n = Math.round(fps * TITLE_BAR * 2);
-    begin("t_end", false);
-    for (let f = 0; f < n; f++) {
-      backdrop();
-      logo(1, 1);
-      faded(smooth(clamp01((f - 8) / 12)), () => {
-        text("PLAY FREE IN YOUR BROWSER", W / 2, 152, { color: WHITE, outline: INK, align: "center" });
-        text("nilaypilaydesai.github.io/dreamcircuit", W / 2, 166, { color: HOT, outline: INK, align: "center" });
+    const n = Math.round(fps * TITLE_BAR * 3);
+    if (ramp !== undefined) {
+      const lip = along(ramp, 11);
+      await until(() => race().phase === "racing" && ahead(race().player, lip) / Math.max(race().player.v, 10) < 0.35 &&
+                        ahead(race().player, lip) < 40, 60 * 60);
+      const [x, y] = beside(along(lip, 30), 6.5), z = race().track.elev[lip] ?? 0;
+      let hopped = false;
+      await film("t_end", n, () => {
+        const k = race().player;
+        stand(x, y, 0.9 + z, [k.x, k.y], 250, 120, 3);
+      }, {
+        hero: false,
+        slow: () => 8,
+        extra: () => {
+          if (!hopped && race().player.rampU > 0.9) {
+            hopped = true;
+            return ["hop"];
+          }
+          return [];
+        },
+        dress: (f) => {
+          const shade = smooth(clamp01((f - 6) / 30));
+          g.scr.dimRect(0, 0, W, H, SKY_TOP, 0.28 * shade); // (the picture sinks a little behind the name)
+          faded(smooth(clamp01((f - 10) / 16)), () => {
+            text("DREAM", W / 2, 22, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
+            text("CIRCUIT", W / 2, 66, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
+          });
+          faded(smooth(clamp01((f - 30) / 14)), () =>
+            text("THE KART RACER AN AI DREAMS AS YOU DRIVE", W / 2, 114, { color: WHITE, outline: INK, align: "center" }));
+          faded(smooth(clamp01((f - 46) / 14)), () => {
+            text("PLAY FREE IN YOUR BROWSER", W / 2, H - 34, { color: WHITE, outline: INK, align: "center" });
+            text("nilaypilaydesai.github.io/dreamcircuit", W / 2, H - 21, { color: HOT, outline: INK, align: "center" });
+          });
+          // the last second and a half: the whole screen breaks up, as the classics' mosaic did,
+          // into ever bigger blocks, and goes dark
+          const u = clamp01((f - (n - 46)) / 40);
+          if (u > 0) {
+            mosaic(Math.max(1, Math.round(2 ** (u * 6.5))));
+            black(smooth(clamp01((u - 0.45) / 0.55)));
+          }
+        },
       });
-      black(Math.max(1 - f / 12, (f - (n - 16)) / 16));
+    }
+    // and a moment of black
+    begin("t_black", false);
+    for (let f = 0; f < 10; f++) {
+      g.scr.dimRect(0, 0, W, H, rgb(0, 0, 0), 1);
       g.scr.present();
-      await save("t_end");
+      await save("t_black");
     }
   }
 

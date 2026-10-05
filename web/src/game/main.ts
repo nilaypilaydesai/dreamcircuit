@@ -1242,12 +1242,14 @@ class Game {
   private debugPilot: RivalDriver | null = null;
 
   /** Dev only: advance n fixed steps with the given drive keys held, then render once. */
-  debugStep(n: number, keys: string[], draw = true): void {
+  debugStep(n: number, keys: string[], draw = true, dt = 1 / 60): void {
+    // (``dt``: each step's length; shorter than a frame, the film tool's slow motion. "hop" hops,
+    // for a trick, without the drift)
     const held = new Set(keys);
     const c = {
       steer: (held.has("left") ? 1 : 0) - (held.has("right") ? 1 : 0),
-      throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"), hop: held.has("drift"),
-      item: held.has("item"), back: held.has("back"),
+      throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"),
+      hop: held.has("drift") || held.has("hop"), item: held.has("item"), back: held.has("back"),
     };
     const original = this.input.drive.bind(this.input);
     const r = this.race;
@@ -1256,7 +1258,7 @@ class Game {
       this.input.drive = () => {
         const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items, [], r.features.pads);
         // ("noitems": the autopilot drives but leaves the items to the script)
-        return { ...a, hop: !!a.hop, item: held.has("item") || (!held.has("noitems") && !!a.item),
+        return { ...a, hop: !!a.hop || held.has("hop"), item: held.has("item") || (!held.has("noitems") && !!a.item),
                  back: held.has("back") || (!held.has("noitems") && !!a.back) };
       };
     } else {
@@ -1265,8 +1267,8 @@ class Game {
     if (this.autoPaused) this.go("race"); // the harness hides the tab; that is not a pause
     this.handleInput(); // queued menu presses (rAF, which normally handles them, may be paused)
     for (let i = 0; i < n; i++) {
-      this.update(1 / 60);
-      this.time += 1 / 60;
+      this.update(dt);
+      this.time += dt;
     }
     this.input.drive = original;
     if (draw) this.render();
@@ -1459,7 +1461,7 @@ void game.boot();
 if (import.meta.env.DEV) {
   // test hook: drive the simulation deterministically even when the tab is not painting
   (window as unknown as { __dc: unknown }).__dc = {
-    step: (n: number, keys: string[] = [], draw = true) => game.debugStep(n, keys, draw),
+    step: (n: number, keys: string[] = [], draw = true, dt = 1 / 60) => game.debugStep(n, keys, draw, dt),
     shot: (cam: Partial<Camera>) => game.debugShot(cam),
     game,
     state: () => game.debugState(),
