@@ -44,7 +44,7 @@ export interface Tunnel {
 }
 
 /** What a race builds: tunnels (Tokyo, the building site), the jump rule (null: no jumps) and the pad rule;
- * ``gravity``, relative to the usual, sets how far a jump flies (on the moon, three times as far). */
+ * ``gravity``, relative to the usual, sets how far a jump flies (on the moon, half again as far). */
 export interface FeatureRules { tunnels: boolean; ramps: RampRule | null; pads: PadRule; gravity: number; tube: boolean }
 
 /** Where a top-up may build: ``free(s, len)`` says whether arc lengths [s, s + len) are clear of

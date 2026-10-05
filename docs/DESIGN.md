@@ -324,7 +324,7 @@ or the start), and boost pads at corner exits (170 m apart). A ramp is an 11 m s
 m high at the lip; a fast kart leaves it on a ballistic arc (gravity 26 m/s^2, arcade-short), with
 a third of its steering in the air. The straight a ramp needs is long enough for the flight: 45 m
 from the foot to past the landing at home, and as much longer as gravity is weaker on the moon
-(124 m). A hop (the drift button) from 0.24 s before the lip to 0.18 s
+(68 m). A hop (the drift button) from 0.24 s before the lip to 0.18 s
 after it is a trick, and within 0.085 s of the lip a perfect one: the kart spins in the air and
 lands into a boost (0.8 s, or 1.35 s for a perfect trick). Pads give a 1 s boost; every boost
 widens the field of view and draws speed lines. Rivals try tricks too, more often in the faster
@@ -450,17 +450,22 @@ end; the view darkens less than under a building in Tokyo, as the frame is open 
 churned dirt with the tread of the machines' tracks, the scenery is tower cranes, buildings' steel
 skeletons, mixers, diggers, stacks of pipes and girders, barriers and drums, and the skyline is a
 city of towers with half-built frames and tower cranes in front of it. Moon Base has weak gravity
-(three tenths of the usual), for the karts, their jumps and the items alike, and the game's crest
+(six tenths of the usual), for the karts, their jumps and the items alike, and the game's crest
 rule does the rest: a kart leaves the road where its speed squared times the road's bend over the
-top is more than gravity can hold, which on a crater's rim takes 15 to 20 m/s on the moon and
+top is more than gravity can hold, which on a crater's rim takes 21 to 28 m/s on the moon and
 27 m/s or more at home, where a Pro kart tops out at 28 (the road's slope and bend are measured over
 2.4 m either side, so the steps between road points do not set karts flying). The ground is regolith pocked with a thousand craters, each a
 bowl lit on one side inside a bright rim of thrown-out dust; the drivers wear helmets; the scenery
 is landers, dishes, habitats, boulders and a rover; and the sky is black, with stars, grey ridges
-and the Earth, its seas, land, ice and clouds lit from one side and its night side faint. A jump
-on the moon flies three times as far (a Pro kart 85 m, a boosted Legend 150 m), which on a lap of the
-usual size was a ninth of the lap in one leap and often past the end of the straight, so the moon
-draws every circuit 1.6 times the size (laps of 1.3 to 2 km). The designer dreams, and every check
+and the Earth, its seas, land, ice and clouds lit from one side and its night side faint. At three
+tenths of the usual gravity a jump on the moon flew three times as far (a Pro kart 85 m, a boosted
+Legend 150 m): on a lap of the usual size a ninth of the lap in one leap and often past the end of
+the straight, so the moon came to draw every circuit 1.6 times the size (laps of 1.3 to 2 km). Even
+so a kart flat out skipped whole stretches of road: in ten minutes of flat-out laps on four of its
+circuits a quarter of the distance went by in the air, the longest leaps 118 to 142 m. At six
+tenths a jump flies half again as far as at home (a Pro kart's longest 47 m against 32, a boosted
+Legend's 73 m against 46), and a fast kart still floats off a crater's rim more than four times as
+often as it would at home; the circuits are still drawn 1.6 times the size. The designer dreams, and every check
 runs, at its own size: only the road laid out in the world is scaled, and a map is kept at the usual
 size and raced at the scale of whichever world it is raced in. The ground texture grows to hold the
 biggest lap the checks allow (3920 texels across instead of 2560, its craters and scenery as thick

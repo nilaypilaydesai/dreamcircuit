@@ -170,8 +170,9 @@ export const THEMES: Theme[] = [
   },
   {
     // the moon: low gravity (a fast kart floats over every crater's rim, and a jump carries it
-    // three times as far, so its circuits are drawn 1.6 times the size), the Earth up in a black
-    // sky, a helmet on every driver
+    // half again as far: at three tenths of the usual, a jump at top speed flew 120 to 140 m and
+    // skipped whole stretches of road), its circuits drawn 1.6 times the size, the Earth up in a
+    // black sky, a helmet on every driver
     id: "moon", name: "MOON BASE",
     blurb: "LOW GRAVITY: FLOAT OVER THE CRATERS, THE EARTH OVERHEAD",
     skyTop: hex("#000000"), skyHorizon: hex("#0b0d18"), fog: hex("#1a1c26"), sun: 0, stars: true,
@@ -181,7 +182,7 @@ export const THEMES: Theme[] = [
     edge: hex("#7fe7ff"), kerb: [hex("#e8ecf2"), hex("#3a5bd8")], barrier: hex("#9aa0aa"),
     near: ["boulder", "boulder", "dish", "habitat", "boulder", "lander"],
     far: ["boulder", "lander", "dish", "habitat", "rover", "boulder", "boulder"],
-    gravity: 0.3, scale: 1.6, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
+    gravity: 0.6, scale: 1.6, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
     wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"], hazard: "chasm", obstacle: "meteor",
     banks: { style: "regolith", len: [40, 90], h: [2.5, 5], gap: [140, 280], both: 0.3 },
   },

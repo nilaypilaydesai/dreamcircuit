@@ -1423,7 +1423,7 @@ describe("the grand prix", () => {
     expect(ids).toEqual(["valley", "tunnel", "mesa", "reef", "tokyo", "volcano", "construction", "moon"]);
     expect(THEMES.find((t) => t.id === "reef")!.underwater).toBe(true);
     expect(THEMES.find((t) => t.id === "volcano")!.volcano).toBe(true);
-    expect(THEMES.find((t) => t.id === "moon")!.gravity).toBeLessThan(0.5);
+    expect(THEMES.find((t) => t.id === "moon")!.gravity).toBeLessThan(0.7);
   });
 });
 
@@ -1939,12 +1939,42 @@ describe("the moon", () => {
   it("has low gravity: karts float off the tops of crater rims, and still finish", async () => {
     const low = await floating(moon);
     const earth = await floating({ ...moon, gravity: 1 });
-    expect(low.gravity).toBeCloseTo(26 * 0.3, 5);
+    expect(low.gravity).toBeCloseTo(26 * 0.6, 5);
     expect(low.craters).toBeGreaterThan(3);
-    expect(low.launches).toBeGreaterThan(2);
-    expect(low.frames).toBeGreaterThan(Math.max(30, 3.5 * earth.frames)); // the same rims, hardly a hop at home
+    expect(low.launches).toBeGreaterThan(Math.max(10, 3 * earth.launches)); // the same rims, far fewer hops at home
+    expect(low.frames).toBeGreaterThan(1.6 * earth.frames);
     expect(low.finished).toBe(true);
   });
+
+  it("never throws a kart far past the road a jump has at home, however fast", async () => {
+    // (at three tenths of the usual gravity, a jump at top speed flew 120 to 140 m, three times as
+    // far as at home, and skipped whole stretches of the road)
+    const longest = async (gravity: number) => {
+      let most = 0;
+      for (const pts of [calm(), figure8()]) {
+        const race = new Race({ rivals: 0, difficulty: "legend", theme: { ...moon, gravity }, seed: 3, replay: pts }, null, () => {});
+        await race.prepare();
+        race.phase = "racing";
+        const p = race.player, t = race.track, pilot = new RivalDriver(new Rand(9), p, 0);
+        let from = 0;
+        for (let i = 0; i < 60 * 120 && !p.finished; i++) {
+          p.boostTime = Math.max(p.boostTime, 0.5); // (flat out, all the way round)
+          p.coins = 10;
+          const was = p.air;
+          race.update(1 / 60, pilot.act(1 / 60, t, race.cls, p, race.karts, race.items, race.obstacles.dangers(), race.features.pads));
+          race.events = [];
+          if (!was && p.air) from = t.s[p.idx];
+          if (was && !p.air) most = Math.max(most, (t.s[p.idx] - from + t.length) % t.length);
+        }
+      }
+      return most;
+    };
+    const away = await longest(moon.gravity!), home = await longest(1);
+    expect(home).toBeGreaterThan(30);
+    expect(away).toBeGreaterThan(1.3 * home); // (it still flies further)
+    expect(away).toBeLessThan(1.8 * home);
+    expect(away).toBeLessThan(80);
+  }, 60000);
 
   it("puts every driver in a helmet", () => {
     expect(moon.helmets).toBe(true);
@@ -1966,9 +1996,9 @@ describe("the moon", () => {
     }
   });
 
-  it("gives a jump room to land: three times the straight, as a kart flies three times as far", () => {
+  it("gives a jump room to land: half again the straight, as a kart flies half again as far", () => {
     const home = new Features(), away = new Features({ gravity: moon.gravity });
-    expect(away.flight).toBeGreaterThan(2.5 * home.flight);
+    expect(away.flight).toBeGreaterThan(1.4 * home.flight);
     for (const pts of [twisty(), calm(), figure8()]) {
       const race = new Race({ rivals: 0, difficulty: "pro", theme: moon, seed: 4, replay: pts }, null, () => {});
       const t = race.track;
