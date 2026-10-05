@@ -10,6 +10,13 @@ import type { Theme } from "../themes";
 
 const PAN = 1536; // panorama width in px for a full turn
 
+/** A fixed pseudo-random number in [0, 1) for a pixel of sky (column, row). */
+function hash(a: number, b: number): number {
+  let v = Math.imul(a, 374761393) + Math.imul(b, 668265263);
+  v = Math.imul(v ^ (v >>> 13), 1274126177);
+  return ((v ^ (v >>> 16)) >>> 0) / 4294967296;
+}
+
 export class Sky {
   private readonly far: Uint32Array;
   private readonly near: Uint32Array;
@@ -353,8 +360,21 @@ export class Sky {
     if (view) {
       const centre = view.fullW / 2;
       for (let y = 0; y <= Math.min(view.horizon, H - 1); y++) {
-        const sy = Math.max(0, Math.min(h - 1, Math.round(this.horizon - (view.horizon - y) * view.ratio)));
+        const at = Math.round(this.horizon - (view.horizon - y) * view.ratio);
         const row = y * W;
+        if (at < 0) {
+          // over the top of the panorama (a film's camera, tipped up, sees it): more of the sky's
+          // top colour, starry as the sky is (the top row stretched up drew each star in it as a
+          // streak down from the top of the screen). As thick with stars as the panorama: 220 over
+          // its upper 70%, about 0.27% of its pixels, a fifth of them white
+          for (let x = 0; x < W; x++) {
+            const col = ((Math.round(centre + (x - W / 2) * view.ratio + of) % PAN) + PAN) % PAN;
+            const star = this.theme.stars ? hash(col, at) : 1;
+            buf[row + x] = star < 0.0027 ? (star < 0.00054 ? 0xffffffff : 0xffc8b8ff) : this.theme.skyTop;
+          }
+          continue;
+        }
+        const sy = Math.min(h - 1, at);
         for (let x = 0; x < W; x++) {
           const col = centre + (x - W / 2) * view.ratio;
           const n = this.near[sy * PAN + ((((Math.round(col + on)) % PAN) + PAN) % PAN)];

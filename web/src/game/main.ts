@@ -970,7 +970,10 @@ class Game {
       ? this.tubeCamera(race, flat, this.tubeChase.get(mirror ? this.cam : flat), !!mirror) : null;
     const cam = inTube?.cam ?? flat;
     if (inTube) scr.clear(race.setup.theme.fog);
-    else sky.draw(scr, cam.heading, mirror ? { horizon: cam.horizon, ratio: mirror.ratio, fullW: mirror.fullW } : undefined);
+    // (a camera with a horizon of its own, as the film's are, gets the sky down to it: drawn only to
+    // the sky's own horizon, the rows between were left as the frame before had them)
+    else if (mirror) sky.draw(scr, cam.heading, { horizon: cam.horizon, ratio: mirror.ratio, fullW: mirror.fullW });
+    else sky.draw(scr, cam.heading, cam.horizon !== sky.horizon ? { horizon: cam.horizon, ratio: 1, fullW: W } : undefined);
     let mist: ((x: number, y: number) => number) | undefined;
     if (!t.locked && t.count > 0) {
       // the frontier of the dream: road beyond this point has not been imagined yet
@@ -1242,12 +1245,15 @@ class Game {
   private debugPilot: RivalDriver | null = null;
 
   /** Dev only: advance n fixed steps with the given drive keys held, then render once. */
-  debugStep(n: number, keys: string[], draw = true): void {
+  debugStep(n: number, keys: string[], draw = true, dt = 1 / 60): void {
+    // (``dt``: each step's length; shorter than a frame, the film tool's slow motion. "hop" hops,
+    // for a trick, without the drift; with "auto", "flat" keeps the gas down and the brake off, as
+    // the autopilot, holding its own pace, braked a turbo's speed away)
     const held = new Set(keys);
     const c = {
       steer: (held.has("left") ? 1 : 0) - (held.has("right") ? 1 : 0),
-      throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"), hop: held.has("drift"),
-      item: held.has("item"), back: held.has("back"),
+      throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"),
+      hop: held.has("drift") || held.has("hop"), item: held.has("item"), back: held.has("back"),
     };
     const original = this.input.drive.bind(this.input);
     const r = this.race;
@@ -1256,7 +1262,9 @@ class Game {
       this.input.drive = () => {
         const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items, [], r.features.pads);
         // ("noitems": the autopilot drives but leaves the items to the script)
-        return { ...a, hop: !!a.hop, item: held.has("item") || (!held.has("noitems") && !!a.item),
+        const flat = held.has("flat");
+        return { ...a, throttle: flat ? 1 : a.throttle, brake: flat ? 0 : a.brake,
+                 hop: !!a.hop || held.has("hop"), item: held.has("item") || (!held.has("noitems") && !!a.item),
                  back: held.has("back") || (!held.has("noitems") && !!a.back) };
       };
     } else {
@@ -1265,8 +1273,8 @@ class Game {
     if (this.autoPaused) this.go("race"); // the harness hides the tab; that is not a pause
     this.handleInput(); // queued menu presses (rAF, which normally handles them, may be paused)
     for (let i = 0; i < n; i++) {
-      this.update(1 / 60);
-      this.time += 1 / 60;
+      this.update(dt);
+      this.time += dt;
     }
     this.input.drive = original;
     if (draw) this.render();
@@ -1288,6 +1296,7 @@ class Game {
   /** Dev only: race a given circuit (game meters, x0 y0 x1 y1 ...) without the designer. */
   debugRace(points: number[], theme = 0, rivals = 5, type: TrackTypeId = "classic"): void {
     this.cup = null;
+    this.ceremony = null; // (the film goes from the podium to a race: the winners stood on in it)
     this.surprised = false;
     void this.startRace(undefined, {
       rivals, difficulty: "pro", theme: THEMES[theme], seed: 1234, replay: Float64Array.from(points), layout: "any",
@@ -1459,7 +1468,7 @@ void game.boot();
 if (import.meta.env.DEV) {
   // test hook: drive the simulation deterministically even when the tab is not painting
   (window as unknown as { __dc: unknown }).__dc = {
-    step: (n: number, keys: string[] = [], draw = true) => game.debugStep(n, keys, draw),
+    step: (n: number, keys: string[] = [], draw = true, dt = 1 / 60) => game.debugStep(n, keys, draw, dt),
     shot: (cam: Partial<Camera>) => game.debugShot(cam),
     game,
     state: () => game.debugState(),
