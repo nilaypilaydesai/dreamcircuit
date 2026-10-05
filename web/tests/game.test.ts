@@ -3086,7 +3086,10 @@ describe("the cuttings", () => {
           // nothing stands on the wall's land, and nothing can be fallen into there
           const land = BANK_AT + BANK_LEAN[b.style] * b.h + 4;
           for (const it of race.scenery.items) {
-            const i = t.nearest(it.x, it.y, a), off = t.offset(it.x, it.y, i);
+            // (the road point nearest it searched for the whole length of the wall: within the usual
+            // 40 points of the wall's start, a boulder 4 m past the far end of a 44 m wall was taken
+            // for one standing on its land)
+            const i = t.nearest(it.x, it.y, a, Math.ceil(b.len / 0.5) + 60), off = t.offset(it.x, it.y, i);
             const on = Math.sign(off) === b.side && t.s[i] > b.s0 + 2 && t.s[i] < b.s0 + b.len - 2;
             if (on) expect(Math.abs(off) < BANK_AT - 1 || Math.abs(off) > land, theme.id).toBe(true);
           }

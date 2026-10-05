@@ -654,6 +654,13 @@ export class Race {
     this.placeObstacles(this.track.count);
     this.placeBanks(this.track.count);
     this.scenery.onLock(this.track);
+    // (the land is dressed at the lock after the cuttings are set out: nothing it puts down stands
+    // on a cutting's wall, or in any other building beside the road; on the moon a boulder stood on
+    // a wall's land once its jumps, and so its cuttings, moved)
+    // (but the grandstand: it is one of the buildings, as a picture)
+    const stand = this.scenery.stand;
+    this.scenery.items = this.scenery.items.filter((it) => (stand && it.x === stand.x && it.y === stand.y) ||
+      !this.inBuilding(it.x, it.y, 1.5));
     this.confirm();
     // (in the tunnel: wing pads wherever the lap went too long without one, a bridge's clearance
     // having taken one away, say)
