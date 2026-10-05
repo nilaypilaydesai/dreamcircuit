@@ -140,16 +140,25 @@ export class Hud {
     this.minimap(scr, race, now);
     this.dreamStatus(scr, race, now);
     const mid = Math.round(H * 0.39); // the band the big messages use
-    // (newest lowest: two at once, each older one goes up over the next, or they print over each
-    // other, as "BRIDGE AHEAD!" did over "TOO EARLY!" at the start)
+    // the newest banner (drawn last, over everything): only one at a time, as big as fits
+    this.banners = this.banners.filter((b) => b.until > race.clock || race.phase === "countdown");
+    const b = this.banners[this.banners.length - 1];
+    const bScale = b ? Math.max(1, Math.min(3, Math.floor((W - 12) / f.width(b.text)))) : 0;
+    // pop-ups: newest lowest, and with two at once each older one goes up over the next (or they
+    // print over each other, as "BRIDGE AHEAD!" did over "TOO EARLY!" at the start), all kept
+    // below a banner (rising, they ran into the GO! at the start)
+    const shown: [Popup, number][] = [];
     let above = Infinity;
     for (let n = this.popups.length - 1; n >= 0; n--) {
       const q = this.popups[n], age = race.clock - q.at;
       if (age < 0 || age > 0.9) continue;
-      const y = Math.min(mid + 34 - age * 26, above - 18);
-      above = y;
-      if (age > 0.6 && Math.floor(now * 12) % 2) continue;
-      f.draw(scr, q.text, W / 2, y, { scale: 2, color: q.color, outline: INK, align: "center" });
+      above = Math.min(mid + 34 - age * 26, above - 18);
+      shown.push([q, above]);
+    }
+    const drop = b && shown.length ? Math.max(0, mid + 8 * bScale + 6 + (b.sub ? 13 : 0) - above) : 0;
+    for (const [q, y] of shown) {
+      if (race.clock - q.at > 0.6 && Math.floor(now * 12) % 2) continue;
+      f.draw(scr, q.text, W / 2, y + drop, { scale: 2, color: q.color, outline: INK, align: "center" });
     }
     this.itemSlot(scr, p, now);
     // a police car after the player: red and blue flashing at the top of the screen, faster as it
@@ -173,11 +182,8 @@ export class Hud {
     }
 
     // banners: only the newest (two at once would print over each other), as big as fits
-    this.banners = this.banners.filter((b) => b.until > race.clock || race.phase === "countdown");
-    const b = this.banners[this.banners.length - 1];
     if (b && !(b.blink && Math.floor(now * 4) % 2)) {
-      const scale = Math.max(1, Math.min(3, Math.floor((W - 12) / f.width(b.text))));
-      const th = 8 * scale;
+      const scale = bScale, th = 8 * scale;
       // a ribbon behind the big text: it spans the screen, so it lies over the standings
       scr.dimRect(0, mid - 5, W, th + 9 + (b.sub ? 13 : 0), INK, 0.62);
       f.draw(scr, b.text, W / 2, mid, { scale, color: b.color, outline: INK, align: "center" });
