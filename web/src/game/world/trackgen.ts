@@ -35,11 +35,14 @@ export const LOOKAHEAD = 72; // points of road kept ahead of the leader (~28% of
 const STEPS = 24; // Heun steps (47 network calls) per arc
 const ARC_SMOOTH = 1.0; // light smoothing of new points (in point spacings)
 // The radius (game m) every corner of new road should have: the architect allows bends of 12.4 m,
-// a hairpin a kart takes at 16 m/s, and dreamed laps had too many of them. An arc with a tighter
-// one is dreamed again, as one off its style is (and if every try has one, the widest is kept).
-export const WIDE_RADIUS = 20;
-const WILD_RADIUS = 16;
-const RETRIES = 3;
+// a hairpin a kart takes at 16 m/s, and dreamed laps had too many of them (and at 20 m, still too
+// many sharp turns). An arc with a tighter one, where it joins the road too, is dreamed again, as
+// one off its style is (and if every try has one, the widest is kept).
+export const WIDE_RADIUS = 30;
+const WILD_RADIUS = 24;
+const RETRIES = 3; // times an arc is always dreamed again (off its style, or a corner too tight)
+const MORE_RETRIES = 3; // and up to this many more while the leader is far enough back for them
+const ROOM = 40; // points of road ahead of the leader that leave time for one more try
 const ONE_HOT: Record<Layout, number[]> = { any: [1, 0, 0], loop: [0, 1, 0], figure8: [0, 0, 1] };
 
 export interface SampleRequest {
@@ -244,7 +247,7 @@ export interface LiveStats {
   retries: number;
   fallbacks: number;
   offBand: number; // arcs that never landed in their band (the closest drivable one was kept)
-  tight: number; // arcs kept with a corner tighter than WIDE_RADIUS (every try had one)
+  tight: number; // arcs whose every try had a corner tighter than WIDE_RADIUS (the widest was kept)
   ms: number;
 }
 
@@ -258,6 +261,10 @@ export class LiveCircuit {
   /** The style asked of the arc being dreamed (or last dreamed), for the HUD. */
   style: number | null = null;
   stats: LiveStats = { arcs: 0, retries: 0, fallbacks: 0, offBand: 0, tight: 0, ms: 0 };
+  /** How many times an arc may be dreamed again (off its style, or with a corner too tight); past
+   * RETRIES, only while the leader is ROOM points or more behind the end of the road. */
+  retries = RETRIES + MORE_RETRIES;
+  private leaderSeg = 0;
   /** The measured style of each arc as it was committed (0..1). */
   readonly styles: number[] = [];
   onCommit: ((from: number, to: number) => void) | null = null;
@@ -299,6 +306,7 @@ export class LiveCircuit {
 
   /** Call every frame with the leader's point index; dreams the next arc when needed. */
   update(leaderSeg: number): void {
+    this.leaderSeg = leaderSeg;
     if (this.busy || this.arcs.length === 0) return;
     const ahead = (this.track.frontierSeg - leaderSeg + N) % N;
     if (ahead < LOOKAHEAD) void this.next().catch((e) => console.error("could not commit an arc", e));
@@ -342,13 +350,20 @@ export class LiveCircuit {
     const mask = stepMask(this.mask), known = toSteps(this.known, this.mask, this.scale);
     let best: { lap: Float64Array; miss: number; style: number; tight: number } | null = null;
     for (let attempt = 0; ; attempt++) {
-      const sample = await this.designer.sample({
-        mask, known, style: this.style, layout: this.layout, seed: this.rng.int(1, 2 ** 31),
-        onStep: (x0, frac) => {
-          this.preview = this.laidOut(fromSteps(x0, this.known, this.mask, this.scale));
-          this.denoise = frac;
-        },
-      });
+      let sample: Float32Array;
+      try {
+        sample = await this.designer.sample({
+          mask, known, style: this.style, layout: this.layout, seed: this.rng.int(1, 2 ** 31),
+          onStep: (x0, frac) => {
+            this.preview = this.laidOut(fromSteps(x0, this.known, this.mask, this.scale));
+            this.denoise = frac;
+          },
+        });
+      } catch (e) {
+        if (!best) throw e; // (nothing to keep yet: the arc is tried again later)
+        if (best.miss > 0) this.stats.offBand += 1; // (a retry failed: the best try there is is kept)
+        return this.keep(best);
+      }
       const lap = fromSteps(sample, this.known, this.mask, this.scale);
       const smoothed = smoothArc(lap, arc, ARC_SMOOTH);
       const game = toGame(smoothed);
@@ -356,26 +371,35 @@ export class LiveCircuit {
         const style = arcStyle(game, arcSet, this.styleScale);
         const miss = band ? bandMiss(style, band) : 0;
         // (m short of a wide enough corner; an arc asked to be wild, a Technical track's, may bend tighter)
-        const tight = Math.max(0, (band && band.lo >= 0.5 ? WILD_RADIUS : WIDE_RADIUS) - tightestBend(game, arcSet));
+        const wide = band && band.lo >= 0.5 ? WILD_RADIUS : WIDE_RADIUS;
+        const tight = Math.max(0, wide - tightestBend(game, withJoins(arc)));
         if (miss === 0 && tight === 0) return this.measured(smoothed, style);
         // keep the best try: in its band first, then the widest corners, then the closest to its band
         const better = !best || (miss === 0) !== (best.miss === 0) ? !best || miss === 0
           : tight !== best.tight ? tight < best.tight : miss < best.miss;
         if (better) best = { lap: smoothed, miss, style, tight };
       }
-      if (attempt < RETRIES) {
+      // (once more, if there is time for it: on a slow phone the race must not run out of road)
+      // (and not the opening stretch's: the race is waiting on it)
+      const room = !first && (this.track.frontierSeg - this.leaderSeg + N) % N >= ROOM;
+      if (attempt < RETRIES || (attempt < this.retries && room)) {
         this.stats.retries += 1;
         continue;
       }
       if (best) {
         if (best.miss > 0) this.stats.offBand += 1;
-        if (best.tight > 0) this.stats.tight += 1;
-        return this.measured(best.lap, best.style);
+        return this.keep(best);
       }
       this.stats.fallbacks += 1;
       const ironed = smoothArc(lap, arc, 2.0); // last resort: iron out the wiggle and keep racing
       return this.measured(ironed, arcStyle(toGame(ironed), arcSet, this.styleScale));
     }
+  }
+
+  /** The best try kept, when none passed everything. */
+  private keep(best: { lap: Float64Array; style: number; tight: number }): Float64Array {
+    if (best.tight > 0) this.stats.tight += 1;
+    return this.measured(best.lap, best.style);
   }
 
   /** Model meters -> where the road goes in the world (game meters, at the world's scale). */
@@ -423,6 +447,15 @@ function range(a: number, b: number): number[] {
   const out: number[] = [];
   for (let j = a; j < b; j++) out.push(((j % N) + N) % N);
   return out;
+}
+
+/** The arc's points and two of the road's either side: where it joins the road (a sharp turn
+ * there, between the road and the arc's first step, belongs to neither alone, and slipped
+ * through as a kink). */
+export function withJoins(arc: number[]): Set<number> {
+  const set = new Set(arc);
+  for (const j of [arc[0] - 1, arc[0] - 2, arc[arc.length - 1] + 1, arc[arc.length - 1] + 2]) set.add(((j % N) + N) % N);
+  return set;
 }
 
 /** The radius (game m) of the tightest bend on the arc's points, as the checks measure bends (the

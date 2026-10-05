@@ -25,6 +25,7 @@ interface Kart {
   offset: number; fall: number; dropX: number; dropY: number; dropZ: number; // (the volcano's lava)
   slope: number; // how the road climbs under it
   staticT: number; // s left with a rival's static over its screen
+  wings: number; // s left with a wing pad's wings (the tunnel: its walls are for winged karts)
 }
 interface Hill { s0: number; len: number; h: number; style?: string; side?: number }
 interface Track {
@@ -37,7 +38,7 @@ interface Track {
 interface Race {
   track: Track; player: Kart; standings: Kart[]; karts: Kart[]; phase: string; countdown: number;
   scenery: { items: { x: number; y: number; art: { solid: boolean } }[] };
-  features: { ramps: { start: number }[]; tunnels: { s0: number }[] };
+  features: { ramps: { start: number }[]; tunnels: { s0: number }[]; pads: { start: number; offset: number; wing?: boolean }[] };
   items: { blasts: unknown[]; rowS: number[]; comets: { phase: string; x: number; y: number; z: number; target: Kart | null }[] };
   aimPhase: number; // the player's aiming arrow (where it is in its sweep)
   obstacles: { list: { kind: string; state: number; t: number; wait: number; s: number; offset: number; idx: number; x: number; y: number }[] };
@@ -344,15 +345,34 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       }
     }
   }
-  // 3. Round the tube: on the gas (and a boost), the player turns up the wall, holds a line
-  // slanting round over the roof and down the other wall, and straightens out on the floor;
-  // the chase camera rolls round with it.
+  // 3. Round the tube: over a wing pad (its walls are for winged karts), and on the gas (and a
+  // boost), the player turns up the wall, holds a line slanting round over the roof and down the
+  // other wall, and straightens out on the floor; the chase camera rolls round with it.
   {
-    await until(() => race().player.v > 24 && !race().player.air, 60 * 20);
+    const pad = () => {
+      const k = race().player, wing = race().features.pads.filter((q) => q.wing);
+      return wing.sort((a, b) => ahead(k, a.start) - ahead(k, b.start))[0];
+    };
+    const near = () => {
+      const k = race().player, q = pad();
+      return !!q && k.wings <= 0 && k.v > 20 && !k.air && ahead(k, q.start) / Math.max(k.v, 10) < 1.4;
+    };
+    await until(near, 60 * 60);
     let over = false, last = race().player.offset;
     reel.begin("n_loop");
-    for (let f = 0; f < frames(5); f++) {
+    const to = pad(), t = race().track;
+    for (let f = 0; f < frames(6.5); f++) {
       const k = race().player;
+      if (k.wings <= 0 && to) { // (on to the pad: aimed at its middle, a little way along it)
+        const i = t.wrap(to.start + 5), [tx, ty] = t.tangent(i);
+        const gx = t.xs[i] - ty * to.offset, gy = t.ys[i] + tx * to.offset;
+        const aim = wrapAngle(Math.atan2(gy - k.y, gx - k.x) - k.heading);
+        dc.step(per, ["gas", ...(aim > 0.04 ? ["left"] : aim < -0.04 ? ["right"] : [])], false);
+        dc.shot({ clear: 2.5 });
+        await reel.save();
+        last = k.offset;
+        continue;
+      }
       k.boostTime = Math.max(k.boostTime, 0.5);
       const rel = wrapAngle(k.heading - heading(k.idx));
       if (Math.sign(k.offset) !== Math.sign(last) && Math.abs(k.offset) > 15) over = true;

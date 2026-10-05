@@ -104,10 +104,17 @@ guess for the still-unknown rest must form a valid circuit under the architect's
 Checking the arc with the guess for the rest catches an arc that would make closing the lap
 impossible while it can still be dreamed again. A failing arc is resampled up to 3 times; after
 that a sigma = 2 smoothing of the last sample is kept, so the race always goes on. An arc that
-passes but has a corner tighter than 20 m (in game meters: the architect allows 12.4 m, a hairpin
-a kart takes at about 16 m/s, and players found the dreamed laps too tight) is dreamed again too,
-on the same retries; if every try has one, the try with the widest corner is kept (an arc asked to
-be wild, a Technical track's, may bend to 16 m). Smoothing the tight corners wider was tried first
+passes but has a corner tighter than 30 m (in game meters: the architect allows 12.4 m, a hairpin
+a kart takes at about 16 m/s; players found the dreamed laps too tight, and at 20 m still too
+sharp) is dreamed again too, on the same retries, and on up to three more while the race leader
+is 40 points or more from the end of the road (time enough for another try; never for the opening
+stretch, which the race is waiting on); if every try has one, the try with the widest corner is
+kept (an arc asked to be wild, a Technical track's, may bend to 24 m). The corner is measured
+across the arc's joins to the road on either side too: measured inside the arc alone, an arc
+could pass with a kink where it met the road. Under the old rule (20 m, inside the arc alone) the
+real model's median lap had its sharpest corner at about 16 m; at 30 m with the joins counted,
+about 22.5 m on three retries, and about 26.5 m with all six. Asking for a calmer style did not
+help. Smoothing the tight corners wider was tried first
 and made them worse: a Gaussian pulls a round bend's points in toward its middle and closer
 together (4.1 m apart became 2.5 m), so the same turn happens in less road, and on one test circuit
 the tightest bend went from 15.7 m to 11.4 m. Smoothing irons out kinks; only the designer can draw
@@ -523,10 +530,29 @@ steering is let go it straightens out along the tunnel: so a loop is a spiral on
 tunnel, with the way on always in view, and a kart left alone rides the wall. Free to turn, a
 kart drove straight round and round the tube, seen side on, with the whole tunnel spinning past
 it: driven by a recording driver steering at random, the view turned 8 to 12 degrees a frame in
-two frames of five (now in one of fourteen, sliding off the roof or looping). Pads go up the
-walls and on the roof, where only a kart fast enough to loop can reach them, and up to four cars
-drive the floor in three lanes, 60 to 95 m apart and slower than any racer, to weave through or
-ride a wall past. Its circuits are drawn 1.6 times the size and dreamed calmer, so the bends are
+two frames of five (now in one of fourteen, sliding off the roof or looping).
+
+The walls are only for winged karts. Without wings the foot of each wall is a wall, as a
+tunnel's are elsewhere: a kart driven at it from the floor is stopped 0.7 m short of the floor's
+edge and scrapes along it, losing speed, and nothing (a bump from another kart included) puts it
+higher. Wings come from a wing pad: every pad that lies on the floor is one, drawn blue with a
+little plane on it, and besides the pads at corner exits the floor gets one every 300 m or so
+where the road is free, placed without drawing on the race's random numbers, so everything else
+lies where it did. (The tube's circuits are drawn wide, and at corner exits alone a lap had one
+pad, or none.) A wing pad gives eight seconds of wings and a boost: the kart is drawn as a little
+plane (swept white wings tipped in its paint, a light on each tip, a tail fin and tailplane over
+the back, and at speed a vapour trail off each wing tip), a WINGS meter drains under the item
+slot, flashing for its last second and a half, and WALL and LOOP show beside the speed. When the
+wings run out, a kart up a wall or on the roof goes no higher and slides back down to the floor,
+at 6 m/s or faster. The first wing pad of a race puts up a banner (WINGS! RIDE THE WALLS, LOOP THE
+ROOF), and the first scrape along a wall without them another (NO WINGS: THE BLUE PADS GIVE YOU
+WINGS). Rivals go for a wing pad ahead when their wings are gone or running out, and winged and
+fast enough to hold on, now and then for a pad up a wall (the roof's are left to the player);
+without wings they keep to the floor. The other pads go up the walls and on the roof, where only
+a winged kart can reach them (the roof's only one fast enough to loop), and up to four cars
+drive the floor in three lanes, 60 to 95 m apart and slower than any racer, to weave through or,
+winged, ride a wall past. In a race driven by the rivals' own driver on a calm circuit, six wing
+pads a lap kept every kart winged about 45% of the time. Its circuits are drawn 1.6 times the size and dreamed calmer, so the bends are
 wide enough to drive round the inside of.
 
 In the tube there is no Mode-7 ground and no sky (`render/tube.ts`). It is drawn as road tunnels
@@ -534,9 +560,9 @@ are built: an asphalt road in three lanes with white edge lines, dashed lane lin
 cat's eyes, a concrete walkway along each side, the walls faced with pale tiles to head height
 under a dark cable tray and bare concrete above, and a concrete roof with a row of lights down
 its middle, every 4.5 m, each throwing a pool of light on the road below; lane signals hang from
-the roof every 160 m, and a green emergency-phone niche is set into the right-hand wall every 96
-m. (It began as a tube of neon light, strips and pulsing rings, and was redrawn as a real
-tunnel.) The 260 m of tube ahead of the camera are drawn (past its far plane, where the fog is
+the roof every 160 m. (It began as a tube of neon light, strips and pulsing rings, and was redrawn
+as a real tunnel. Emergency-phone niches, set into the wall every 96 m, were taken out: drawn in
+green on the curve of the wall, they read as splotches.) The 260 m of tube ahead of the camera are drawn (past its far plane, where the fog is
 whole: drawn short of it, the far end of a straight showed as a dark disc), as rings of 22 panels
 (the road in four, a walkway each side, each wall in six facets, the roof in four), in pieces
 that lengthen with distance (3, 6, then 12 road points). Each piece starts at a whole multiple of
@@ -660,15 +686,19 @@ spotlights sweep; a fanfare, a cheering crowd (band-passed noise swelling up) an
 all synthesized. The size of the show follows the player's result: a win gets the most fireworks
 and gold confetti.
 
-**Controls.** Keyboard, gamepad and touch feed one set of driving controls. On touch the left
-half of the screen is a floating joystick: it appears under the thumb, its base follows a thumb
-that slides past the rim, it has a dead zone and a gentle curve for small corrections, pushed all
+**Controls.** Keyboard, gamepad and touch feed one set of driving controls. On touch a joystick
+stays put low on the left (it floated: it appeared under the thumb, and its base followed a thumb
+that slid past the rim, so on a phone it wandered about the screen); a thumb that comes down more
+than 2.4 radii from its middle is left alone rather than steering hard at once, and past the rim
+the knob stays at the rim. It has a dead zone and a gentle curve for small corrections, pushed all
 the way to the side it drifts (with hysteresis, so a drift does not flicker off mid-corner), and
 pulled back, straight or on a diagonal, it brakes and then reverses, steering as it backs up. The
 gas is automatic once the race is on, so steering and drifting take one thumb; before GO the
 engine revs only while the thumb is on the stick, which keeps the rocket start a matter of
 timing. DRIFT (hops and tricks too), ITEM and BACK (the item thrown behind: R on a keyboard, X on
-a pad) sit under the right thumb. On every device the brake
+a pad) sit under the right thumb. A hop for a trick is a control of its own, from the drift key
+and the DRIFT button only: the stick pushed hard over drifts, and when that was the hop too, every
+hard turn before a ramp was a trick, popping TRICK! up at the same ramps as the rivals' tricks. On every device the brake
 wins over the gas, and held at a standstill it backs the kart up at up to 7 m/s; the grass slows
 a reversing kart's top speed but no longer drags it to a halt (it once cancelled all but 1 m/s^2
 of the reverse thrust, and reversing is how a kart gets out of the grass). HOW TO PLAY on the main menu is

@@ -1,7 +1,9 @@
 // Track features, placed on dreamed road as it is committed:
 //   jump ramps on long straights: fly off the lip, and hop (the drift button) right at the lip
 //   for a trick that pays a boost on landing;
-//   boost pads at corner exits (and, on some track types, along the straights);
+//   boost pads at corner exits (and, on some track types, along the straights); in the harbor
+//   tunnel's tube, the pads on its floor are wing pads (wings for the walls and the roof, where
+//   the rest of its pads are);
 //   tunnels on straights, under buildings in Tokyo and through buildings going up on the building
 //   site (their walls keep karts in).
 // How long a straight earns a jump and how far apart pads are depend on the track type
@@ -21,6 +23,7 @@ export const PAD_HALF = 2.6; // m, half the pad's width
 export const TUNNEL_LEN = 52; // m
 export const TUNNEL_H = 5.8; // m from the road to the ceiling
 const TUNNEL_GAP = 320; // m between tunnels
+const WING_GAP = 300; // m of the tube's floor between one wing pad and the next, where the road is free
 
 export interface Ramp {
   start: number; // dense index of the foot of the ramp
@@ -31,6 +34,7 @@ export interface Pad {
   start: number;
   s0: number;
   offset: number; // lateral position of the pad's centre
+  wing?: boolean; // a wing pad (on the tube's floor): wings, to drive up the walls and over the roof
 }
 
 export interface Tunnel {
@@ -87,6 +91,7 @@ export class Features {
   private lastRamp = -Infinity;
   private scanned = 0; // arc length of the last road scanned
   private lastPad = -Infinity;
+  private lastWing = -Infinity;
 
   /** Place features on newly committed road ``[from, to)``. ``blocked(s)`` says whether a
    * stretch is taken (bridges, item boxes, the start). */
@@ -134,6 +139,9 @@ export class Features {
         const at = Math.max(8, i - Math.round(25 / SPACING));
         if (!this.rampNear(track.s[at] - 20, PAD_LEN + 40)) this.tryPad(track, at, blocked, rng);
       }
+      // in the tube, wing pads on its floor every so far besides (its walls are for winged karts,
+      // and its bends are wide: corner exits alone left a lap one pad, or none)
+      if (this.tube && s - this.lastWing > WING_GAP) this.tryWing(track, i, blocked);
     }
   }
 
@@ -150,13 +158,60 @@ export class Features {
   private tryPad(track: Track, i: number, blocked: (s: number, len: number) => boolean, rng: () => number): boolean {
     const s = track.s[i];
     if (blocked(s - 5, PAD_LEN + 10) || track.fromStart(i) <= 60 || this.tunnelNear(s - 5, PAD_LEN + 10, 5)) return false;
-    this.pads.push({ start: i, s0: s, offset: this.padOffset(rng) });
+    const pad = this.pad(i, s, this.padOffset(rng));
     this.lastPad = s;
+    if (pad.wing && this.wingNear(s)) return true; // (a wing pad is there already: it will do)
+    this.pads.push(pad);
+    if (pad.wing) this.lastWing = s;
     return true;
   }
 
+  /** In the tube, a wing pad on its floor at dense index ``i`` if the road there is free and no other
+   * pad or jump is close. (Across the floor by where it is along the road: no draws from the race's
+   * random numbers, so everything else is placed as it was.) */
+  private tryWing(track: Track, i: number, blocked: (s: number, len: number) => boolean): void {
+    const s = track.s[i];
+    if (blocked(s - 5, PAD_LEN + 10) || track.fromStart(i) <= 60 || this.padNear(s - 25, PAD_LEN + 50) ||
+        this.rampNear(s - 20, PAD_LEN + 40)) return;
+    const lane = [0, -1, 1][Math.floor(s / 37) % 3];
+    this.pads.push({ start: i, s0: s, offset: lane * (HALF_WIDTH - PAD_HALF - 1.2), wing: true });
+    this.lastWing = s;
+  }
+
+  /** On the locked lap, in the tube: a wing pad wherever the floor goes much more than WING_GAP
+   * without one (where the road is ``free`` and no other pad or jump is close), as tryWing places
+   * them. Returns how many it added. */
+  fillWings(track: Track, free: Free): number {
+    if (!this.tube || !track.locked) return 0;
+    const L = track.length, wings = () => this.pads.filter((p) => p.wing).map((p) => p.s0);
+    let added = 0, last = Math.max(...wings().map((s) => s - L), -Infinity);
+    for (let i = 8; i < track.count; i++) {
+      const s = track.s[i], from = track.fromStart(i);
+      for (const w of wings()) if (w <= s && w > last) last = w;
+      if (s - last < WING_GAP + 60 || from < 60 || from > L - 120) continue;
+      if (!free(s - 5, PAD_LEN + 10) || this.padNear(s - 25, PAD_LEN + 50) || this.rampNear(s - 20, PAD_LEN + 40) ||
+          this.tunnelNear(s - 5, PAD_LEN + 10, 5)) continue;
+      const lane = [0, -1, 1][Math.floor(s / 37) % 3];
+      this.pads.push({ start: i, s0: s, offset: lane * (HALF_WIDTH - PAD_HALF - 1.2), wing: true });
+      last = s;
+      added += 1;
+    }
+    this.pads.sort((a, b) => a.s0 - b.s0);
+    return added;
+  }
+
+  /** Whether a wing pad is within 30 m of arc length ``s``. */
+  private wingNear(s: number): boolean {
+    return this.pads.some((p) => p.wing && Math.abs(p.s0 - s) < 30);
+  }
+
+  /** A pad: in the tube, one on the floor is a wing pad (the walls and the roof are for winged karts). */
+  private pad(start: number, s0: number, offset: number): Pad {
+    return this.tube && Math.abs(offset) < TUBE_FLOOR ? { start, s0, offset, wing: true } : { start, s0, offset };
+  }
+
   /** Where across the road a pad goes: anywhere on it; in the tube, as often up a wall, and now and
-   * then on the ceiling (where only a kart going fast enough to loop can reach it). */
+   * then on the ceiling (where only a winged kart going fast enough to loop can reach it). */
   private padOffset(rng: () => number): number {
     if (!this.tube) return (rng() * 2 - 1) * (HALF_WIDTH - PAD_HALF - 1.2); // (one draw, as ever, outside the tube)
     const side = rng() < 0.5 ? 1 : -1, r = rng();
@@ -230,7 +285,7 @@ export class Features {
       const s0 = track.s[i];
       if (this.pads.some((p) => Math.abs(p.s0 - s0) < 70) || this.rampNear(s0 - 20, PAD_LEN + 40) ||
           this.tunnelNear(s0 - 5, PAD_LEN + 10, 5) || !free(s0 - 5, PAD_LEN + 10)) continue;
-      this.pads.push({ start: i, s0, offset: this.padOffset(rng) });
+      this.pads.push(this.pad(i, s0, this.padOffset(rng)));
       added += 1;
     }
     this.pads.sort((a, b) => a.s0 - b.s0);
@@ -271,11 +326,16 @@ export class Features {
 
   /** Whether the kart is on a boost pad. */
   onPad(track: Track, k: Kart): boolean {
-    if (k.air) return false;
+    return this.padUnder(track, k) !== null;
+  }
+
+  /** The boost pad the kart is on, if any. */
+  padUnder(track: Track, k: Kart): Pad | null {
+    if (k.air) return null;
     const s = track.s[k.idx];
     for (const p of this.pads) {
-      if (s >= p.s0 && s < p.s0 + PAD_LEN && Math.abs(k.offset - p.offset) < PAD_HALF + 0.4) return true;
+      if (s >= p.s0 && s < p.s0 + PAD_LEN && Math.abs(k.offset - p.offset) < PAD_HALF + 0.4) return p;
     }
-    return false;
+    return null;
   }
 }

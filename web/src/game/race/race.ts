@@ -12,10 +12,10 @@ import { WorldTexture } from "../world/texture";
 import { FIRST_SEG, HALF_WIDTH, type Layout, N, SPACING, Track } from "../world/track";
 import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
-import { Features, RAMP_LEN, TUNNEL_LEN } from "./features";
+import { Features, PAD_LEN, type Pad, RAMP_LEN, TUNNEL_LEN } from "./features";
 import { AIMED, AIM_MAX, AIM_RATE, type Field, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
 import { ALLEY_AT, ALLEY_DEPTH, type ObstacleSite, type ObstacleSound, Obstacles, alleyBlocks } from "./obstacles";
-import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, collideKarts } from "./kart";
+import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, WING_TIME, collideKarts } from "./kart";
 import type { Standing } from "./odds";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
 import {
@@ -56,6 +56,9 @@ export type RaceEvent =
   | { kind: "jump" } // the player left a ramp
   | { kind: "land"; trick: 0 | 1 | 2 } // and came down (with a trick grade)
   | { kind: "pad" } // the player hit a boost pad
+  | { kind: "wings"; first: boolean } // a wing pad (in the tunnel's tube): wings, for the walls and the roof
+  | { kind: "wingsOff" } // and they ran out
+  | { kind: "needWings"; first: boolean } // the player drove at a wall of the tube without them
   | { kind: "rocket" } // a perfectly timed start
   | { kind: "burnout" } // throttle held too early: wheels spin at GO
   | { kind: "bridge" } // the dream crossed itself and built a bridge
@@ -165,6 +168,8 @@ export class Race {
   readonly type: TrackType;
   private readonly hillRule: HillRule | null; // climbs: the track type's, or the world's
   private aimPhase = 0; // where the player's aiming arrow is in its sweep
+  private winged = false; // the player has had a wing pad's wings this race
+  private wingHint = -Infinity; // race clock when the player was last told walls need wings
   private bridgesSeen = 0;
   /** How the player is driving lap 1 (smoothed), which sets the style of the road ahead. */
   readonly driving = { speed: 0.7, offroad: 0, drift: 0, clean: 1 };
@@ -280,9 +285,11 @@ export class Race {
       this.features.ramps = this.features.ramps.filter((r) =>
         Math.abs(r.s0 - under) > UNDER_CLEAR && Math.abs(r.s0 - b.centerS) > BRIDGE_CLEAR);
       // and a pad on road lifted into the bridge would lie under its deck (pads are drawn on the
-      // ground and on climbs, not on bridges)
+      // ground and on climbs, not on bridges): measured from its middle, as blocked() measures the
+      // road a pad wants (from its start, the one put just clear of a bridge was taken away again,
+      // and in the tunnel that left 750 m of floor without a wing pad)
       this.features.pads = this.features.pads.filter((pd) =>
-        Math.abs(pd.s0 - under) > UNDER_CLEAR && Math.abs(pd.s0 - b.centerS) > BRIDGE_CLEAR);
+        Math.abs(pd.s0 + PAD_LEN / 2 - under) >= UNDER_CLEAR && Math.abs(pd.s0 + PAD_LEN / 2 - b.centerS) >= BRIDGE_CLEAR);
       // and a climb where the bridge, or the road under it, goes would leave no headroom: flatten it
       // (and bring the item boxes and coins on it down with it: left where they were, they hung in
       // the air over the flattened road); a cutting's walls there, or anything standing beside the
@@ -648,6 +655,9 @@ export class Race {
     this.placeBanks(this.track.count);
     this.scenery.onLock(this.track);
     this.confirm();
+    // (in the tunnel: wing pads wherever the lap went too long without one, a bridge's clearance
+    // having taken one away, say)
+    this.features.fillWings(this.track, (s, len) => !this.blocked(s, len) && !this.kartsNear(s, len));
     // the world's hazard, beside the road, on the outside of the bends
     const kind = this.setup.theme.hazard;
     if (kind) {
@@ -709,18 +719,19 @@ export class Race {
     const dangers = this.obstacles.dangers();
     this.drivers.forEach((d) => {
       if (d.kart.finished && this.phase === "done") return;
-      const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers);
+      const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads);
       const px = d.kart.x, py = d.kart.y;
       d.kart.update(dt, c, this.track, this.cls);
       this.holdOffBuildings(d.kart, px, py);
       this.fire(d.kart, c);
-      if (!d.kart.falling && this.features.onPad(this.track, d.kart)) d.kart.boostTime = Math.max(d.kart.boostTime, 1.0);
+      if (!d.kart.falling) this.padBoost(d.kart);
     });
     const controls = this.player.finished ? { steer: 0, throttle: 0.3, brake: 0, drift: false } : playerControls;
     const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
     const wasSunk = this.player.fall >= 0 && this.player.fall < FALL_SWAP;
-    const px = this.player.x, py = this.player.y;
+    const px = this.player.x, py = this.player.y, hadWings = this.player.wings > 0;
     const { boosted, landed } = this.player.update(dt, controls, this.track, this.cls);
+    if (hadWings && this.player.wings <= 0) this.events.push({ kind: "wingsOff" });
     this.holdOffBuildings(this.player, px, py);
     if (boosted) this.events.push({ kind: "boost" });
     if (!wasAir && this.player.air && !this.player.falling) this.events.push({ kind: "jump" });
@@ -734,9 +745,18 @@ export class Race {
       if (near || ev.sound === "siren") this.events.push({ kind: "obstacle", sound: ev.sound, near });
     }
     this.obstacles.events = [];
-    if (!this.player.falling && this.features.onPad(this.track, this.player)) {
-      if (this.player.boostTime < 0.85) this.events.push({ kind: "pad" });
-      this.player.boostTime = Math.max(this.player.boostTime, 1.0);
+    if (!this.player.falling) {
+      const was = { boost: this.player.boostTime, wings: this.player.wings };
+      const pad = this.padBoost(this.player);
+      if (pad?.wing && was.wings < WING_TIME - 0.5) {
+        this.events.push({ kind: "wings", first: !this.winged });
+        this.winged = true;
+      } else if (pad && was.boost < 0.85) this.events.push({ kind: "pad" });
+      // (at a wall without wings, now and then: what they need)
+      if (this.player.scraped && this.clock - this.wingHint > 6) {
+        this.events.push({ kind: "needWings", first: this.wingHint === -Infinity });
+        this.wingHint = this.clock;
+      }
     }
     // the aiming arrow sweeps left and right while an aimed item is ready, until a press locks it
     const p = this.player;
@@ -844,6 +864,16 @@ export class Race {
     const style = h.style ?? this.setup.theme.hillStyle ?? "earth";
     if (style === "mesa") return 2.2; // (a strip of sand along the top before the wall)
     return OPEN_EDGES.has(style) ? 0 : null;
+  }
+
+  /** A boost pad under the kart: a second of boost, and a wing pad's wings (the tunnel's tube).
+   * Returns the pad. */
+  private padBoost(k: Kart): Pad | null {
+    const pad = this.features.padUnder(this.track, k);
+    if (!pad) return null;
+    k.boostTime = Math.max(k.boostTime, 1.0);
+    if (pad.wing) k.wings = WING_TIME;
+    return pad;
   }
 
   /** The road surface under each kart: bridge decks and jump ramps, and how the road climbs and

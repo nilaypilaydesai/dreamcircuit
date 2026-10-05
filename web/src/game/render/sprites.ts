@@ -365,8 +365,9 @@ function palette(build: Build, livery: KartLivery): Pal {
   };
 }
 
-/** The voxels of a kart built from ``build``, with the driver in ``livery``'s colours. */
-export function kartModel(build: Build, livery: KartLivery): Map<number, number> {
+/** The voxels of a kart built from ``build``, with the driver in ``livery``'s colours (and with a
+ * wing pad's wings: ``wings``). */
+export function kartModel(build: Build, livery: KartLivery, wings = false): Map<number, number> {
   const m = new Model();
   const c = palette(build, livery);
   const at = (BODY_SHAPES[build.body] ?? BODY_SHAPES.classic)(m, c);
@@ -374,7 +375,29 @@ export function kartModel(build: Build, livery: KartLivery): Map<number, number>
   addSpoiler(m, build.spoiler, c, at);
   addExhaust(m, build.exhaust, c, at);
   addDriver(m, c, at.seat);
+  if (wings) addWings(m, c, at);
   return m.vox;
+}
+
+/** A wing pad's wings (the tunnel's tube): the kart made a little plane, with swept wings out of
+ * its sides between the wheels, a light on each tip, and a tail fin and tailplane over the back. */
+function addWings(m: Model, c: Pal, at: Mount): void {
+  const skin = hex("#e8ebf2"), edge = hex("#b8c0ce"), lamp = hex("#ff3b4f");
+  for (let y = 9; y < 20; y++) {
+    const t = (y - 9) / 10; // root to tip
+    const front = Math.round(lerp(16, 9, t)), back = Math.round(lerp(7, 4, t)), z = 4 + Math.round(t * 2); // swept, tipped up
+    for (let x = back; x < front; x++) {
+      const col = y === 19 && x === front - 1 ? lamp : y >= 17 ? c.paint : x === front - 1 ? edge : skin;
+      m.put(x, y, z, col);
+      m.put(x, -1 - y, z, col);
+    }
+  }
+  const r = at.rear, d = at.deck;
+  for (let x = r - 2; x < r + 5; x++) { // the fin: taller at the back
+    const top = d + Math.round(lerp(7, 1, (x - r + 2) / 7));
+    for (let z = d; z < top; z++) for (const y of [-1, 0]) m.put(x, y, z, z >= top - 2 ? c.paint : skin);
+  }
+  m.box(r - 2, r + 1, -6, 6, d + 1, d + 2, skin); // the tailplane
 }
 
 /** A rocket, the kart's paint on its stripes and fins, with the driver's helmet in the window. */
@@ -457,8 +480,12 @@ function splat(vs: Lit[], th: number, scale: number, put: (px: number, py: numbe
   }
 }
 
-/** A kart's 16 views, and where the driver's head is in each (sprite pixels). */
-export type KartViews = Sprite[] & { heads?: [number, number][] };
+/** A kart's 16 views, and where the driver's head is in each (sprite pixels); winged, where the
+ * back of each wing tip is too (its vapour trail streams from there). */
+export type KartViews = Sprite[] & { heads?: [number, number][]; tips?: [number, number][][] };
+
+/** The backs of a wing pad's wing tips (model coordinates: see addWings). */
+const WING_TIPS: [number, number, number][] = [[4, 19, 6], [4, -20, 6]];
 
 /** Where the driver's head is on a build (model coordinates), for the reef's bubble helmets. */
 export function kartHead(build: Build): [number, number, number] {
@@ -467,18 +494,22 @@ export function kartHead(build: Build): [number, number, number] {
 }
 
 /** Bake a voxel model into 16 view sprites; view k shows it from angle 2*pi*k/16 behind. A
- * ``marker`` (model coordinates) is projected into every view too (``heads``). */
-export function bakeVoxels(vox: Map<number, number>, cx = 11.5, marker?: [number, number, number]): KartViews {
+ * ``marker`` (model coordinates) is projected into every view too (``heads``), and so are ``tips``. */
+export function bakeVoxels(vox: Map<number, number>, cx = 11.5, marker?: [number, number, number],
+                           tips?: [number, number, number][]): KartViews {
   const vs = litVoxels(vox, cx);
   const sprites: KartViews = [];
   if (marker) sprites.heads = [];
+  if (tips) sprites.tips = [];
   const cp = Math.cos(PITCH), sp = Math.sin(PITCH);
   for (let v = 0; v < KART_VIEWS; v++) {
-    if (marker && sprites.heads) {
-      const th = (v / KART_VIEWS) * Math.PI * 2, dx = Math.cos(th), dy = Math.sin(th);
-      const mx = marker[0] - cx, along = mx * dx + marker[1] * dy;
-      sprites.heads.push([(mx * dy - marker[1] * dx) * 1.55 + KW / 2, BASE - (marker[2] * cp + along * sp) * 1.55 * 0.9]);
-    }
+    const th = (v / KART_VIEWS) * Math.PI * 2, dx = Math.cos(th), dy = Math.sin(th);
+    const at = (m: [number, number, number]): [number, number] => {
+      const mx = m[0] - cx, along = mx * dx + m[1] * dy;
+      return [(mx * dy - m[1] * dx) * 1.55 + KW / 2, BASE - (m[2] * cp + along * sp) * 1.55 * 0.9];
+    };
+    if (marker && sprites.heads) sprites.heads.push(at(marker));
+    if (tips && sprites.tips) sprites.tips.push(tips.map(at));
     const s = makeSprite(KW, KH);
     const depth = new Float32Array(KW * KH).fill(Infinity);
     splat(vs, (v / KART_VIEWS) * Math.PI * 2, 1.55, (px, py, d, c) => {
@@ -494,13 +525,15 @@ export function bakeVoxels(vox: Map<number, number>, cx = 11.5, marker?: [number
 
 const baked = new Map<string, KartViews>();
 
-/** A kart's 16 views, baked once per build and driver. */
-export function kartSprites(build: Build, livery: KartLivery, rocket = false): KartViews {
-  const key = `${rocket ? "R" : "K"}|${build.body}|${build.wheels}|${build.spoiler}|${build.exhaust}|${build.paint}|${build.accent}|${livery.helmet}|${livery.suit}`;
+/** A kart's 16 views, baked once per build and driver (as a rocket, or with a wing pad's wings). */
+export function kartSprites(build: Build, livery: KartLivery, rocket = false, wings = false): KartViews {
+  const form = rocket ? "R" : wings ? "W" : "K";
+  const key = `${form}|${build.body}|${build.wheels}|${build.spoiler}|${build.exhaust}|${build.paint}|${build.accent}|${livery.helmet}|${livery.suit}`;
   let s = baked.get(key);
   if (!s) {
     if (baked.size > 80) baked.clear();
-    s = rocket ? bakeVoxels(rocketModel(build, livery), 10) : bakeVoxels(kartModel(build, livery), 11.5, kartHead(build));
+    s = rocket ? bakeVoxels(rocketModel(build, livery), 10)
+      : bakeVoxels(kartModel(build, livery, wings), 11.5, kartHead(build), wings ? WING_TIPS : undefined);
     baked.set(key, s);
   }
   return s;

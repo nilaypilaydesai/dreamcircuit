@@ -12,7 +12,9 @@ import {
 import { ROCKET_GAP, type Standing, itemOdds, pickItem, tierOf } from "../src/game/race/odds";
 import { heldArt, itemIcons } from "../src/game/render/sprites";
 import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
-import { CLASSES, COIN_SPEED, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, WALL_TURN, collideKarts } from "../src/game/race/kart";
+import {
+  CLASSES, COIN_SPEED, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, TUBE_EDGE, WALL_TURN, WING_TIME, collideKarts,
+} from "../src/game/race/kart";
 import { CALM_BAND, TRACK_TYPES, type TrackTypeId, WILD_BAND, surpriseType, trackType } from "../src/game/race/tracktypes";
 import {
   ACCENTS, BODIES, DEFAULT_BUILD, EXHAUSTS, NEUTRAL, NOTE_MAX, PAINTS, SPOILERS, STAT_KEYS, STAT_MAX, WHEELS, buildScore,
@@ -247,7 +249,7 @@ describe("jumps and boost pads", () => {
     expect(f.ramps.length).toBeGreaterThan(0);
     return { t, f, r: f.ramps[0] };
   };
-  const jump = (hopAt: number | null) => {
+  const jump = (hopAt: number | null, stick = false) => { // (stick: the press is the touch stick's drift, which is no hop)
     const { t, f, r } = onRamp();
     const k = new Kart(0, "K", 0, true);
     k.placeOn(t, t.wrap(r.start - Math.round(30 / SPACING)), 0);
@@ -258,7 +260,7 @@ describe("jumps and boost pads", () => {
       k.ground = t.elev[k.idx] + ramp.height;
       k.rampU = ramp.u;
       const hop = hopAt !== null && launchStep < 0 && ramp.u > hopAt;
-      const res = k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: hop }, t, CLASSES.pro);
+      const res = k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: hop, ...(stick ? { hop: false } : {}) }, t, CLASSES.pro);
       if (k.air && !wasAir) launchStep = steps;
       wasAir = k.air;
       peak = Math.max(peak, k.elev);
@@ -287,6 +289,11 @@ describe("jumps and boost pads", () => {
     expect(good.boost).toBeGreaterThan(0.5);
     const late = jump(null);
     expect(late.boost).toBe(0);
+  });
+
+  it("take the hop from the hop button alone: the touch stick pushed hard over drifts, and never hops", () => {
+    // (on a phone the stick pushed hard drifts, and the drift was the hop: a trick at every ramp)
+    expect(jump(0.75, true).landed).toBe(0);
   });
 
   it("are drawn just where they are driven: measured along the road as the race measures them", () => {
@@ -760,7 +767,7 @@ describe("live circuit generation", () => {
     live.styleSource = () => (s += 0.1);
     await live.start();
     await driveLap(live);
-    expect(asked.length).toBe(liveArcs().length);
+    expect(asked.length).toBe(liveArcs().length + 3 * live.stats.tight); // (an arc with a hairpin is dreamed again)
     expect(asked[1]).toBeGreaterThan(asked[0]!);
   });
 
@@ -1676,7 +1683,7 @@ describe("track types", () => {
     live.bandSource = () => ({ lo: 0, hi: 0.6 });
     await live.start();
     await driveLap(live);
-    expect(calls).toBe(liveArcs().length);
+    expect(calls).toBe(liveArcs().length + 3 * live.stats.tight); // (only an arc with a hairpin is dreamed again)
     expect(live.stats.offBand).toBe(0);
   });
 });
@@ -2708,6 +2715,7 @@ describe("the tunnel", () => {
     const at = (u: number, v: number, throttle: number) => {
       const k = new Kart(0, "K", 0, true);
       k.tube = true;
+      k.wings = 99;
       k.placeOn(t, 300, u);
       k.v = v;
       for (let i = 0; i < 60; i++) k.update(1 / 60, { steer: 0, throttle, brake: 0, drift: false }, t, CLASSES.legend);
@@ -2720,6 +2728,7 @@ describe("the tunnel", () => {
     // steering round and round at speed: over the ceiling and back down the other wall to the floor
     const k = new Kart(0, "K", 0, true);
     k.tube = true;
+    k.wings = 99;
     k.placeOn(t, 200, 0);
     k.v = 30;
     let most = 0, wrapped = false, last = 0;
@@ -2733,6 +2742,54 @@ describe("the tunnel", () => {
     expect(most).toBeGreaterThan(TUBE_HALF - 1);
     expect(wrapped).toBe(true);
     expect(Math.abs(k.offset)).toBeLessThan(HALF_WIDTH); // all the way round, back on the floor
+  });
+
+  it("keeps a kart without wings off its walls, and brings one down when its wings run out", () => {
+    // (its walls are only for winged karts: the foot of each is a wall to the rest, as a tunnel's is)
+    const t = Track.fromPoints(calm());
+    const go = { throttle: 1, brake: 0, drift: false };
+    for (const way of [1, -1]) {
+      // driven hard at a wall: stopped at its foot, scraping along it; winged, right up it
+      const at = (wings: number) => {
+        const k = new Kart(0, "K", 0, true);
+        k.tube = true;
+        k.wings = wings;
+        k.placeOn(t, 300, 0);
+        k.heading += way * 0.5;
+        k.v = 25;
+        let most = 0, scraped = false;
+        for (let i = 0; i < 120; i++) {
+          k.boostTime = 1;
+          k.update(1 / 60, { ...go, steer: way }, t, CLASSES.legend);
+          most = Math.max(most, Math.abs(k.offset));
+          scraped ||= k.scraped;
+        }
+        return { most, scraped };
+      };
+      const plain = at(0), winged = at(99);
+      expect(plain.most).toBeLessThanOrEqual(TUBE_EDGE + 1e-9);
+      expect(plain.scraped).toBe(true);
+      expect(winged.most).toBeGreaterThan(TUBE_FLOOR + 4);
+      expect(winged.scraped).toBe(false);
+      // up a wall, and on the roof, when its wings run out: down it comes, never higher, steering up
+      // it or not, however fast
+      for (const u of [HALF_WIDTH + 6, TUBE_HALF - 3]) {
+        const r = new Kart(0, "K", 0, true);
+        r.tube = true;
+        r.wings = 0.1;
+        r.placeOn(t, 300, way * u);
+        r.v = 30;
+        let prev = u, rose = 0;
+        for (let i = 0; i < 60 * 4; i++) {
+          r.boostTime = 1;
+          r.update(1 / 60, { ...go, steer: way }, t, CLASSES.legend);
+          if (r.wings <= 0 && Math.abs(r.offset) > TUBE_EDGE) rose = Math.max(rose, Math.abs(r.offset) - prev); // (up a wall)
+          prev = Math.abs(r.offset);
+        }
+        expect(rose, `from ${u.toFixed(1)} m round`).toBeLessThanOrEqual(1e-9);
+        expect(Math.abs(r.offset), `from ${u.toFixed(1)} m round`).toBeLessThanOrEqual(TUBE_EDGE + 1e-9);
+      }
+    }
   });
 
   it("keeps a kart up a wall or on the roof within 45 degrees of the way along it, and straightens it when let go", () => {
@@ -2749,6 +2806,7 @@ describe("the tunnel", () => {
       // steering hard up the wall at speed: round over the roof all the same, on a spiral
       const k = new Kart(0, "K", 0, true);
       k.tube = true;
+      k.wings = 99;
       k.placeOn(t, 200, way * (HALF_WIDTH + 3));
       k.v = 30;
       let most = 0, high = 0;
@@ -2764,6 +2822,7 @@ describe("the tunnel", () => {
       // turned up the wall and let go: it straightens out and rides the wall along
       const r = new Kart(0, "K", 0, true);
       r.tube = true;
+      r.wings = 99;
       r.placeOn(t, 300, way * (HALF_WIDTH + 3));
       r.heading += way * 0.6;
       r.v = 30;
@@ -2776,6 +2835,7 @@ describe("the tunnel", () => {
       // and off the floor onto a wall turned further round than that: turned in to it, at no snap
       const s = new Kart(0, "K", 0, true);
       s.tube = true;
+      s.wings = 99;
       s.placeOn(t, 300, way * (TUBE_FLOOR - 0.4));
       s.heading += way * 1.2;
       s.v = 22;
@@ -2804,6 +2864,7 @@ describe("the tunnel", () => {
         for (const side of [1, -1]) {
           const k = new Kart(0, "K", 0, true);
           k.tube = true;
+          k.wings = 99;
           k.placeOn(t, i0, side * (TUBE_HALF - 0.6));
           k.heading += side * 0.7; // (turned toward the middle of the roof, to go over it)
           k.v = 30;
@@ -2839,6 +2900,7 @@ describe("the tunnel", () => {
     for (const u of [0, HALF_WIDTH + 6, TUBE_HALF - 3, -(HALF_WIDTH + 6), -(TUBE_HALF - 3)]) {
       const k = new Kart(0, "K", 0, true);
       k.tube = true;
+      k.wings = 99;
       k.placeOn(t, t.wrap(i - 20), u);
       k.v = 25;
       let went = 0, said = 0, prev = tubeSpot(t, k.x, k.y, k.elev, k.idx).p;
@@ -2867,6 +2929,7 @@ describe("the tunnel", () => {
     expect(u).toBeDefined();
     const k = new Kart(0, "K", 0, true);
     k.tube = true;
+    k.wings = 99;
     k.placeOn(t, i, u);
     k.v = TUBE_LOOP_SPEED + 8; // (fast enough to hold on anywhere else)
     k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false }, t, CLASSES.legend);
@@ -2894,21 +2957,28 @@ describe("the tunnel", () => {
     }
   });
 
-  it("puts pads up its walls and on its ceiling, traffic on its floor, and rivals race it to the end", async () => {
-    let up = 0, ceiling = 0, pads = 0;
+  it("puts pads up its walls and on its ceiling, wing pads on its floor, traffic on its floor, and rivals race it to the end", async () => {
+    let up = 0, ceiling = 0, pads = 0, wing = 0;
     for (const seed of [1, 2, 3]) {
       const race = new Race({ rivals: 3, difficulty: "pro", theme: tunnel, seed, replay: calm(), trackType: "speedway" }, null, () => {});
       for (const p of race.features.pads) {
         pads++;
         if (Math.abs(p.offset) > HALF_WIDTH) up++;
         if (Math.abs(p.offset) > HALF_WIDTH + Math.PI * TUBE_R) ceiling++;
+        if (p.wing) wing++;
+        expect(!!p.wing).toBe(Math.abs(p.offset) < TUBE_FLOOR); // (the floor's are wing pads, and only they are)
       }
       expect(race.scenery.items.length).toBe(0); // nothing outside the tube
       expect(race.tex.size).toBeLessThan(512);
     }
     expect(pads).toBeGreaterThan(5);
     expect(up).toBeGreaterThan(0);
+    expect(wing).toBeGreaterThan(0);
     expect(ceiling).toBeGreaterThanOrEqual(0);
+    // (and no wing pads anywhere else)
+    const home = new Race({ rivals: 0, difficulty: "pro", theme: THEMES[0], seed: 1, replay: calm() }, null, () => {});
+    expect(home.features.pads.length).toBeGreaterThan(0);
+    expect(home.features.pads.some((p) => p.wing)).toBe(false);
     const race = new Race({ rivals: 3, difficulty: "pro", theme: tunnel, seed: 4, replay: calm() }, null, () => {});
     await race.prepare();
     const pilot = new RivalDriver(new Rand(2), race.player, 0);
@@ -2921,6 +2991,53 @@ describe("the tunnel", () => {
     }
     expect(traffic).toBeGreaterThan(1);
     expect(race.karts.filter((k) => k.finished).length).toBeGreaterThan(2);
+  });
+
+  it("gives wings on its wing pads, every lap's worth of them, and rivals go for them and ride the walls", async () => {
+    const race = new Race({ rivals: 5, difficulty: "pro", theme: tunnel, seed: 5, replay: calm() }, null, () => {});
+    await race.prepare();
+    // (its bends are wide: wing pads all the way round, not only at the corner exits)
+    const wings = race.features.pads.filter((q) => q.wing).map((q) => q.s0).sort((a, b) => a - b);
+    expect(wings.length).toBeGreaterThan(race.track.length / 600);
+    for (let n = 1; n < wings.length; n++) expect(wings[n] - wings[n - 1]).toBeLessThan(700);
+    // driven onto one: wings (and a word about them the first time), until they run out
+    race.phase = "racing";
+    const t = race.track, p = race.player, pad = race.features.pads.find((q) => q.wing)!;
+    p.placeOn(t, t.wrap(pad.start + 2), pad.offset);
+    p.v = 20;
+    const seen: string[] = [];
+    const step = (c: { steer: number; throttle: number; brake: number; drift: boolean }) => {
+      race.update(1 / 60, c);
+      seen.push(...race.events.map((e) => (e.kind === "wings" ? `wings:${e.first}` : e.kind)));
+      race.events = [];
+    };
+    step({ steer: 0, throttle: 1, brake: 0, drift: false });
+    expect(p.wings).toBeGreaterThan(WING_TIME - 0.1);
+    expect(seen).toContain("wings:true");
+    for (let i = 0; i < 60 * (WING_TIME + 0.5); i++) step({ steer: 0, throttle: 0, brake: 1, drift: false }); // (stopped short of the next)
+    expect(p.wings).toBe(0);
+    expect(seen).toContain("wingsOff");
+    // a race of it: the rivals take wings too, and with them, and only with them, they go up the walls
+    const again = new Race({ rivals: 5, difficulty: "pro", theme: tunnel, seed: 5, replay: calm() }, null, () => {});
+    await again.prepare();
+    const pilot = new RivalDriver(new Rand(2), again.player, 0);
+    const winged = new Set<Kart>(), was = new Map<Kart, number>();
+    let up = 0, rose = 0;
+    for (let i = 0; i < 60 * 300 && again.phase !== "done"; i++) {
+      again.update(1 / 60, pilot.act(1 / 60, again.track, again.cls, again.player, again.karts, again.items,
+                                     again.obstacles.dangers(), again.features.pads));
+      again.events = [];
+      for (const k of again.karts) {
+        const a = Math.abs(k.offset);
+        if (k.wings > 0 && !k.isPlayer) winged.add(k);
+        if (k.wings > 0 && a > TUBE_FLOOR + 1.5) up++;
+        if (k.wings <= 0 && a > TUBE_EDGE + 1e-6) rose = Math.max(rose, a - (was.get(k) ?? a)); // (coming down, never up)
+        was.set(k, a);
+      }
+    }
+    expect(winged.size).toBe(5);
+    expect(up).toBeGreaterThan(60);
+    expect(rose).toBeLessThanOrEqual(1e-9);
   });
 });
 

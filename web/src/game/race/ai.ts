@@ -5,12 +5,17 @@
 // corners and release on the exit for the mini-turbo, hold oil and orbs out behind them when
 // someone is on their tail, aim before they throw (behind them too, at a kart on their tail, when
 // there is nobody to hit ahead), save each item for the moment it works best (a horn for when
-// something is about to hit them), and drive half blind through static.
+// something is about to hit them), and drive half blind through static. In the harbor tunnel they
+// go for its wing pads, and winged, now and then for a pad up a wall.
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
+import { TUBE_FLOOR, TUBE_R, holdSpeed } from "../world/tube";
+import { PAD_LEN, type Pad } from "./features";
 import { AIMED, AIM_MAX, type Items, THROWN_BACK, TRAILS } from "./items";
 import type { ClassParams, Controls, Kart } from "./kart";
+
+const WALL_TOP = TUBE_FLOOR + Math.PI * TUBE_R; // m round the tube to the top of a wall (the roof's pads are the player's)
 
 export class RivalDriver {
   private lane: number;
@@ -24,6 +29,8 @@ export class RivalDriver {
   private holding = false; // the item button is held: an item is out behind the kart
   private tapped = false; // the button went down last frame (a press lasts one frame)
   private backTapped = false; // and the back button
+  private seek: Pad | null = null; // in the tunnel's tube: the pad it is going for
+  private weighed: Pad | null = null; // and the last one it thought about going for
 
   constructor(private readonly rng: Rand, readonly kart: Kart, rank: number) {
     this.lane = rng.range(-2.5, 2.5);
@@ -31,9 +38,10 @@ export class RivalDriver {
     this.skill = 1 - rank * 0.008 + rng.range(-0.01, 0.01); // slight spread across the field
   }
 
-  /** ``dangers``: what is in the way on the road (race/obstacles.ts), to steer round. */
+  /** ``dangers``: what is in the way on the road (race/obstacles.ts), to steer round; ``pads``, the
+   * boost pads (in the tunnel's tube, the wing pads are worth going for). */
   act(dt: number, track: Track, cls: ClassParams, player: Kart, others: Kart[], items?: Items,
-      dangers: readonly { x: number; y: number; r: number }[] = []): Controls {
+      dangers: readonly { x: number; y: number; r: number }[] = [], pads: readonly Pad[] = []): Controls {
     const k = this.kart;
     const v = Math.max(k.v, 0);
     if (this.rng.next() < dt * 0.3) this.laneTarget = this.rng.range(-3, 3);
@@ -48,20 +56,28 @@ export class RivalDriver {
     // and to anything in the way (a cow, a geyser, the ring where a meteor will land), more the
     // sharper the class: a lane on the far side of it, from far enough off to make it
     const seen = 18 + 40 * cls.aiCorner;
+    let dodging = false;
     for (const o of dangers) {
       const dx = o.x - k.x, dy = o.y - k.y;
       const fwd = dx * Math.cos(k.heading) + dy * Math.sin(k.heading);
       const lat = -dx * Math.sin(k.heading) + dy * Math.cos(k.heading);
       if (fwd > 0 && fwd < seen && Math.abs(lat) < o.r + 1.6) {
-        const room = k.tube ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.4; // (in the tube, the foot of a wall will do)
+        // (in the tube, winged, the foot of a wall will do)
+        const room = k.tube && k.wings > 0 ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.4;
         this.laneTarget = Math.max(-room, Math.min(room, k.offset + (lat > 0 ? -1 : 1) * (o.r + 2.4)));
+        dodging = true;
       }
     }
+    const reach = k.tube && !dodging ? this.padLane(track, cls, pads) : null;
+    if (dodging) this.seek = null;
     this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * 1.2);
 
     const look = track.ahead(k.idx, 7 + v * 0.5);
     const kappa = track.curvature(look);
-    const edge = k.tube ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.5;
+    // (in the tube without wings, its walls are walls; winged, the foot of a wall will do, and up
+    // to a pad it is going for)
+    const edge = reach !== null ? Math.max(HALF_WIDTH - 1.5, Math.abs(reach) + 0.5)
+      : k.tube && k.wings > 0 ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.5;
     const line = Math.max(-edge, Math.min(edge, this.lane + Math.sign(kappa) * Math.min(2.8, Math.abs(kappa) * 120)));
     const [tx, ty] = track.tangent(look);
     const gx = track.xs[look] - ty * line, gy = track.ys[look] + tx * line;
@@ -87,10 +103,42 @@ export class RivalDriver {
     const throttle = v < vt ? 1 : 0;
     const brake = v > vt + 2 ? Math.min(1, (v - vt) / 6) : 0;
     return {
-      steer, throttle, brake, drift: this.drift(dt, track, cls, steer) || this.trick(cls),
+      steer, throttle, brake, drift: this.drift(dt, track, cls, steer), hop: this.trick(cls),
       item: this.itemButton(track, cls, others, items),
       back: this.backButton(cls, others),
     };
+  }
+
+  /** In the tunnel's tube, where across it the pad worth going for is (null: none): a wing pad
+   * ahead for a kart without wings (or with them running out), and for a winged kart going fast
+   * enough to hold on there, now and then a pad up a wall. */
+  private padLane(track: Track, cls: ClassParams, pads: readonly Pad[]): number | null {
+    const k = this.kart, s = track.s[k.idx], v = Math.max(k.v, 0);
+    const p = this.seek;
+    if (p) {
+      // (gone past it, or it can no longer hold on up there: back down to the floor)
+      const lost = !p.wing && (k.wings < 0.6 || v < holdSpeed(p.offset) + 1);
+      if (s > p.s0 + PAD_LEN || s < p.s0 - 90 || lost) {
+        this.seek = null;
+        this.laneTarget = this.rng.range(-3, 3);
+        return null;
+      }
+      this.laneTarget = p.offset;
+      return p.offset;
+    }
+    for (const q of pads) {
+      const d = q.s0 - s;
+      if (d < 12 || d > 70 || q === this.weighed) continue;
+      const want = q.wing ? k.wings < 2.5
+        : Math.abs(q.offset) < WALL_TOP && k.wings > d / Math.max(v, 1) + 1.5 && v > holdSpeed(q.offset) + 3;
+      if (!want) continue;
+      this.weighed = q;
+      if (this.rng.next() > (q.wing ? 0.85 : 0.3 + 0.5 * cls.aiCorner)) continue;
+      this.seek = q;
+      this.laneTarget = q.offset;
+      return q.offset;
+    }
+    return null;
   }
 
   /** Hop at a ramp's lip (a tap of the drift button) for a trick, timed by skill. */

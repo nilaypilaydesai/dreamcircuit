@@ -174,6 +174,16 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : heat > 0 ? heat : fogAt(p.z);
     // on raised road (a deck, a climb, a ramp) a kart is drawn over the road it stands on
     const bias = k.ground > 0.05 || k.elev > 1 ? -0.5 : lowAt(k.x, k.y, k.elev);
+    // (a wing pad's wings: which way, on the screen, a vapour trail streams back from the kart, as
+    // the body is drawn: unturned, round the tube)
+    let trail: [number, number] | null = null;
+    if (k.wings > 0 && Math.abs(k.v) > 12 && k.rocket <= 0 && !k.falling) {
+      const b = project(k.x - Math.cos(k.heading) * 1.6, k.y - Math.sin(k.heading) * 1.6, k.elev + 0.37, k.idx);
+      if (b) { // (from the tips, 0.37 m up)
+        const a = -(p.rot ?? 0), dx = b.sx - p.sx, dy = b.gy - p.gy;
+        trail = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a) + 0.37 * p.ppm];
+      }
+    }
     // (round the tube, the kart and its shadow are drawn turned with the surface they are on)
     const body = () => {
       const top = p.gy - h * KART_ANCHOR + bounce;
@@ -183,6 +193,11 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
       if (head) drawDome(scr, p.sx - w / 2 + (head[0] * w) / s.w, top + (head[1] * h) / s.h, (5.6 * 1.55 * h) / s.h);
       const sp = look.sparks(k);
       if (sp) drawSparks(scr, p.sx, p.gy, p.ppm, sp, k.driftDir);
+      // winged, at speed: a vapour trail streams back off each wing tip
+      if (trail && sprites.tips) {
+        const dot = Math.max(1, Math.round(p.ppm * 0.05));
+        for (const [tx, ty] of sprites.tips[vi]) vapour(scr, p.sx - w / 2 + (tx * w) / s.w, top + (ty * h) / s.h, trail[0], trail[1], dot);
+      }
     };
     items.push({
       ...p,
@@ -391,6 +406,17 @@ function drawSparks(scr: Screen, cx: number, gy: number, ppm: number, level: num
 }
 
 const FLAME = ["#fff6c8", "#ffd23f", "#ff8a1f", "#ff4d2e"].map(hex);
+const VAPOUR = hex("#f2f6ff");
+
+/** A wing tip's vapour trail: from (x, y), thinning out along (dx, dy) on the screen, in dots
+ * ``size`` pixels across. */
+function vapour(scr: Screen, x: number, y: number, dx: number, dy: number, size: number): void {
+  const n = Math.max(3, Math.min(24, Math.round(Math.hypot(dx, dy) / Math.max(1.5, size))));
+  for (let k = 1; k <= n; k++) {
+    const u = k / n;
+    scr.dimRect(Math.round(x + dx * u - size / 2), Math.round(y + dy * u - size / 2), size, size, VAPOUR, 0.7 * (1 - u * 0.85));
+  }
+}
 
 /** Exhaust fire: small flickering sparks that cool from white to red as they stream away,
  * more of them for the flamethrower and a plume for a rocket. */

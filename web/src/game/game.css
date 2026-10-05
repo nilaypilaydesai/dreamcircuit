@@ -4,8 +4,8 @@ body.game { touch-action: none; user-select: none; -webkit-user-select: none; -w
 .frame { position: fixed; inset: 0; overflow: hidden; }
 #game { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); image-rendering: pixelated; image-rendering: crisp-edges; display: block; background: #000; }
 
-/* touch: a floating joystick on the left half steers (push it hard to drift, pull back to brake;
-   the gas is automatic), DRIFT and ITEM on the right. Shown only while racing. */
+/* touch: a joystick fixed low on the left steers (push it hard to drift, pull back to brake; the
+   gas is automatic), DRIFT (which hops, for tricks) and ITEM on the right. Shown only while racing. */
 .touch { display: none; position: fixed; inset: 0; pointer-events: none; }
 @media (pointer: coarse) { .touch { display: block; } }
 .touch .pause { position: fixed; top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); width: 44px; height: 44px; pointer-events: auto; font: 12px "Press Start 2P", monospace; color: #fff; border-radius: 12px; border: 2px solid rgba(199, 155, 255, 0.6); background: rgba(12, 10, 29, 0.55); touch-action: none; }

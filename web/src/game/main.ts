@@ -51,6 +51,7 @@ const INK = hex("#0b0b14");
 const HOT = hex("#ffd23f");
 const DREAM = hex("#c79bff");
 const DIM = hex("#8f87b8");
+const SKY = hex("#63c8ff"); // a wing pad's wings
 const LOGO_ROWS = ["#ffe66d", "#ffd23f", "#ffb347", "#ff8c42", "#ff6b6b", "#f25f9c", "#c77dff", "#9d6bff"].map(hex);
 const MY_MAPS = 8; // the player's own maps kept
 const BACK_AIM = hex("#ffb347"); // the arrow sweeping behind the kart, in the mirror
@@ -623,6 +624,15 @@ class Game {
         if (e.trick === 2) { this.sound.trick(true); this.hud.popup("PERFECT TRICK!", now, HOT); }
         else if (e.trick === 1) { this.sound.trick(false); this.hud.popup("TRICK!", now, hex("#63c8ff")); }
       } else if (e.kind === "pad") this.sound.boost();
+      else if (e.kind === "wings") {
+        this.sound.wings();
+        if (e.first) this.hud.banner("WINGS!", now, SKY, 1.8, "RIDE THE WALLS, LOOP THE ROOF");
+        else this.hud.popup("WINGS!", now, SKY);
+      } else if (e.kind === "wingsOff") { this.sound.wingsOff(); this.hud.popup("WINGS GONE", now, DIM); }
+      else if (e.kind === "needWings") {
+        if (e.first) this.hud.banner("NO WINGS", now, SKY, 2.2, "THE BLUE PADS GIVE YOU WINGS");
+        else this.hud.popup("NEED WINGS!", now, SKY);
+      }
       else if (e.kind === "rocket") { this.sound.rocket(); this.hud.popup("ROCKET START!", now, HOT); }
       else if (e.kind === "burnout") { this.sound.burnout(); this.hud.popup("TOO EARLY!", now, hex("#ff6b6b")); }
       else if (e.kind === "bridge") this.hud.popup("BRIDGE AHEAD!", now, DREAM);
@@ -795,7 +805,7 @@ class Game {
     if (this.flash > 0) this.flash -= dt;
     const a = this.attract;
     if (a && (this.mode === "title" || this.mode === "main" || this.mode === "setup" || this.mode === "howto")) {
-      const c = a.driver.act(dt, a.race.track, a.race.cls, a.race.player, a.race.karts, a.race.items);
+      const c = a.driver.act(dt, a.race.track, a.race.cls, a.race.player, a.race.karts, a.race.items, [], a.race.features.pads);
       a.race.update(dt, c);
       a.race.events = [];
       this.follow(a.cam, a.race, dt);
@@ -1065,7 +1075,7 @@ class Game {
       }
     }
     drawWorldSprites(scr, cam, race.scenery.items, race.karts, {
-      sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0),
+      sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0, k.wings > 0),
       sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
       held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
       art: (item: ItemKind) => this.held[item],
@@ -1236,7 +1246,7 @@ class Game {
     const held = new Set(keys);
     const c = {
       steer: (held.has("left") ? 1 : 0) - (held.has("right") ? 1 : 0),
-      throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"),
+      throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"), hop: held.has("drift"),
       item: held.has("item"), back: held.has("back"),
     };
     const original = this.input.drive.bind(this.input);
@@ -1244,9 +1254,9 @@ class Game {
     if (held.has("auto") && r) {
       if (this.debugPilot?.kart !== r.player) this.debugPilot = new RivalDriver(new Rand(5), r.player, 0);
       this.input.drive = () => {
-        const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items);
+        const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items, [], r.features.pads);
         // ("noitems": the autopilot drives but leaves the items to the script)
-        return { ...a, item: held.has("item") || (!held.has("noitems") && !!a.item),
+        return { ...a, hop: !!a.hop, item: held.has("item") || (!held.has("noitems") && !!a.item),
                  back: held.has("back") || (!held.has("noitems") && !!a.back) };
       };
     } else {

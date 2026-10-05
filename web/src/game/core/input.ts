@@ -2,14 +2,14 @@
 // edge-triggered menu events. Listens only while the game screen is active, so the rest of the
 // site (the DATA pages) keeps normal keyboard scrolling.
 //
-// Touch races with one thumb on a floating joystick (steer; push it all the way over to drift,
-// pull it back to brake) while the gas is automatic, and the other on DRIFT, ITEM and BACK (the
-// item thrown behind; R on a keyboard, X on a pad).
+// Touch races with one thumb on a joystick fixed low on the left (steer; push it all the way over
+// to drift, pull it back to brake) while the gas is automatic, and the other on DRIFT (which also
+// hops, for tricks), ITEM and BACK (the item thrown behind; R on a keyboard, X on a pad).
 
 // "cancel" is the pad's B: back in menus, but not a pause in a race (there B brakes)
 export type MenuEvent = "up" | "down" | "left" | "right" | "confirm" | "back" | "cancel" | "pause";
 
-export interface DriveInput { steer: number; throttle: number; brake: number; drift: boolean; item: boolean; back: boolean }
+export interface DriveInput { steer: number; throttle: number; brake: number; drift: boolean; hop: boolean; item: boolean; back: boolean }
 
 const DRIVE: Record<string, string> = {
   ArrowUp: "gas", KeyW: "gas", ArrowDown: "brake", KeyS: "brake",
@@ -118,44 +118,42 @@ export class GameInput {
     window.addEventListener("resize", () => { if (this.stickId === null) this.restStick(); });
   }
 
-  /** The floating joystick: it appears under the thumb, and its base follows a thumb that slides
-   * past the rim, so steering never runs out. */
+  /** The joystick stays where it is, low on the left, and its knob follows the thumb within its
+   * rim. (It floated: it appeared under the thumb, and its base followed a thumb that slid past the
+   * rim, so on a phone it wandered round the screen.) A thumb that comes down well away from it
+   * is left alone, rather than steering hard at once. */
   private wireStick(zone: HTMLElement): void {
-    let ox = 0, oy = 0;
     const radius = () => (this.stick ? this.stick.offsetWidth / 2 - 6 : 50);
-    const place = () => {
-      if (!this.stick) return;
-      this.stick.style.left = `${ox}px`;
-      this.stick.style.top = `${oy}px`;
+    const centre = (): [number, number] => {
+      const b = this.stick?.getBoundingClientRect();
+      return b ? [b.left + b.width / 2, b.top + b.height / 2] : [0, 0];
+    };
+    const steer = (e: PointerEvent) => {
+      const [cx, cy] = centre(), r = radius();
+      let dx = (e.clientX - cx) / r, dy = (e.clientY - cy) / r;
+      const m = Math.hypot(dx, dy);
+      if (m > 1) {
+        dx /= m;
+        dy /= m;
+      }
+      this.stickVec = [dx, dy];
+      this.moveKnob(dx, dy, r);
     };
     zone.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       if (this.stickId !== null) return;
+      const [cx, cy] = centre();
+      if (Math.hypot(e.clientX - cx, e.clientY - cy) > radius() * 2.4) return;
       this.stickId = e.pointerId;
       this.touchMode = true;
       zone.setPointerCapture?.(e.pointerId);
-      ox = e.clientX;
-      oy = e.clientY;
-      this.stickVec = [0, 0];
-      place();
       this.stick?.classList.add("on");
-      this.moveKnob(0, 0, radius());
+      steer(e);
     });
     zone.addEventListener("pointermove", (e) => {
       if (e.pointerId !== this.stickId) return;
       e.preventDefault();
-      const r = radius();
-      let dx = (e.clientX - ox) / r, dy = (e.clientY - oy) / r;
-      const m = Math.hypot(dx, dy);
-      if (m > 1) {
-        ox += (dx / m) * (m - 1) * r;
-        oy += (dy / m) * (m - 1) * r;
-        dx /= m;
-        dy /= m;
-        place();
-      }
-      this.stickVec = [dx, dy];
-      this.moveKnob(dx, dy, r);
+      steer(e);
     });
     const end = (e: PointerEvent) => {
       if (e.pointerId !== this.stickId) return;
@@ -164,7 +162,6 @@ export class GameInput {
       this.stickDrift = false;
       this.stick?.classList.remove("on", "drift");
       this.moveKnob(0, 0, radius());
-      this.restStick();
     };
     zone.addEventListener("pointerup", end);
     zone.addEventListener("pointercancel", end);
@@ -231,6 +228,9 @@ export class GameInput {
       steer: (h.has("left") ? 1 : 0) - (h.has("right") ? 1 : 0),
       throttle: h.has("gas") ? 1 : 0, brake: h.has("brake") ? 1 : 0, drift: h.has("drift"), item: h.has("item"),
       back: h.has("back"),
+      // (tricks come from the drift key or button only: on touch, the stick pushed hard over drifts
+      // too, and every hard turn before a jump was taken as a trick)
+      hop: h.has("drift"),
     };
     if (this.touchMode) {
       const s = stickControls(this.stickVec[0], this.stickVec[1], this.stickDrift);
@@ -248,6 +248,7 @@ export class GameInput {
       throttle: Math.max(k.throttle, pad.gas),
       brake: Math.max(k.brake, pad.brake),
       drift: k.drift || pad.drift,
+      hop: k.hop || pad.drift,
       item: k.item || pad.item,
       back: k.back || pad.back,
     };

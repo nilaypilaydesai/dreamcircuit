@@ -5,7 +5,7 @@
 import { TUBE_LOOP_SPEED, TUBE_WALL_SPEED } from "../world/tube";
 import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
-import type { Kart } from "../race/kart";
+import { type Kart, WING_TIME } from "../race/kart";
 import { LAPS, type Race } from "../race/race";
 import {
   AIMED, FLARES_TIME, GOLD_TIME, GRAB_TIME, ITEM_KINDS, ITEM_NAMES, type ItemKind, PHANTOM_TIME, PRISM_TIME, ROCKET_TIME,
@@ -122,10 +122,10 @@ export class Hud {
       const c = p.boostLevel === 2 ? hex("#ffb347") : p.boostLevel === 1 ? hex("#63c8ff") : SILVER;
       f.draw(scr, p.boostLevel ? "BOOST READY" : "DRIFT", 108, H - 12, { color: c, outline: INK });
     }
-    // in the tunnel's tube: how fast is fast enough, to hold onto a wall and to loop right
-    // round over the ceiling (ticks on the speed bar, words that light up), and a warning when the
-    // kart is sliding back down
-    if (race.setup.theme.tube) {
+    // in the tunnel's tube, winged (a wing pad's wings: the walls are for winged karts): how fast
+    // is fast enough, to hold onto a wall and to loop right round over the ceiling (ticks on the
+    // speed bar, words that light up), and a warning when the kart is sliding back down
+    if (race.setup.theme.tube && p.wings > 0) {
       const v = Math.abs(p.v), top = race.cls.vmax * 1.28;
       for (const need of [TUBE_WALL_SPEED, TUBE_LOOP_SPEED]) scr.fillRect(11 + Math.round((90 * need) / top), H - 14, 1, 7, WHITE);
       // (lit, steady: flashing whenever the kart was fast enough to loop, which is most of a race,
@@ -140,11 +140,16 @@ export class Hud {
     this.minimap(scr, race, now);
     this.dreamStatus(scr, race, now);
     const mid = Math.round(H * 0.39); // the band the big messages use
-    for (const q of this.popups) {
-      const age = race.clock - q.at;
+    // (newest lowest: two at once, each older one goes up over the next, or they print over each
+    // other, as "BRIDGE AHEAD!" did over "TOO EARLY!" at the start)
+    let above = Infinity;
+    for (let n = this.popups.length - 1; n >= 0; n--) {
+      const q = this.popups[n], age = race.clock - q.at;
       if (age < 0 || age > 0.9) continue;
+      const y = Math.min(mid + 34 - age * 26, above - 18);
+      above = y;
       if (age > 0.6 && Math.floor(now * 12) % 2) continue;
-      f.draw(scr, q.text, W / 2, mid + 34 - age * 26, { scale: 2, color: q.color, outline: INK, align: "center" });
+      f.draw(scr, q.text, W / 2, y, { scale: 2, color: q.color, outline: INK, align: "center" });
     }
     this.itemSlot(scr, p, now);
     // a police car after the player: red and blue flashing at the top of the screen, faster as it
@@ -154,7 +159,9 @@ export class Hud {
       f.draw(scr, lunge ? "DODGE!" : "POLICE", W / 2, WARN_Y, { color: red ? hex("#ff2a2a") : hex("#4a8cff"), outline: INK, align: "center" });
     }
     if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / ROCKET_TIME, hex("#ff8a1f"));
-    else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));
+    else if (p.wings > 0) { // (flashing as they run out)
+      if (p.wings > 1.5 || Math.floor(now * 6) % 2 === 0) this.meter(scr, "WINGS", p.wings / WING_TIME, hex("#63c8ff"));
+    } else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));
     else if (p.phantom > 0) this.meter(scr, "PHANTOM", p.phantom / PHANTOM_TIME, hex("#c9b8ff"));
     else if (p.gold > 0) this.meter(scr, "GOLD", p.gold / GOLD_TIME, GOLD);
     else if (p.flares > 0) this.meter(scr, "FLARES", p.flares / FLARES_TIME, hex("#ff8a1f"));

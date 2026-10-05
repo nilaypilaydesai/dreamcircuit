@@ -3,12 +3,11 @@
 // dashed lane lines and amber cat's eyes, a concrete walkway along each side, the walls faced with
 // pale tiles to head height under a dark cable tray and bare concrete above, a concrete roof with
 // a row of lights down its middle (each throwing a pool of light on the road below), lane signals
-// on the roof and green emergency-phone niches in the right-hand wall now and then, the start
-// line's checks on the road, and boost pads wherever they lie round the tube (the road, a wall,
-// the roof). Only the stretch of tube ahead of the camera is drawn, and where the circuit crosses
-// itself the other stretch is left out (from inside the tube it is never seen, and drawn it would
-// show through the walls). Everything is placed between road points where it lies, not snapped
-// to the nearest one.
+// on the roof, the start line's checks on the road, and boost pads wherever they lie round the
+// tube (the road, a wall, the roof; the wing pads on the floor). Only the stretch of tube ahead of
+// the camera is drawn, and where the circuit crosses itself the other stretch is left out (from
+// inside the tube it is never seen, and drawn it would show through the walls). Everything is
+// placed between road points where it lies, not snapped to the nearest one.
 
 import { hex, mix, shade } from "../core/gfx";
 import { PAD_HALF, PAD_LEN, type Features } from "../race/features";
@@ -35,7 +34,6 @@ const RING: number[] = (() => {
   return [...half, ...back];
 })();
 const LAMP = hex("#fff2cc"), EYE = hex("#ffb52e"), SIGNAL = hex("#141518"), ARROW = hex("#3be27a");
-const NICHE = hex("#1d7a3d"), PHONE = hex("#f2f2ec");
 const SEEN = 260; // m of tube drawn ahead of the camera (past the far plane, where the fog is whole: drawn
 // short of it, the far end of a straight showed as a dark disc with an edge)
 // (the panels are the backdrop to all else in the tube: sorted 7 m deeper than they are, so a
@@ -228,7 +226,7 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
   }
 
   /** The lane lines' dashes, the cat's eyes, the lights down the roof (and the pools of light they
-   * throw), the lane signals and the emergency niches, each where it falls along the road (drawn
+   * throw) and the lane signals, each where it falls along the road (drawn
    * with whichever piece they fell in, they jumped about as the pieces did). */
   function marks(): void {
     const rear = behind * 0.6; // (m)
@@ -283,13 +281,6 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
                  tubeBetween(track, a.i, a.w, u + 0.3, 0.03).p], ARROW, nm, MARKS - 0.01);
       }
     });
-    // an emergency phone in a green niche in the right-hand wall every 96 m
-    each(96, (sn) => {
-      if (!near(sn)) return;
-      const u0 = -(TUBE_FLOOR + 0.25 * (ARC / 6)), u1 = -(TUBE_FLOOR + 1.6 * (ARC / 6));
-      patch(sn, 1.4, u1, u0, NICHE, 0.02);
-      patch(sn + 0.5, 0.4, -(TUBE_FLOOR + 1.05 * (ARC / 6)), -(TUBE_FLOOR + 0.75 * (ARC / 6)), PHONE, 0.03, 1, MARKS - 0.01);
-    });
   }
 }
 
@@ -301,7 +292,7 @@ function wrapS(track: Track, s: number): number {
 }
 
 /** Boost pads round the tube: a plate and three chevrons, laid on the surface wherever the pad is,
- * each one decal at one depth. */
+ * each one decal at one depth; a wing pad (on the floor) is blue, with a little plane on it. */
 function pads(p: Painter, track: Track, f: Features, from: number, now: number, dir: number): void {
   const s0 = track.s[from];
   for (const pad of f.pads) {
@@ -314,9 +305,16 @@ function pads(p: Painter, track: Track, f: Features, from: number, now: number, 
     const nrm = normalAt(track, pad.start, pad.offset), from0 = p.faces.length;
     for (let q = 0; q < 5; q++) {
       const u0 = (PAD_LEN * q) / 5, u1 = (PAD_LEN * (q + 1)) / 5;
-      face(p, [at(u0, -PAD_HALF), at(u1, -PAD_HALF), at(u1, PAD_HALF), at(u0, PAD_HALF)], hex("#7a2e12"), nrm, 0, 1, true);
+      face(p, [at(u0, -PAD_HALF), at(u1, -PAD_HALF), at(u1, PAD_HALF), at(u0, PAD_HALF)], hex(pad.wing ? "#123a6e" : "#7a2e12"), nrm, 0, 1, true);
     }
-    for (let c = 0; c < 3; c++) {
+    if (pad.wing) { // the plane, from above: its body, swept wings and tailplane, nose first down the road
+      const col = mix(hex("#63c8ff"), hex("#f2f6ff"), 0.5 + 0.5 * Math.sin(now * 7));
+      face(p, [at(1.0, -0.3), at(6.3, -0.3), at(6.3, 0.3), at(1.0, 0.3)], col, nrm, 0, 1, true);
+      face(p, [at(2.2, -2.3), at(3.4, -0.3), at(4.8, -0.3), at(2.8, -2.3)], col, nrm, 0, 1, true);
+      face(p, [at(2.8, 2.3), at(4.8, 0.3), at(3.4, 0.3), at(2.2, 2.3)], col, nrm, 0, 1, true);
+      face(p, [at(0.8, -1.2), at(1.5, -0.3), at(2.1, -0.3), at(1.3, -1.2)], col, nrm, 0, 1, true);
+      face(p, [at(1.3, 1.2), at(2.1, 0.3), at(1.5, 0.3), at(0.8, 1.2)], col, nrm, 0, 1, true);
+    } else for (let c = 0; c < 3; c++) {
       const u0 = 1 + c * 2, col = mix(hex("#ff8a1f"), hex("#fff2a8"), 0.5 + 0.5 * Math.sin(now * 9 - c * 1.6));
       face(p, [at(u0, -PAD_HALF + 0.4), at(u0 + 1.4, 0), at(u0 + 2.0, 0), at(u0 + 0.6, -PAD_HALF + 0.4)], col, nrm, 0, 1, true);
       face(p, [at(u0 + 0.6, PAD_HALF - 0.4), at(u0 + 2.0, 0), at(u0 + 1.4, 0), at(u0, PAD_HALF - 0.4)], col, nrm, 0, 1, true);
