@@ -1,22 +1,25 @@
-// The DATA page's hero video (and the stills and GIF frames for the README), filmed in the game
-// itself: a trailer that cuts between the eight worlds, the items, the garage and the Grand Prix
-// podium. It drives races through the dev hook (window.__dc) on circuits the designer dreamed and
-// films clean, HUD-free shots from scripted cameras: a drone over the grid inside the harbor
-// tunnel, the chase camera through a jump and round the tube over its roof, traffic in the
-// tunnel, tracking shots along Tokyo's expressway and a crane's girder, a police car on the player's
-// tail, cows crossing the valley road, a wrecking ball, a meteor, a geyser, a kart floating off a
-// crater's rim under the Earth, a red-rock canyon, close-ups of items in use, and a kart going
-// into the volcano's lava and coming back out under the rescue drone; the garage and the podium
-// are filmed as the game draws them.
-// Every 384x216 frame is upscaled with nearest-neighbour sampling (the pixel art stays crisp) and
-// encoded as it is filmed, with WebCodecs, into H.264 MP4s, one per output size. Shots cross-fade,
-// and the last fades back into the first, so the video loops without a seam; the poster is its
-// first frame. Files go to a local capture server (scripts/capture_frames.py), which writes them
-// to disk.
+// The trailer, and the DATA page's hero video (and the stills and GIF frames for the README),
+// filmed in the game itself, in one pass, as two cuts:
+//   the trailer: it opens on the designer's real denoising of a circuit (the noisy lap after each
+//     of its 24 steps, recorded from the model), a scribble that untangles into a figure-eight,
+//     and the game's logo over it; then that circuit raced in Dream Valley, from the countdown to
+//     a fly-by at the start, the jump, under and over its bridge, and a world after world, a
+//     caption naming each; the garage, the items and the Grand Prix podium; and an end card. Hard
+//     cuts, every shot a whole number of bars of the music (rendered from the game's own songs:
+//     the title song under the opening, the countdown's beeps, and Dream Valley's from GO), which
+//     is sent alongside as a WAV to be laid under the video.
+//   the hero video: the same shots without the opening, the captions or the end card, cross-faded,
+//     the last back into the first, so it loops behind the DATA page's title without a seam.
+// It drives races through the dev hook (window.__dc) on circuits the designer dreamed and films
+// clean, HUD-free shots from scripted cameras. Every 384x216 frame is upscaled with
+// nearest-neighbour sampling (the pixel art stays crisp) and encoded as it is filmed, with
+// WebCodecs, into H.264 MP4s, one per output size; the posters are their first frames. Files go
+// to a local capture server (scripts/capture_frames.py), which writes them to disk.
 //
 // In the browser console on the dev server (http://localhost:5173/):
-//   const { film } = await import("/src/tools/cinema.ts"); await film({ figure8, loops })
+//   const { film } = await import("/src/tools/cinema.ts"); await film({ figure8, loops, opening, dream })
 
+import { Music, SONGS } from "../game/core/music";
 import { Encoder } from "./mp4";
 
 interface Kart {
@@ -26,14 +29,16 @@ interface Kart {
   slope: number; // how the road climbs under it
   staticT: number; // s left with a rival's static over its screen
   wings: number; // s left with a wing pad's wings (the tunnel: its walls are for winged karts)
+  rampU: number; // 0..1 up a jump's ramp, -1 off it
 }
 interface Hill { s0: number; len: number; h: number; style?: string; side?: number }
 interface Track {
   xs: number[]; ys: number[]; s: number[]; elev: number[]; count: number; length: number; startIndex: number;
-  bridges: { center: number; lower: number }[]; hills: Hill[];
+  bridges: { center: number; lower: number; centerS: number }[]; hills: Hill[];
   tangent(i: number): [number, number];
   curvature(i: number): number;
   wrap(i: number): number;
+  fromStart(i: number): number;
 }
 interface Race {
   track: Track; player: Kart; standings: Kart[]; karts: Kart[]; phase: string; countdown: number;
@@ -43,6 +48,15 @@ interface Race {
   aimPhase: number; // the player's aiming arrow (where it is in its sweep)
   obstacles: { list: { kind: string; state: number; t: number; wait: number; s: number; offset: number; idx: number; x: number; y: number }[] };
 }
+interface Scr {
+  buf: Uint32Array;
+  present(): void;
+  fillRect(x: number, y: number, w: number, h: number, c: number): void;
+  dimRect(x: number, y: number, w: number, h: number, c: number, a: number): void;
+}
+interface Font {
+  draw(scr: Scr, text: string, x: number, y: number, style?: Record<string, unknown>): void;
+}
 interface Game {
   race: Race | null;
   time: number;
@@ -51,6 +65,8 @@ interface Game {
   garage: { menu: { index: number; items: { right?: () => void }[] }; set(b: Record<string, string>): void };
   ceremony: { update(dt: number, sound: unknown): void } | null;
   sound: unknown;
+  scr: Scr; // (the game's framebuffer and pixel font: TypeScript-private, there at runtime)
+  font: Font;
   render(): void;
 }
 interface Dc {
@@ -70,13 +86,16 @@ export interface Variant { name: string; w: number; h: number; bitrate: number }
 
 export interface FilmOptions {
   url?: string; // capture server
-  figure8: number[]; // a figure-eight (game meters) with a jump: the launch, the jump and the loop in the tube
+  figure8: number[]; // a figure-eight (game meters): the tunnel's wing pad and the loop round its roof
   // ten plain loops: three for the items (Sunset Mesa, one with a canyon), the reef, the tunnel's
   // traffic, the valley, the volcano, the building site, the moon and Tokyo
   loops: number[][];
+  opening: number[]; // the circuit the opening dreams (game meters), raced in Dream Valley
+  // and its dream: the noisy lap after each of the designer's 24 Heun steps (the first pure
+  // noise), as steps between its points (x row, then y row, network units), and their scale
+  dream: { states: number[][]; scale: number };
   fps?: number;
-  fade?: number; // frames of cross-fade between shots
-  variants?: Variant[];
+  fade?: number; // frames of cross-fade between shots (the hero video)
   every?: number; // also save every nth frame at game resolution (the README's GIF and stills)
 }
 
@@ -84,13 +103,23 @@ export const VARIANTS: Variant[] = [
   { name: "hero", w: 1920, h: 1080, bitrate: 3_000_000 },
   { name: "hero-648", w: 1152, h: 648, bitrate: 1_400_000 }, // exactly 3x: small screens
 ];
+export const TRAILER: Variant[] = [
+  { name: "trailer", w: 1920, h: 1080, bitrate: 3_200_000 },
+  { name: "trailer-648", w: 1152, h: 648, bitrate: 1_600_000 },
+];
 
 // the aiming arrow's sweep (race/items.ts)
 const AIM_MAX = 0.75, AIM_RATE = 3.1;
 const THEME = { valley: 0, tunnel: 1, mesa: 2, reef: 3, tokyo: 4, volcano: 5, construction: 6, moon: 7 };
-const COW_WALK = 1, POLICE_CHASE = 1, POLICE_LUNGE = 4, GEYSER_QUIET = 0, METEOR_FALL = 0; // (race/obstacles.ts)
-const FALL_SWAP = 0.72, FALL_RELEASE = 2.0; // into the lava: lifted out, let go (race/kart.ts)
+const COW_WALK = 1, POLICE_CHASE = 1, POLICE_LUNGE = 4, GEYSER_QUIET = 0; // (race/obstacles.ts)
+const FALL_SWAP = 0.72; // into the lava: lifted out (race/kart.ts)
 const PAN = 1536, FRAME_W = 384; // the sky's panorama for a full turn, and the film's width (render/sky.ts)
+const W = 384, H = 216;
+
+// the music: the title song under the opening (and the end card), Dream Valley's from GO; every
+// shot from GO on is a whole number of its bars (at 150 bpm and 30 fps, 48 frames each)
+const TITLE_BAR = (4 * 60) / SONGS.title.bpm; // s
+const BAR = (4 * 60) / SONGS.valley.bpm; // s
 
 const tick = () => new Promise<void>((r) => {
   const ch = new MessageChannel();
@@ -98,46 +127,64 @@ const tick = () => new Promise<void>((r) => {
   ch.port2.postMessage(0);
 });
 const smooth = (u: number) => u * u * (3 - 2 * u);
+const clamp01 = (u: number) => Math.max(0, Math.min(1, u));
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
-/** The film as it is shot: cross-fades between shots, every frame upscaled and encoded at once
- * (nothing but a cross-fade's worth of frames is held in memory), and the loop closed at the end. */
+// colors, packed as the framebuffer's (0xAABBGGRR, as core/gfx.ts packs them)
+const rgb = (r: number, g: number, b: number): number => (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
+const hex = (s: string): number => {
+  const v = parseInt(s.slice(1), 16);
+  return rgb((v >> 16) & 255, (v >> 8) & 255, v & 255);
+};
+const mix = (a: number, b: number, t: number): number =>
+  rgb((a & 255) + (((b & 255) - (a & 255)) * t) | 0, ((a >> 8) & 255) + ((((b >> 8) & 255) - ((a >> 8) & 255)) * t) | 0,
+      ((a >> 16) & 255) + ((((b >> 16) & 255) - ((a >> 16) & 255)) * t) | 0);
+const INK = hex("#0b0b14"), WHITE = 0xffffffff, HOT = hex("#ffd23f"), DREAM = hex("#c79bff"), DIM = hex("#8f87b8");
+const GO_GREEN = hex("#5dff7a"), SKY_TOP = hex("#0b0420"), SKY_LOW = hex("#24103f");
+const LOGO_ROWS = ["#ffe66d", "#ffd23f", "#ffb347", "#ff8c42", "#ff6b6b", "#f25f9c", "#c77dff", "#9d6bff"].map(hex); // (the title screen's)
+
+/** A cut as it is shot: cross-fades between shots (or hard cuts, with no fade), every frame
+ * upscaled and encoded at once (nothing but a cross-fade's worth of frames is held in memory),
+ * and, for a loop, the last shot faded back into the first. */
 class Reel {
-  readonly counts: Record<string, number> = {};
   readonly shots: { name: string; start: number }[] = []; // the first clean frame of each shot
   private readonly low: OffscreenCanvas;
   private readonly lg: OffscreenCanvasRenderingContext2D;
   private head: ImageBitmap[] = []; // the first shot's opening frames: the loop fades into them
   private tail: ImageBitmap[] = []; // the previous shot's closing frames, fading into this shot
   // A shot's frames are held back by `fade` frames, so whenever the shot ends, its last `fade`
-  // frames are still unemitted and become the cross-fade into the next shot. Shots can then end
-  // on an event (a landing, a blast) instead of a timer.
+  // frames are still unemitted and become the cross-fade into the next shot.
   private pending: ImageBitmap[] = [];
   private index = -1;
-  private name = "";
   private k = 0;
   private emitted = 0;
   private poster: Blob | null = null;
   private readonly posts: Promise<unknown>[] = [];
 
   private constructor(private readonly canvas: HTMLCanvasElement, private readonly fps: number,
-                      private readonly fade: number, private readonly every: number,
+                      private readonly fade: number, private readonly every: number, private readonly loop: boolean,
+                      private readonly prefix: string,
                       private readonly outs: { v: Variant; big: OffscreenCanvas; g: OffscreenCanvasRenderingContext2D; enc: Encoder }[],
                       private readonly post: (name: string, blob: Blob) => Promise<unknown>) {
     this.low = new OffscreenCanvas(canvas.width, canvas.height);
     this.lg = this.low.getContext("2d")!;
   }
 
-  static async open(canvas: HTMLCanvasElement, fps: number, fade: number, every: number, variants: Variant[],
-                    post: (name: string, blob: Blob) => Promise<unknown>): Promise<Reel> {
+  static async open(canvas: HTMLCanvasElement, o: { fps: number; fade: number; every: number; loop: boolean; prefix: string },
+                    variants: Variant[], post: (name: string, blob: Blob) => Promise<unknown>): Promise<Reel> {
     const outs = [];
     for (const v of variants) {
       const big = new OffscreenCanvas(v.w, v.h);
       const g = big.getContext("2d")!;
       g.imageSmoothingEnabled = false;
-      outs.push({ v, big, g, enc: new Encoder(v.w, v.h, fps, await Encoder.pick(v.w, v.h, fps), v.bitrate) });
+      outs.push({ v, big, g, enc: new Encoder(v.w, v.h, o.fps, await Encoder.pick(v.w, v.h, o.fps), v.bitrate) });
     }
-    return new Reel(canvas, fps, fade, every, outs, post);
+    return new Reel(canvas, o.fps, o.fade, o.every, o.loop, o.prefix, outs, post);
+  }
+
+  /** Frames emitted so far (the time, in frames, of the next). */
+  get frames(): number {
+    return this.emitted + this.pending.length;
   }
 
   private async emit(a: CanvasImageSource, b?: CanvasImageSource, alpha = 0): Promise<void> {
@@ -155,14 +202,13 @@ class Reel {
     }
     if (this.every && this.emitted % this.every === 0) {
       const png = await this.low.convertToBlob({ type: "image/png" });
-      this.posts.push(this.post(`f_${String(this.emitted).padStart(4, "0")}.png`, png));
+      this.posts.push(this.post(`${this.prefix}${String(this.emitted).padStart(4, "0")}.png`, png));
     }
     this.emitted += 1;
   }
 
   begin(name: string): void {
     this.index += 1;
-    this.name = name;
     this.k = 0;
     this.tail = this.pending;
     this.pending = [];
@@ -171,12 +217,15 @@ class Reel {
 
   /** Film the frame on the game's canvas as the next frame of the current shot. */
   async save(): Promise<void> {
-    this.counts[this.name] = (this.counts[this.name] ?? 0) + 1;
     const k = this.k++;
     const bmp = await createImageBitmap(this.canvas);
     if (k < this.fade) {
       if (this.index === 0) {
-        this.head.push(bmp);
+        if (this.loop) this.head.push(bmp);
+        else {
+          await this.emit(bmp);
+          bmp.close();
+        }
       } else {
         const from = this.tail[k];
         await this.emit(from ?? bmp, bmp, (k + 1) / (this.fade + 1));
@@ -193,10 +242,15 @@ class Reel {
     }
   }
 
-  /** Close the loop (the last shot fades back into the first), finish the files and send them. */
+  /** Finish the files and send them: a loop's last shot fades back into its first; otherwise the
+   * last frames still held back go out as they are. */
   async finish(): Promise<Record<string, number>> {
-    for (let k = 0; k < this.fade; k++) {
-      await this.emit(this.pending[k] ?? this.head[k], this.head[k], (k + 1) / (this.fade + 1));
+    if (this.loop) {
+      for (let k = 0; k < this.fade; k++) {
+        await this.emit(this.pending[k] ?? this.head[k], this.head[k], (k + 1) / (this.fade + 1));
+      }
+    } else {
+      for (const b of this.pending) await this.emit(b);
     }
     for (const b of [...this.head, ...this.pending, ...this.tail]) b.close();
     const sizes: Record<string, number> = {};
@@ -207,29 +261,136 @@ class Reel {
     }
     if (this.poster) await this.post(`${this.outs[0].v.name}.jpg`, this.poster);
     await Promise.all(this.posts);
-    const manifest = { fps: this.fps, fade: this.fade, every: this.every, frames: this.emitted, shots: this.shots, counts: this.counts };
-    await this.post("manifest.json", new Blob([JSON.stringify(manifest)], { type: "text/plain" }));
+    const manifest = { fps: this.fps, fade: this.fade, every: this.every, frames: this.emitted, shots: this.shots };
+    await this.post(`${this.outs[0].v.name}_manifest.json`, new Blob([JSON.stringify(manifest)], { type: "text/plain" }));
     return { ...sizes, frames: this.emitted };
   }
 }
 
+/** The noisy lap after ``k`` of the dream's Heun steps (fractional: between two steps' states), as
+ * screen points: the steps integrated into a loop as from_steps does with nothing known (the
+ * closing gap spread over every step), fitted around (cx, cy) at ``r`` pixels from its middle on
+ * average. */
+function lapAt(dream: FilmOptions["dream"], k: number, cx: number, cy: number, r: number): [number, number][] {
+  const S = dream.states, n = S[0].length / 2;
+  const a = Math.max(0, Math.min(S.length - 1, Math.floor(k))), b = Math.min(S.length - 1, a + 1), w = clamp01(k - a);
+  const u = (j: number) => (S[a][j] * (1 - w) + S[b][j] * w) * dream.scale;
+  let gx = 0, gy = 0;
+  for (let j = 0; j < n; j++) { gx += u(j); gy += u(n + j); }
+  const pts: [number, number][] = [[0, 0]];
+  for (let j = 1; j < n; j++) {
+    const [px, py] = pts[j - 1];
+    pts.push([px + u(j - 1) - gx / n, py + u(n + j - 1) - gy / n]);
+  }
+  let mx = 0, my = 0;
+  for (const [x, y] of pts) { mx += x / n; my += y / n; }
+  let rms = 0;
+  for (const [x, y] of pts) rms += ((x - mx) ** 2 + (y - my) ** 2) / n;
+  const f = r / (Math.sqrt(rms) || 1);
+  return pts.map(([x, y]) => [cx + (x - mx) * f, cy - (y - my) * f]);
+}
+
 export async function film(o: FilmOptions): Promise<Record<string, number>> {
   const dc = (window as unknown as { __dc: Dc }).__dc;
+  const g = dc.game;
   const url = o.url ?? "http://127.0.0.1:8765";
   const fps = o.fps ?? 30;
   const fade = o.fade ?? 12;
   const per = Math.round(60 / fps); // simulation steps per filmed frame
   const post = (name: string, blob: Blob) =>
     fetch(`${url}/save/${name}`, { method: "POST", body: blob, headers: { "Content-Type": "text/plain" } });
-  dc.pin([384, 216]); // the film is composed for the classic 16:9 framebuffer, whatever the window
+  dc.pin([W, H]); // the film is composed for the classic 16:9 framebuffer, whatever the window
   dc.hold(true);
   // every take starts from the same kart (the garage shot changes it, and the browser keeps it)
   dc.game.garage.set({ body: "classic", wheels: "standard", spoiler: "none", exhaust: "stock", paint: "sunset", accent: "cream" });
   const canvas = document.getElementById("game") as HTMLCanvasElement;
-  const reel = await Reel.open(canvas, fps, fade, o.every ?? 0, o.variants ?? VARIANTS, post);
+  const hero = await Reel.open(canvas, { fps, fade, every: o.every ?? 0, loop: true, prefix: "f_" }, VARIANTS, post);
+  const trailer = await Reel.open(canvas, { fps, fade: 0, every: o.every ?? 0, loop: false, prefix: "t_" }, TRAILER, post);
   const race = () => dc.game.race!;
   const frames = (seconds: number) => Math.round(fps * seconds);
+  const bars = (n: number) => Math.round(fps * BAR * n);
+  const counts: Record<string, number> = {};
+  // when the music changes: GO (Dream Valley's song from here), the end card (the title song
+  // again), and the countdown's beeps, in trailer frames
+  const cue = { go: -1, end: -1, beeps: [] as number[] };
 
+  // ---------------------------------------------------------------- the two cuts
+  // Every frame goes into the trailer; the hero video takes the shots that are not the opening's
+  // or the end card's, and none of the trailer's writing (it is filmed before the captions go on).
+  let inHero = true;
+  const begin = (name: string, heroToo = true) => {
+    inHero = heroToo;
+    if (heroToo) hero.begin(name);
+    trailer.begin(name);
+  };
+  const save = async (name: string, dress?: () => void) => {
+    counts[name] = (counts[name] ?? 0) + 1;
+    if (inHero) await hero.save();
+    if (dress) {
+      dress();
+      g.scr.present();
+    }
+    await trailer.save();
+  };
+
+  // ---------------------------------------------------------------- writing over the picture
+  /** Draw with ``draw`` over the frame at ``a`` (0..1) of full strength. */
+  const faded = (a: number, draw: () => void) => {
+    if (a <= 0) return;
+    if (a >= 1) return draw();
+    const base = g.scr.buf.slice();
+    draw();
+    const b = g.scr.buf;
+    for (let i = 0; i < b.length; i++) if (b[i] !== base[i]) b[i] = mix(base[i], b[i], a);
+  };
+  /** In from 0 to 1 over ``ramp`` frames from frame ``at``, and back out by frame ``until``. */
+  const swell = (f: number, at: number, until: number, ramp = 8) => clamp01(Math.min((f - at + 1) / ramp, (until - f) / ramp));
+  const text = (s: string, x: number, y: number, style: Record<string, unknown>) => g.font.draw(g.scr, s, x, y, style);
+  /** A world's name, low on the left, with a bar of gold beside it. */
+  const caption = (name: string, f: number, at = 6, len = 62) => faded(swell(f, at, at + len), () => {
+    g.scr.fillRect(12, H - 27, 2, 12, HOT);
+    text(name, 19, H - 25, { color: WHITE, outline: INK });
+  });
+  /** What a stretch of the trailer shows, bigger, high in the middle (over the sky, clear of the
+   * karts low in the picture). */
+  const banner = (s: string, f: number, at = 4, len = 66) => faded(swell(f, at, at + len), () =>
+    text(s, W / 2, 22, { scale: 2, color: WHITE, outline: INK, align: "center" }));
+  const black = (a: number) => { if (a > 0) g.scr.dimRect(0, 0, W, H, rgb(0, 0, 0), clamp01(a)); };
+  const backdrop = () => {
+    for (let y = 0; y < H; y++) g.scr.fillRect(0, y, W, 1, mix(SKY_TOP, SKY_LOW, y / H));
+  };
+  /** The dream's lap after ``k`` steps, a line of light (``glow``: how bright, 0..1). */
+  const drawLap = (k: number, glow: number, color: number, cx = W / 2, cy = H / 2, r = 50) => {
+    const pts = lapAt(o.dream, k, cx, cy, r), b = g.scr.buf;
+    const plot = (x: number, y: number, c: number, a: number) => {
+      x = Math.round(x);
+      y = Math.round(y);
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
+      b[y * W + x] = mix(b[y * W + x], c, a);
+    };
+    for (let j = 0; j < pts.length; j++) {
+      const [ax, ay] = pts[j], [bx, by] = pts[(j + 1) % pts.length];
+      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 1.5));
+      for (let s = 0; s < steps; s++) {
+        const x = ax + ((bx - ax) * s) / steps, y = ay + ((by - ay) * s) / steps;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) plot(x + dx, y + dy, color, 0.3 * glow);
+      }
+    }
+    for (let j = 0; j < pts.length; j++) {
+      const [ax, ay] = pts[j], [bx, by] = pts[(j + 1) % pts.length];
+      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * 1.5));
+      for (let s = 0; s < steps; s++) plot(ax + ((bx - ax) * s) / steps, ay + ((by - ay) * s) / steps, color, glow);
+    }
+  };
+  const logo = (a: number, tagline: number) => {
+    faded(a, () => {
+      text("DREAM", W / 2, 38, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
+      text("CIRCUIT", W / 2, 82, { scale: 5, rows: LOGO_ROWS, outline: INK, shadow: hex("#2a0f4a"), align: "center" });
+    });
+    faded(tagline, () => text("THE KART RACER AN AI DREAMS AS YOU DRIVE", W / 2, 132, { color: DREAM, outline: INK, align: "center" }));
+  };
+
+  // ---------------------------------------------------------------- driving, and the cameras
   // the autopilot drives (and leaves the items to the script); at a start it waits, then hits the
   // gas just before GO: a rocket start
   const keys = (extra: string[] = []) => {
@@ -259,6 +420,10 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       await new Promise((r) => setTimeout(r, 4));
     }
   };
+  const ready = async (points: number[], theme: number, meters: number, field = 7) => {
+    await start(points, theme, field);
+    await until(() => race().phase === "racing" && race().player.dist > meters, 60 * 30);
+  };
   const heading = (i: number) => {
     const [tx, ty] = race().track.tangent(i);
     return Math.atan2(ty, tx);
@@ -268,6 +433,13 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     const t = race().track;
     const d = t.s[i] - t.s[k.idx];
     return d < 0 ? d + t.length : d;
+  };
+  /** The dense index ``m`` m along the road from index i (back, for m < 0). */
+  const along = (i: number, m: number) => race().track.wrap(i + Math.round(m / 0.58));
+  /** Where ``off`` m left of the road at index i is. */
+  const beside = (i: number, off: number): [number, number] => {
+    const t = race().track, [tx, ty] = t.tangent(i);
+    return [t.xs[i] - ty * off, t.ys[i] + tx * off];
   };
   // the climb kart k is on, if any
   const climb = (k: Kart): Hill | undefined => {
@@ -281,73 +453,187 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     return { d: Math.hypot(dx, dy), off: wrapAngle(Math.atan2(dy, dx) - p.heading) };
   };
   const rivals = () => race().karts.filter((k) => !k.isPlayer && !k.finished);
-  // shots that ride with a kart: the game's chase camera (raised a little), a tracking shot from
-  // ahead and to the side (side 1: the left), and a crane up and back from it
-  const chase = (lift = 0) => dc.shot({ height: 2.9 + race().player.ground + lift, clear: 2.5 });
+  // shots that ride with a kart: the game's chase camera (raised a little), and a tracking shot
+  // from ahead and to the side (side 1: the left), its heading smoothed (a drifting kart's heading
+  // swings, and a camera hung off it swung with it)
+  let calm: number | null = null; // the smoothed heading the riding cameras hang off
+  const steady = (k: Kart, rate = 5) => {
+    calm = calm === null ? k.heading : calm + wrapAngle(k.heading - calm) * Math.min(1, rate / fps);
+    return calm;
+  };
+  /** Behind the kart, ``back`` m and ``h`` m up, the view tipped down to keep the kart low in the
+   * picture (raised, the game's own camera lost the kart off the foot of the screen). */
+  const behind = (k: Kart, back = 7, h = 3.6, row = 176) => {
+    const hd = steady(k, 4), x = k.x - Math.cos(hd) * back, y = k.y - Math.sin(hd) * back;
+    dc.shot({ x, y, heading: hd, height: k.ground + h, focal: 250, fx: 0, clear: 2.5, horizon: Math.round(row - (h / back) * 250) });
+  };
   const track = (k: Kart, side = 1, d = 6.5, h = 2.3) => {
-    const c = Math.cos(k.heading), sn = Math.sin(k.heading);
+    const hd = steady(k), c = Math.cos(hd), sn = Math.sin(hd);
     const x = k.x + c * d - sn * d * side, y = k.y + sn * d + c * d * side;
     dc.shot({ x, y, heading: Math.atan2(k.y - y, k.x - x), height: h + k.elev, focal: 250, fx: 0, clear: 3 });
   };
-  const crane = (k: Kart, e: number, back = 26, up = 17) => {
-    const b = 7 + back * e;
-    dc.shot({ x: k.x - Math.cos(k.heading) * b, y: k.y - Math.sin(k.heading) * b,
-              heading: k.heading, height: 3 + k.ground + up * e, focal: 250, fx: 0, clear: 5 + 10 * e });
+  /** A camera standing at (x, y), ``h`` m up, turning to follow whatever ``at`` gives (smoothly:
+   * a pan, not a snap; fast as a fly-by goes past, as a real one would be). */
+  let aim: number | null = null;
+  const stand = (x: number, y: number, h: number, at: [number, number], focal = 250, horizon = 74, rate = 7) => {
+    const want = Math.atan2(at[1] - y, at[0] - x);
+    aim = aim === null ? want : aim + wrapAngle(want - aim) * Math.min(1, rate / fps);
+    dc.shot({ x, y, heading: aim, height: h, focal, fx: 0, clear: 2, horizon });
   };
-  const film = async (name: string, seconds: number, shoot: (f: number, n: number) => void, extra?: (f: number) => string[]) => {
-    const n = frames(seconds);
-    reel.begin(name);
+  /** A shot of ``n`` frames: the race goes on (``extra``: keys pressed) while ``shoot`` frames it. */
+  const film = async (name: string, n: number, shoot: (f: number, n: number) => void,
+                      opt: { extra?: (f: number) => string[]; dress?: (f: number, n: number) => void; slow?: (f: number) => boolean } = {}) => {
+    begin(name);
+    calm = null;
+    aim = null;
     for (let f = 0; f < n; f++) {
-      advance(per, extra?.(f) ?? []);
+      advance(opt.slow?.(f) ? 1 : per, opt.extra?.(f) ?? []);
       shoot(f, n);
-      await reel.save();
+      await save(name, opt.dress ? () => opt.dress!(f, n) : undefined);
     }
   };
-  const ready = async (points: number[], theme: number, meters: number, field = 7) => {
-    await start(points, theme, field);
-    await until(() => race().phase === "racing" && race().player.dist > meters, 60 * 30);
-  };
 
-  // ---------------------------------------------------------------- the Harbor Tunnel: a figure-eight
-  await start(o.figure8, THEME.tunnel, 7);
-  // 1. The launch: a drone ahead of the grid, inside the tube, drifting back and up as the pack
-  // rockets off.
+  // ================================================================ the opening: a dream
+  // 1. The designer dreaming a figure-eight: its noisy lap after each Heun step, from pure noise (a
+  //    scribble) to the circuit, untangling as the noise comes off. (Interpolated between steps;
+  //    the steps' states are the model's own.)
   {
-    await until(() => race().countdown <= 2.15, 600);
-    const t = race().track, si = t.startIndex;
-    const h = heading(si);
-    await film("a_launch", 4.2, (f, n) => {
-      const u = smooth(f / n), d = 30 + 26 * u;
-      dc.shot({ x: t.xs[si] + Math.cos(h) * d, y: t.ys[si] + Math.sin(h) * d, heading: h + Math.PI,
-                height: 3.0 + 2.2 * u, focal: 250, fx: 0, clear: 6 });
-    });
+    const n = Math.round(fps * TITLE_BAR * 2);
+    const kAt = (u: number) => (u < 0.12 ? 0 : u < 0.86 ? 19 * smooth((u - 0.12) / 0.74) : 19 + 5 * smooth((u - 0.86) / 0.14));
+    begin("t_dream", false);
+    for (let f = 0; f < n; f++) {
+      const u = f / (n - 1), k = kAt(u);
+      backdrop();
+      drawLap(k, 1, mix(DREAM, HOT, smooth(clamp01((k - 13) / 11))));
+      faded(swell(f, 8, n - 4, 14), () =>
+        text("A DIFFUSION MODEL IS DREAMING A RACE TRACK", W / 2, 16, { color: DREAM, outline: INK, align: "center" }));
+      faded(swell(f, 8, n - 4, 14), () =>
+        text(`DENOISING ${Math.round((k / 24) * 100)}%`, W / 2, H - 24, { color: DIM, outline: INK, align: "center" }));
+      black(1 - f / 10);
+      g.scr.present();
+      await save("t_dream");
+    }
   }
-  // 2. The game's chase camera through the first jump: up the ramp, a trick in the air, and the
-  // boost on landing.
+  // 2. The name: the game's logo over the dreamed circuit, which dims behind it.
+  {
+    const n = Math.round(fps * TITLE_BAR);
+    begin("t_logo", false);
+    for (let f = 0; f < n; f++) {
+      backdrop();
+      drawLap(24, 1 - smooth(clamp01(f / 16)), HOT); // (the circuit gives way to the name)
+      logo(smooth(clamp01(f / 12)), smooth(clamp01((f - 10) / 12)));
+      faded(smooth(clamp01((f - 18) / 12)), () =>
+        text("A DIFFUSION MODEL DESIGNS EVERY TRACK", W / 2, H - 14, { color: DIM, outline: INK, align: "center" }));
+      black((f - (n - 10)) / 10);
+      g.scr.present();
+      await save("t_logo");
+    }
+  }
+
+  // ================================================================ Dream Valley: the dream, raced
+  await start(o.opening, THEME.valley, 7);
+  const opening = race().track;
+  // 3. The countdown: a crane up from behind the grid and over it, as the lights count down.
+  {
+    await until(() => race().countdown <= 3.98, 600); // (from the 3: the beeps a second apart)
+    const t = opening, si = t.startIndex, h0 = heading(si);
+    begin("a_grid");
+    let f = 0, shown = 4;
+    while (race().phase === "countdown" && f < frames(5)) {
+      advance(per);
+      // (from behind the last row, rising and tipping down, so the whole grid stays in the picture
+      // and the road beyond the gantry comes into it; brought in over the grid, the camera ended up
+      // looking at the gantry, the karts under it)
+      const u = smooth(clamp01(f / frames(2.6)));
+      const back = 46 - 6 * u, x = t.xs[si] - Math.cos(h0) * back, y = t.ys[si] - Math.sin(h0) * back;
+      dc.shot({ x, y, heading: h0, height: 2 + 9 * u, focal: 250, fx: 0, clear: 3, horizon: Math.round(74 - 30 * u) });
+      const n = Math.ceil(race().countdown - 1);
+      if (n !== shown) {
+        shown = n;
+        if (n > 0) cue.beeps.push(trailer.frames); // (GO's is the next shot's)
+      }
+      const fresh = clamp01((race().countdown - 1 - (n - 1)) * 3); // (each number pops in, then fades)
+      await save("a_grid", () => {
+        faded(n > 0 ? Math.min(1, fresh * 1.5) : 0, () => text(String(n), W / 2, 70, { scale: 5, color: WHITE, outline: INK, align: "center" }));
+        black(1 - f / 8); // (up out of the black the name went into)
+      });
+      f++;
+    }
+  }
+  // 4. GO: a fly-by on the start straight, low beside the road; the pack comes at the camera and
+  //    past it, the camera swinging round to watch it go. (The music comes in.)
+  {
+    cue.go = trailer.frames;
+    cue.beeps.push(trailer.frames);
+    // (30 m on: from 52 m the pack was specks for most of the shot)
+    const t = opening, si = t.startIndex, at = along(si, 30), [x, y] = beside(at, 7.5);
+    await film("a_launch", bars(2), () => {
+      const p = race().player, lead = race().standings[0];
+      const target: [number, number] = [p.x * 0.5 + lead.x * 0.5, p.y * 0.5 + lead.y * 0.5];
+      stand(x, y, 0.9 + (t.elev[at] ?? 0), target, 250, 82, 9);
+    }, { dress: (f) => {
+      faded(1 - f / 12, () => text("GO!", W / 2, 70, { scale: 5, color: GO_GREEN, outline: INK, align: "center" }));
+      caption("DREAM VALLEY", f, 20, 66);
+    } });
+  }
+  // 5. The jump: from beside where the karts land, looking back at the lip, the player flying off
+  //    it at the camera, in slow motion while it is in the air.
   {
     const r = race(), p = r.player;
     const ramp = r.features.ramps.map((q) => q.start).sort((a, b) => ahead(p, a) - ahead(p, b))[0];
     if (ramp !== undefined) {
-      const lip = ramp + 18; // 11 m of ramp at 0.6 m per point
-      // timed by speed, not distance: 1.7 s of run-up, then the flight and the landing boost
-      const eta = (k: Kart) => ahead(k, lip) / Math.max(Math.abs(k.v), 10);
-      await until(() => eta(race().player) < 1.7, 60 * 120);
-      reel.begin("b_jump");
-      let flew = false, landed = -1;
-      for (let f = 0; f < frames(7); f++) {
-        advance(per);
-        dc.shot({ clear: 2.5 });
-        await reel.save();
+      const lip = along(ramp, 11);
+      await until(() => ahead(race().player, lip) / Math.max(race().player.v, 10) < 0.9 && ahead(race().player, lip) < 60, 60 * 60);
+      const [x, y] = beside(along(lip, 27), 5.5);
+      await film("a_jump", bars(2), () => {
         const k = race().player;
-        if (k.air) flew = true;
-        else if (flew && landed < 0) landed = f;
-        if (landed >= 0 && f - landed >= frames(1.2) + fade) break;
-      }
+        stand(x, y, 1.0 + (race().track.elev[lip] ?? 0), [k.x, k.y], 250, 88, 10);
+      }, { slow: () => race().player.air });
     }
   }
-  // 3. Round the tube: over a wing pad (its walls are for winged karts), and on the gas (and a
-  // boost), the player turns up the wall, holds a line slanting round over the roof and down the
-  // other wall, and straightens out on the floor; the chase camera rolls round with it.
+  // 6. Under the bridge: on the road that passes under the deck, beyond it, the pack coming
+  //    through underneath.
+  {
+    const b = opening.bridges[0];
+    if (b) {
+      const under = b.lower;
+      await until(() => { const d = ahead(race().player, under); return d > 40 && d < 60; }, 60 * 60);
+      const [x, y] = beside(along(under, 24), 7.5);
+      await film("a_under", bars(2), () => {
+        const k = race().player;
+        stand(x, y, 1.5, [k.x, k.y], 250, 96, 6);
+      });
+    }
+  }
+  // 7. Cows crossing the valley road in front of the player, who steers round them.
+  {
+    const cow = () => race().obstacles.list.find((q) => {
+      if (q.kind !== "cow" || q.state !== COW_WALK || Math.abs(q.offset) > 5) return false;
+      const t = race().track, d = (q.s - t.s[race().player.idx] + t.length) % t.length;
+      return d > 26 && d < 48;
+    });
+    await until(() => !!cow(), 60 * 30);
+    if (cow()) await film("v_cows", bars(2), () => behind(race().player, 7, 3.4));
+  }
+  // 8. Over the bridge: a drone high beside the crossing, looking down at the deck as the pack
+  //    goes over it, the road it crosses below.
+  {
+    const b = opening.bridges[0];
+    if (b) {
+      await until(() => { const d = ahead(race().player, b.center); return d > 50 && d < 70; }, 60 * 60);
+      const [x, y] = beside(b.center, 17), z = (opening.elev[b.center] ?? 0) + 7;
+      await film("a_bridge", bars(2), (f, n) => {
+        const k = race().player;
+        stand(x, y, z + 1.5 * smooth(f / n), [k.x, k.y], 250, 52, 5);
+      });
+    }
+  }
+
+  // ================================================================ the Harbor Tunnel
+  // 9. Round the tube: over a wing pad (its walls are for winged karts), and on the gas (and a
+  //    boost), the player turns up the wall, holds a line slanting round over the roof and down the
+  //    other wall, and straightens out on the floor; the chase camera rolls round with it.
+  await start(o.figure8, THEME.tunnel, 7);
   {
     const pad = () => {
       const k = race().player, wing = race().features.pads.filter((q) => q.wing);
@@ -355,77 +641,65 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     };
     const near = () => {
       const k = race().player, q = pad();
-      return !!q && k.wings <= 0 && k.v > 20 && !k.air && ahead(k, q.start) / Math.max(k.v, 10) < 1.4;
+      return race().phase === "racing" && !!q && k.wings <= 0 && k.v > 20 && !k.air && ahead(k, q.start) / Math.max(k.v, 10) < 1.2;
     };
     await until(near, 60 * 60);
     let over = false, last = race().player.offset;
-    reel.begin("n_loop");
-    const to = pad(), t = race().track;
-    for (let f = 0; f < frames(6.5); f++) {
+    const to = pad(), t = race().track, n = bars(3);
+    begin("n_loop");
+    for (let f = 0; f < n; f++) {
       const k = race().player;
+      let press: string[];
       if (k.wings <= 0 && to) { // (on to the pad: aimed at its middle, a little way along it)
         const i = t.wrap(to.start + 5), [tx, ty] = t.tangent(i);
         const gx = t.xs[i] - ty * to.offset, gy = t.ys[i] + tx * to.offset;
-        const aim = wrapAngle(Math.atan2(gy - k.y, gx - k.x) - k.heading);
-        dc.step(per, ["gas", ...(aim > 0.04 ? ["left"] : aim < -0.04 ? ["right"] : [])], false);
-        dc.shot({ clear: 2.5 });
-        await reel.save();
-        last = k.offset;
-        continue;
+        const aimAt = wrapAngle(Math.atan2(gy - k.y, gx - k.x) - k.heading);
+        press = aimAt > 0.04 ? ["left"] : aimAt < -0.04 ? ["right"] : [];
+      } else {
+        k.boostTime = Math.max(k.boostTime, 0.5);
+        const rel = wrapAngle(k.heading - heading(k.idx));
+        if (Math.sign(k.offset) !== Math.sign(last) && Math.abs(k.offset) > 15) over = true;
+        const back = over && Math.abs(k.offset) < 12; // (straightening from low on the far wall, to land on the floor straight)
+        const want = back ? 0 : 0.85;
+        press = rel < want - 0.06 ? ["left"] : rel > want + 0.06 ? ["right"] : [];
       }
-      k.boostTime = Math.max(k.boostTime, 0.5);
-      const rel = wrapAngle(k.heading - heading(k.idx));
-      if (Math.sign(k.offset) !== Math.sign(last) && Math.abs(k.offset) > 15) over = true;
       last = k.offset;
-      const back = over && Math.abs(k.offset) < 12; // (straightening from low on the far wall, to land on the floor straight)
-      const want = back ? 0 : 0.85;
-      dc.step(per, ["gas", ...(rel < want - 0.06 ? ["left"] : rel > want + 0.06 ? ["right"] : [])], false);
+      dc.step(per, ["gas", ...press], false);
       dc.shot({ clear: 2.5 });
-      await reel.save();
-      if (back && Math.abs(rel) < 0.1 && f > frames(1.5)) break;
+      await save("n_loop", () => caption("HARBOR TUNNEL", f));
     }
   }
-  // 4. Traffic in the tube: on the game's chase camera, the pack weaves through the cars, and
-  // rides the walls past them.
+  // 10. Traffic in the tube: on the game's chase camera, the pack weaves through the cars.
   {
     await start(o.loops[4], THEME.tunnel, 7);
-    const cars = () => race().obstacles.list.filter((q) => q.kind === "traffic" &&
-      (q.s - race().track.s[race().player.idx] + race().track.length) % race().track.length < 40);
+    // (a car close ahead, overtaken in the shot)
+    const cars = () => race().obstacles.list.filter((q) => {
+      const d = (q.s - race().track.s[race().player.idx] + race().track.length) % race().track.length;
+      return q.kind === "traffic" && d > 14 && d < 26;
+    });
     await until(() => race().phase === "racing" && race().player.dist > 120 && cars().length > 0, 60 * 120);
-    await film("n_traffic", 3.6, () => dc.shot({ clear: 2.5 }));
+    await film("n_traffic", bars(2), () => dc.shot({ clear: 2.5 }));
   }
 
-  // ---------------------------------------------------------------- the garage
-  // 5. Building a kart: bodies, wheels, a spoiler, an exhaust and a paint job, on the turntable.
+  // ================================================================ Sunset Mesa
+  // 11. Down a red-rock canyon: alongside the player between its walls, beds of rock in red and
+  //     ochre either side.
   {
-    dc.go("garage");
-    const g = dc.game, menu = g.garage.menu;
-    const rows = [0, 0, 0, 1, 2, 2, 3, 4, 4]; // body x3, wheels, spoiler x2, exhaust, paint x2
-    const every = frames(0.5);
-    const n = frames(0.6) + rows.length * every;
-    reel.begin("g_garage");
-    for (let f = 0; f < n; f++) {
-      const m = f - frames(0.6);
-      if (m >= 0 && m % every === 0) {
-        const row = rows[m / every];
-        menu.index = row;
-        menu.items[row].right?.();
-      }
-      g.time += 1 / fps;
-      g.render();
-      await reel.save();
+    await start(o.loops[1], THEME.mesa, 7);
+    const banks = (race() as unknown as { features: { banks: { s0: number; len: number }[] } }).features.banks;
+    const inCanyon = () => {
+      const s0 = race().track.s[race().player.idx];
+      return banks.some((b) => s0 > b.s0 + 6 && s0 < b.s0 + b.len - 30);
+    };
+    if (banks.length) {
+      await until(() => race().phase === "racing" && inCanyon(), 60 * 120);
+      await film("t_canyon", bars(2), (f, n) => track(race().player, 1, 5.5 + 2 * (f / n), 2.2), {
+        dress: (f) => caption("SUNSET MESA", f),
+      });
     }
   }
-
-  // ---------------------------------------------------------------- Sunset Mesa: the items
-  // Each item is filmed in a fresh race, a little after the start, while the pack is close.
-  // 6. A rocket from mid-pack (it burns out once it has passed two karts): the kart flies itself
-  // up the road, scattering whoever is in the way.
-  await ready(o.loops[0], THEME.mesa, 18);
-  dc.give("rocket");
-  await film("i_rocket", 3.0, () => dc.shot({ clear: 2.5 }), (f) => (f === 1 ? ["item"] : []));
-  // 7. A boomerang: the arrow sweeps; one press locks it onto the rival straight up the road, the
-  // next throws, and the boomerang goes out, spins the rival, and comes home.
+  // 12. A boomerang: the arrow sweeps; one press locks it onto the rival straight up the road, the
+  //     next throws, and the boomerang goes out, spins the rival, and comes home.
   {
     await ready(o.loops[1], THEME.mesa, 60);
     const inSights = () => rivals().filter((k) => {
@@ -436,7 +710,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     const target = inSights();
     dc.give("boomerang");
     let locked = -1;
-    await film("i_boomerang", 3.2, () => chase(0.9), (f) => {
+    await film("i_boomerang", bars(2), () => behind(race().player, 6.5, 3.8), { extra: (f) => {
       if (!target || f < frames(0.4)) return [];
       if (locked < 0) {
         // steer the sweep onto the rival, then press: the arrow locks there
@@ -446,97 +720,31 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
         return ["item"];
       }
       return f === locked + 3 ? ["item"] : []; // let go, and press again: it flies along the arrow
-    });
-  }
-  // 8. A bomb: one press locks the arrow (the bomb rides behind the kart), the next lobs it at the
-  // racer ahead, and its blast catches everyone near.
-  {
-    await ready(o.loops[2], THEME.mesa, 50);
-    const next = () => race().karts.find((k) => k.place === race().player.place - 1);
-    const gap = () => { const a = next(); return a ? a.dist - race().player.dist : -1; };
-    await until(() => race().player.place > 1 && gap() > 8 && gap() < 20, 60 * 40);
-    dc.give("bomb");
-    const blasts = race().items.blasts.length;
-    let blown = -1;
-    reel.begin("i_bomb");
-    for (let f = 0; f < frames(5.5); f++) {
-      const press = f === frames(0.3) || f === frames(0.9);
-      advance(per, press ? ["item"] : []);
-      chase(1.2);
-      await reel.save();
-      if (blown < 0 && race().items.blasts.length > blasts) blown = f;
-      if (blown >= 0 && f - blown >= frames(1.0) + fade) break;
-    }
-  }
-  // 9. A comet: fired from the back, it flies up the road to the leader, hangs over them, and
-  // comes down; filmed beside the leader as it arrives.
-  {
-    await ready(o.loops[2], THEME.mesa, 120);
-    await until(() => race().player.place >= 4, 60 * 40);
-    dc.give("comet");
-    advance(per, ["item"]);
-    const comet = () => race().items.comets[0];
-    await until(() => !comet() || comet().phase !== "fly" ||
-                      Math.hypot(comet().x - race().standings[0].x, comet().y - race().standings[0].y) < 70, 60 * 20);
-    let landed = -1;
-    reel.begin("i_comet");
-    for (let f = 0; f < frames(4.5); f++) {
-      advance(per);
-      const lead = comet()?.target ?? race().standings[0];
-      track(lead, -1, 9, 3.4);
-      await reel.save();
-      if (landed < 0 && !comet()) landed = f;
-      if (landed >= 0 && f - landed >= frames(1.0) + fade) break;
-    }
-  }
-  // 10. Down a red-rock canyon: alongside the player between its walls, beds of rock in red and
-  // ochre either side, a tumbleweed blowing across if one comes.
-  {
-    await start(o.loops[1], THEME.mesa, 7);
-    const banks = (race() as unknown as { features: { banks: { s0: number; len: number }[] } }).features.banks;
-    const inCanyon = () => {
-      const s0 = race().track.s[race().player.idx];
-      return banks.some((b) => s0 > b.s0 + 6 && s0 < b.s0 + b.len - 30);
-    };
-    if (banks.length) {
-      await until(() => race().phase === "racing" && inCanyon(), 60 * 120);
-      await film("t_canyon", 3.4, (f, n) => track(race().player, 1, 5.5 + 2 * (f / n), 2.2));
-    }
+    } });
   }
 
-  // ---------------------------------------------------------------- Coral Reef
-  // 11. A shock under the sea: a white flash, and everyone else spins, shrinks and slows.
-  {
-    await ready(o.loops[3], THEME.reef, 30);
-    const close = () => rivals().filter((k) => { const d = k.dist - race().player.dist; return d > 4 && d < 28; }).length;
-    await until(() => close() >= 3, 60 * 30);
-    dc.give("shock");
-    const at = frames(0.6), screen = canvas.getContext("2d")!;
-    await film("i_shock", 2.8, (f) => {
-      chase(1.2);
-      const t = (f - at) / fps; // the game's own flash: white, gone in a fifth of a second
-      if (t >= 0 && t < 0.22) {
-        screen.fillStyle = `rgba(255, 255, 255, ${Math.min(0.85, (0.22 - t) * 4)})`;
-        screen.fillRect(0, 0, canvas.width, canvas.height);
-      }
-    }, (f) => (f === at ? ["item"] : []));
-  }
-  // 12. Alongside the pack over a ridge of coral: bubble helmets, rays of light, schools of fish.
+  // ================================================================ Coral Reef
+  // 13. Alongside the pack over a ridge of coral: bubble helmets, rays of light, schools of fish.
   await start(o.loops[3], THEME.reef, 7);
   await until(() => race().phase === "racing" && climb(race().player)?.style === "coral" && race().player.elev > 0.8 &&
                     race().player.slope > 0, 60 * 150);
   dc.give("triple"); // three turbo cells circling the kart
-  await film("w_reef", 3.6, (f, n) => track(race().player, -1, 6 + 1.5 * (f / n), 1.9));
+  await film("w_reef", bars(2), (f, n) => track(race().player, -1, 6 + 1.5 * (f / n), 1.9), {
+    dress: (f) => caption("CORAL REEF", f),
+  });
 
-  // ---------------------------------------------------------------- Tokyo Nights
+  // ================================================================ Tokyo Nights
   await start(o.loops[9], THEME.tokyo, 7);
-  // 13. Up on the expressway: alongside the pack on the deck, its lamps over the road, the city's
-  // lit towers and the lattice tower behind.
-  await until(() => race().phase === "racing" && climb(race().player)?.style === "expressway" && race().player.elev > 3 &&
+  // 14. Up on the expressway: alongside the pack on the deck, its lamps over the road, the city's
+  //     lit towers and the lattice tower behind.
+  // (high up: lower down, the shot opened on the side of the deck's ramp)
+  await until(() => race().phase === "racing" && climb(race().player)?.style === "expressway" && race().player.elev > 4.5 &&
                     race().player.slope >= 0, 60 * 150);
-  await film("e_express", 4.0, (f, n) => track(race().player, 1, 8 + 4 * (f / n), 2.6 + 1.4 * (f / n)));
-  // 14. The police on the player's tail: out of an alley and after them, lights flashing; filmed
-  // from ahead, looking back down the street at the chase.
+  await film("e_express", bars(2), (f, n) => track(race().player, 1, 11 + 3 * (f / n), 3.6 + 1.2 * (f / n)), {
+    dress: (f) => caption("TOKYO NIGHTS", f),
+  });
+  // 15. The police on the player's tail: out of an alley and after them, lights flashing; filmed
+  //     from ahead, looking back down the street at the chase.
   {
     const cop = () => race().obstacles.list.find((q) => q.kind === "police" && (q.state === POLICE_CHASE || q.state === POLICE_LUNGE));
     const behind = () => {
@@ -549,43 +757,24 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     // was a small car far down the street)
     await until(() => { const d = behind(); return d > 5 && d < 13; }, 60 * 240);
     if (cop()) {
-      await film("e_police", 3.4, () => {
-        const k = race().player, c = Math.cos(k.heading), sn = Math.sin(k.heading);
-        dc.shot({ x: k.x + c * 9, y: k.y + sn * 9, heading: k.heading + Math.PI, height: 2.3 + k.ground, focal: 250, fx: 0, clear: 2 });
+      await film("e_police", bars(2), () => {
+        const k = race().player, hd = steady(k), c = Math.cos(hd), sn = Math.sin(hd);
+        dc.shot({ x: k.x + c * 9, y: k.y + sn * 9, heading: hd + Math.PI, height: 2.3 + k.ground, focal: 250, fx: 0, clear: 2 });
       });
     }
   }
 
-  // ---------------------------------------------------------------- Dream Valley: a roller coaster
-  await start(o.loops[5], THEME.valley, 7, "coaster");
-  // 15. Cows crossing: one ambles across the road in front of the player, who steers round it.
-  {
-    const cow = () => race().obstacles.list.find((q) => {
-      if (q.kind !== "cow" || q.state !== COW_WALK || Math.abs(q.offset) > 5) return false;
-      const t = race().track, d = (q.s - t.s[race().player.idx] + t.length) % t.length;
-      return d > 26 && d < 48;
-    });
-    await until(() => race().phase === "racing" && !!cow(), 60 * 200);
-    if (cow()) await film("v_cows", 2.8, () => dc.shot({ height: 3.4 + race().player.ground, clear: 2.5 }));
-  }
-  // 16. A drift: sideways through a bend, the sparks charging a mini-turbo.
-  await until(() => race().phase === "racing" && race().player.drifting && race().player.boostLevel >= 1, 60 * 60);
-  await film("v_drift", 2.6, () => {
-    const k = race().player;
-    dc.shot({ x: k.x - Math.cos(k.heading) * 5.4, y: k.y - Math.sin(k.heading) * 5.4, heading: k.heading,
-              height: 1.7 + k.ground, focal: 250, fx: 0, clear: 2 });
-  });
-  // 16. A crane up and back from the leader: the climbs over the meadows, the knolls around them.
-  await film("e_crane", 3.6, (f, n) => crane(race().standings[0], smooth(Math.min(1, f / n))));
-
-  // ---------------------------------------------------------------- Construction Zone
+  // ================================================================ Construction Zone
   await start(o.loops[7], THEME.construction, 7);
-  // 17. High on a crane's girder: alongside the pack on the steel deck, the crane beside it and
-  // the city going up behind.
-  await until(() => race().phase === "racing" && climb(race().player)?.style === "girder" && race().player.elev > 2.5 &&
+  // 16. High on a crane's girder: alongside the pack on the steel deck, the crane beside it and
+  //     the city going up behind.
+  // (high up: lower down, the shot opened on the girder's lattice)
+  await until(() => race().phase === "racing" && climb(race().player)?.style === "girder" && race().player.elev > 4 &&
                     race().player.slope > 0, 60 * 150);
-  await film("k_girder", 4.2, (f, n) => track(race().player, 1, 9 + 6 * (f / n), 2.6 + 2.4 * (f / n)));
-  // The wrecking ball: swinging across the road under its crane's jib as the player comes up to it.
+  await film("k_girder", bars(2), (f, n) => track(race().player, 1, 13 + 4 * (f / n), 4.6 + 1.6 * (f / n)), {
+    dress: (f) => caption("CONSTRUCTION ZONE", f),
+  });
+  // 17. The wrecking ball: swinging across the road under its crane's jib as the player comes up to it.
   {
     const ball = () => race().obstacles.list.find((q) => {
       if (q.kind !== "wrecker") return false;
@@ -593,110 +782,71 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       return d > 34 && d < 46;
     });
     await until(() => !!ball(), 60 * 200);
-    if (ball()) await film("k_wreck", 3.0, () => dc.shot({ height: 4.2 + race().player.ground, clear: 2.5 }));
-  }
-  // 18. Through the steel frame of a building going up, on the game's chase camera.
-  {
-    const t = race().track, tunnels = race().features.tunnels;
-    if (tunnels.length) {
-      const before = (s: number) => tunnels.some((tn) => tn.s0 - s > 20 && tn.s0 - s < 28);
-      await until(() => before(t.s[race().player.idx]), 60 * 120);
-      await film("k_frame", 3.0, () => dc.shot({ clear: 2.5 }));
-    }
+    if (ball()) await film("k_wreck", bars(2), () => behind(race().player, 7.5, 4.2));
   }
 
-  // ---------------------------------------------------------------- Moon Base
+  // ================================================================ Moon Base
   await start(o.loops[8], THEME.moon, 7);
-  // 19. Floating off a crater's rim in the low gravity, the Earth hanging in the black sky: at a
-  // rim where the road runs across the line to the Earth, the camera rides alongside the kart,
-  // looking past it at the Earth, as it floats off the top and drifts back down.
+  // 18. A jump in the low gravity, the Earth hanging in the black sky behind it: the camera set
+  //     where the Earth is behind the flight (side on to it, or looking back at the lip from where
+  //     the karts land, or along it from behind the lip), the flight in slow motion. (A float off
+  //     a crater's rim was hardly a hop once the moon's gravity was raised to six tenths.)
   {
     const at = dc.game.sky?.earthAt ?? -1;
     const toEarth = at >= 0 ? -((at - FRAME_W / 2) * Math.PI * 2) / PAN : 0;
     const ex = Math.cos(toEarth), ey = Math.sin(toEarth);
-    const t = race().track;
-    const indexAt = (s: number) => {
-      let lo = 0, hi = t.count - 1;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        if (t.s[mid] < s) lo = mid + 1;
-        else hi = mid;
-      }
-      return lo;
-    };
-    const across = (h: Hill, need: number) => {
-      const [tx, ty] = t.tangent(indexAt(h.s0 + h.len / 2));
-      return Math.abs(ex * ty - ey * tx) > need;
-    };
-    const need = t.hills.some((h) => h.style === "crater" && across(h, 0.8)) ? 0.8 : 0;
-    const crest = () => {
-      const k = race().player, h = climb(k);
-      if (!h || h.style !== "crater" || !across(h, need)) return Infinity;
-      const s = t.s[k.idx], top = h.s0 + h.len / 2;
-      return s < top ? (top - s) / Math.max(k.v, 1) : Infinity;
-    };
-    await until(() => race().phase === "racing" && race().player.v > 22 && crest() < 0.7, 60 * 200);
-    await film("l_float", 3.0, () => {
-      const k = race().player;
-      dc.shot({ x: k.x - ex * 12, y: k.y - ey * 12, heading: toEarth, height: k.ground + 1.7, focal: 250, fx: 0, clear: 3 });
-    });
-  }
-  // A meteor: the red ring on the road ahead, and the rock coming down onto it at a slant. Filmed
-  // from behind the kart while it is on the ground (a flight here carries it out of the picture),
-  // when no crest stands between it and the ring, the camera turned to the ring.
-  {
-    const rock = () => race().obstacles.list.find((q) => {
-      const k = race().player, t = race().track;
-      if (q.kind !== "meteor" || q.state !== METEOR_FALL || q.t > 0.35 || k.air) return false;
-      const d = (q.s - t.s[k.idx] + t.length) % t.length;
-      if (d < 45 || d > 85) return false;
-      const z0 = t.elev[k.idx] ?? 0, z1 = t.elev[q.idx] ?? 0;
-      for (let i = k.idx, n = 0; n < 400; n++, i = t.wrap(i + 4)) {
-        const m = (t.s[i] - t.s[k.idx] + t.length) % t.length;
-        if (m >= d) break;
-        if ((t.elev[i] ?? 0) > z0 + (z1 - z0) * (m / d) + 0.6) return false; // (a crest in the way)
-      }
-      return true;
-    });
-    await until(() => !!rock(), 60 * 200);
-    const m = rock();
-    if (m) {
-      await film("l_meteor", 2.8, () => {
-        const k = race().player, c = Math.cos(k.heading), sn = Math.sin(k.heading);
-        const x = k.x - c * 10, y = k.y - sn * 10;
-        dc.shot({ x, y, heading: Math.atan2(m.y - y, m.x - x), height: k.ground + 4.5, focal: 330, fx: 0, clear: 2.5 });
-      });
+    const t = race().track, p = race().player;
+    const ramp = race().features.ramps.map((q) => q.start).filter((i) => ahead(p, i) > 150)
+      .sort((a, b) => ahead(p, a) - ahead(p, b))[0];
+    if (ramp !== undefined) {
+      const lip = along(ramp, 11), [tx, ty] = t.tangent(lip), across = tx * ey - ty * ex, toward = tx * ex + ty * ey;
+      const ground = t.elev[lip] ?? 0;
+      let x: number, y: number, side = false;
+      if (Math.abs(across) > 0.55) {
+        const [mx, my] = beside(along(lip, 20), 0);
+        [x, y] = [mx - ex * 14, my - ey * 14];
+        side = true;
+      } else if (toward < 0) [x, y] = beside(along(lip, 34), 4);
+      else [x, y] = beside(along(lip, -16), 3);
+      await until(() => race().phase === "racing" && ahead(race().player, lip) / Math.max(race().player.v, 10) < 0.55 &&
+                        ahead(race().player, lip) < 40, 60 * 120);
+      await film("l_jump", bars(2), () => {
+        const k = race().player;
+        if (side) dc.shot({ x, y, heading: toEarth, height: ground + 1.4, focal: 250, fx: 0, clear: 8, horizon: 100 });
+        else stand(x, y, ground + 1.3, [k.x, k.y], 250, 100, 6);
+      }, { slow: () => race().player.air, dress: (f) => caption("MOON BASE", f) });
     }
   }
 
-  // ---------------------------------------------------------------- Volcano Core
+  // ================================================================ Volcano Core
   await start(o.loops[6], THEME.volcano, 7);
-  // 21. Alongside the pack on the rock across the lava, the crater's walls and its cones behind.
-  await until(() => race().phase === "racing" && race().player.dist > 90, 60 * 30);
-  await film("x_lava", 3.4, (f, n) => track(race().player, 1, 7.5 + 2.5 * (f / n), 3.4));
-  // A geyser: its vent glows and bubbles, and it blows a column of lava and fire across the road
-  // as the player comes up to it.
+  // 20. A geyser: its vent glows and bubbles, and it blows a column of lava and fire across the road
+  //     as the player comes up to it.
   {
     const vent = () => race().obstacles.list.find((q) => {
       if (q.kind !== "geyser" || q.state !== GEYSER_QUIET || q.t < q.wait - 0.5) return false;
       const t = race().track, d = (q.s - t.s[race().player.idx] + t.length) % t.length;
       return d > 40 && d < 75;
     });
-    await until(() => !!vent(), 60 * 200);
-    if (vent()) await film("x_geyser", 2.8, () => dc.shot({ height: 3.6 + race().player.ground, clear: 2.5 }));
+    await until(() => race().phase === "racing" && !!vent(), 60 * 200);
+    if (vent()) {
+      await film("x_geyser", bars(2), () => behind(race().player, 7.5, 3.6), {
+        dress: (f) => caption("VOLCANO CORE", f),
+      });
+    }
   }
-  // 23. Into the lava: the player turns off a straight, across the rock bank and in; the view goes
-  // dark red, and the rescue drone lowers the kart back onto the road and lets it go.
+  // 21. Into the lava: the player turns off a straight, across the rock bank and in; the view goes
+  //     dark red, and the rescue drone lowers the kart back onto the road and lets it go.
   {
     const t = race().track;
-    const ahead = (m: number) => t.wrap(race().player.idx + Math.round(m / 0.6));
-    const straight = () => [0, 15, 30, 45].every((m) => Math.abs(t.curvature(ahead(m))) < 1 / 160);
+    const fwd = (m: number) => t.wrap(race().player.idx + Math.round(m / 0.6));
+    const straight = () => [0, 15, 30, 45].every((m) => Math.abs(t.curvature(fwd(m))) < 1 / 160);
     // no jump or climb coming up, and nothing solid on the bank where it will leave the road (a
     // rock would stop it short of the lava)
     const noRamp = () => race().features.ramps.every((q) => (t.s[q.start] - t.s[race().player.idx] + t.length) % t.length > 90);
-    const flat = () => [0, 10, 20, 30, 40, 50].every((m) => t.elev[ahead(m)] < 0.05);
+    const flat = () => [0, 10, 20, 30, 40, 50].every((m) => t.elev[fwd(m)] < 0.05);
     const clear = () => [10, 14, 18, 22, 26, 30, 34, 38].every((m) => {
-      const i = ahead(m), [tx, ty] = t.tangent(i);
+      const i = fwd(m), [tx, ty] = t.tangent(i);
       return [6, 8.5, 11].every((off) => {
         const x = t.xs[i] + ty * off, y = t.ys[i] - tx * off; // right of the road
         return !race().scenery.items.some((it) => it.art.solid && Math.hypot(it.x - x, it.y - y) < 3.2);
@@ -704,8 +854,8 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     });
     await until(() => straight() && noRamp() && flat() && clear() && race().player.v > 18, 60 * 90);
     const side = -1; // off to the right (positive offsets are to the left of the road)
-    reel.begin("x_rescue");
-    for (let f = 0; f < frames(5); f++) {
+    begin("x_rescue");
+    for (let f = 0, n = bars(3); f < n; f++) {
       const k = race().player;
       // steer off until well onto the rock bank, then straight on into the lava
       const steer = k.fall < 0 && Math.abs(k.offset) < 8 ? (side > 0 ? ["left"] : ["right"]) : [];
@@ -720,29 +870,172 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
         const x = k.dropX + tx * 4 - ty * 9.5, y = k.dropY + ty * 4 + tx * 9.5;
         dc.shot({ x, y, heading: Math.atan2(k.dropY - y, k.dropX - x), height: 3.6 + k.dropZ, focal: 250, fx: 0, clear: 3 });
       }
-      await reel.save();
-      if (k.fall >= FALL_RELEASE + 0.55) break;
+      await save("x_rescue");
     }
   }
 
-  // ---------------------------------------------------------------- the Grand Prix podium
-  // 24. The award ceremony: the top three on the podium, fireworks and confetti. (It fades back
-  // into the launch.)
+  // ================================================================ the garage, the items, the Grand Prix
+  // 22. Building a kart: bodies, wheels, a spoiler, an exhaust and a paint job, on the turntable, a
+  //     part on every half bar.
+  {
+    dc.go("garage");
+    const menu = g.garage.menu;
+    const rows = [0, 4, 2, 0]; // a body, a paint job, a spoiler, a body (on the snare, beats two and four)
+    const every = bars(0.5), n = bars(2);
+    begin("g_garage");
+    for (let f = 0; f < n; f++) {
+      if (f % every === every / 2 && rows[f / every - 0.5] !== undefined) {
+        const row = rows[f / every - 0.5];
+        menu.index = row;
+        menu.items[row].right?.();
+      }
+      g.time += 1 / fps;
+      g.render();
+      await save("g_garage");
+    }
+  }
+  // 23. A rocket from mid-pack (it burns out once it has passed two karts): the kart flies itself
+  //     up the road, scattering whoever is in the way.
+  await ready(o.loops[0], THEME.mesa, 18);
+  dc.give("rocket");
+  await film("i_rocket", bars(1), () => dc.shot({ clear: 2.5 }), {
+    extra: (f) => (f === 1 ? ["item"] : []), dress: (f) => banner("22 ITEMS", f, 2, bars(4) - 4),
+  });
+  // 24. A shock under the sea: a white flash, and everyone else spins, shrinks and slows.
+  {
+    await ready(o.loops[3], THEME.reef, 30);
+    const close = () => rivals().filter((k) => { const d = k.dist - race().player.dist; return d > 4 && d < 28; }).length;
+    await until(() => close() >= 3, 60 * 30);
+    dc.give("shock");
+    const at = frames(0.25), from = bars(1);
+    await film("i_shock", bars(1), (f) => {
+      behind(race().player, 7, 4.1);
+      const t = (f - at) / fps; // the game's own flash: white, gone in a fifth of a second
+      if (t >= 0 && t < 0.22) g.scr.dimRect(0, 0, W, H, WHITE, Math.min(0.85, (0.22 - t) * 4));
+      g.scr.present();
+    }, { extra: (f) => (f === at ? ["item"] : []), dress: (f) => banner("22 ITEMS", from + f, 2, bars(4) - 4) });
+  }
+  // 25. A comet: fired from the back, it flies up the road to the leader, hangs over them, and
+  //     comes down; filmed beside the leader as it arrives.
+  {
+    await ready(o.loops[2], THEME.mesa, 120);
+    await until(() => race().player.place >= 4, 60 * 40);
+    dc.give("comet");
+    advance(per, ["item"]);
+    const comet = () => race().items.comets[0];
+    await until(() => !comet() || comet().phase !== "fly" ||
+                      Math.hypot(comet().x - race().standings[0].x, comet().y - race().standings[0].y) < 60, 60 * 20);
+    const from = bars(2);
+    await film("i_comet", bars(2), () => {
+      const lead = comet()?.target ?? race().standings[0];
+      track(lead, -1, 9, 3.4);
+    }, { dress: (f) => banner("22 ITEMS", from + f, 2, bars(4) - 4) });
+  }
+  // 26. The award ceremony: the top three on the podium, fireworks and confetti.
   {
     dc.cup(true, 1);
-    const g = dc.game;
     for (let i = 0; i < Math.round(60 * 5.6); i++) g.ceremony?.update(1 / 60, g.sound);
-    const n = frames(4.0);
-    reel.begin("p_podium");
+    const n = bars(2);
+    begin("p_podium");
     for (let f = 0; f < n; f++) {
       g.ceremony?.update(1 / fps, g.sound);
       g.time += 1 / fps;
       g.render();
-      await reel.save();
+      await save("p_podium");
     }
   }
 
-  const out = await reel.finish();
+  // ================================================================ the end card
+  // 27. The name again, on the dreamed circuit, and where to play.
+  {
+    cue.end = trailer.frames;
+    const n = Math.round(fps * TITLE_BAR * 2);
+    begin("t_end", false);
+    for (let f = 0; f < n; f++) {
+      backdrop();
+      logo(1, 1);
+      faded(smooth(clamp01((f - 8) / 12)), () => {
+        text("PLAY FREE IN YOUR BROWSER", W / 2, 152, { color: WHITE, outline: INK, align: "center" });
+        text("nilaypilaydesai.github.io/dreamcircuit", W / 2, 166, { color: HOT, outline: INK, align: "center" });
+      });
+      black(Math.max(1 - f / 12, (f - (n - 16)) / 16));
+      g.scr.present();
+      await save("t_end");
+    }
+  }
+
+  const heroOut = await hero.finish();
+  const trailerOut = await trailer.finish();
+  await post("trailer.wav", await soundtrack(trailerOut.frames, fps, cue));
+  await post("trailer_cues.json", new Blob([JSON.stringify({ fps, ...cue, frames: trailerOut.frames })], { type: "text/plain" }));
   dc.hold(false);
-  return { ...reel.counts, ...out };
+  return {
+    ...counts, ...Object.fromEntries(Object.entries(heroOut).map(([k, v]) => [`hero:${k}`, v])),
+    ...Object.fromEntries(Object.entries(trailerOut).map(([k, v]) => [`trailer:${k}`, v])),
+  };
+}
+
+/** The trailer's music, rendered from the game's own sequencer and songs: the title song under the
+ * opening (dying away as the countdown starts), the countdown's beeps and GO's, Dream Valley's
+ * song from GO, and the title song again under the end card, fading out with it. A WAV (16-bit,
+ * stereo, 48 kHz). ``cue``: in frames of the trailer. */
+async function soundtrack(total: number, fps: number, cue: { go: number; end: number; beeps: number[] }): Promise<Blob> {
+  const rate = 48000, seconds = total / fps + 0.5;
+  const ac = new OfflineAudioContext(2, Math.ceil(seconds * rate), rate);
+  const master = ac.createGain();
+  master.gain.value = 0.5; // (the game's master level)
+  master.connect(ac.destination);
+  type Seq = { setup(ac: BaseAudioContext): void; playStep(ac: BaseAudioContext, song: unknown, step: number, t: number, dur: number): void; out: GainNode };
+  /** Play ``name`` from ``t0`` to ``t1`` s at ``level``, fading in over ``fadeIn`` s and out to
+   * silence by ``t1``. */
+  const play = (name: keyof typeof SONGS, t0: number, t1: number, fadeIn: number, fadeOut: number, level = 1) => {
+    const bus = ac.createGain();
+    bus.connect(master);
+    const m = new Music(() => ac as unknown as AudioContext, () => bus) as unknown as Seq;
+    m.setup(ac);
+    const song = SONGS[name], six = 60 / song.bpm / 4;
+    for (let step = 0, t = t0; t < t1; step++, t += six) m.playStep(ac, song, step % (song.chords.length * 16), t, six);
+    bus.gain.setValueAtTime(fadeIn > 0 ? 0.0001 : level, t0);
+    if (fadeIn > 0) bus.gain.exponentialRampToValueAtTime(level, t0 + fadeIn);
+    bus.gain.setValueAtTime(level, Math.max(t0 + fadeIn, t1 - fadeOut));
+    bus.gain.linearRampToValueAtTime(0, t1);
+  };
+  const go = cue.go / fps, end = cue.end / fps;
+  const firstBeep = (cue.beeps[0] ?? cue.go) / fps;
+  play("title", 0, firstBeep + 0.6, 0.4, 1.2, 1.4); // (its pads are quiet against Dream Valley's drums)
+  play("valley", go, end + 0.25, 0, 0.25);
+  play("title", end, seconds, 0.3, 1.6, 1.4);
+  // the countdown (core/audio.ts: count() and go())
+  const tone = (f: number, dur: number, vol: number, at: number) => {
+    const osc = ac.createOscillator(), gain = ac.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(f, at);
+    gain.gain.setValueAtTime(vol, at);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    osc.connect(gain).connect(master);
+    osc.start(at);
+    osc.stop(at + dur + 0.02);
+  };
+  for (const b of cue.beeps) {
+    if (b === cue.go) tone(880, 0.6, 0.16, b / fps);
+    else tone(440, 0.22, 0.14, b / fps);
+  }
+  const buf = await ac.startRendering();
+  // (mixed for the game, the music sat under the engine and the effects, peaking at a quarter of
+  // full scale: on its own, brought up to just under it)
+  let peak = 1e-6;
+  for (let c = 0; c < 2; c++) for (const v of buf.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
+  const gain = 0.9 / peak;
+  const n = buf.length, data = new DataView(new ArrayBuffer(44 + n * 4));
+  const word = (o: number, s: string) => { for (let i = 0; i < 4; i++) data.setUint8(o + i, s.charCodeAt(i)); };
+  word(0, "RIFF"); data.setUint32(4, 36 + n * 4, true); word(8, "WAVE"); word(12, "fmt ");
+  data.setUint32(16, 16, true); data.setUint16(20, 1, true); data.setUint16(22, 2, true); data.setUint32(24, rate, true);
+  data.setUint32(28, rate * 4, true); data.setUint16(32, 4, true); data.setUint16(34, 16, true); word(36, "data");
+  data.setUint32(40, n * 4, true);
+  const l = buf.getChannelData(0), r = buf.getChannelData(1);
+  for (let i = 0; i < n; i++) {
+    data.setInt16(44 + i * 4, Math.max(-1, Math.min(1, l[i] * gain)) * 32767, true);
+    data.setInt16(46 + i * 4, Math.max(-1, Math.min(1, r[i] * gain)) * 32767, true);
+  }
+  return new Blob([data.buffer], { type: "audio/wav" });
 }

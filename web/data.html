@@ -56,7 +56,7 @@
       <section class="hero" id="top" aria-labelledby="hero-title">
         <div class="hero-media" data-depth="0.42">
           <video id="hero-video" class="hero-video" autoplay muted loop playsinline preload="auto"
-                 poster="media/hero.jpg" aria-label="A trailer filmed in Dream Circuit: the launch, a jump, a wing pad and a loop round the roof, and the traffic in the Harbor Tunnel, the garage, a rocket, a boomerang, a bomb, a comet and a canyon of red rock in Sunset Mesa, a shock and a coral ridge in Coral Reef, the expressway and a police chase in Tokyo Nights, cows crossing, a drift and a roller coaster over Dream Valley's meadows, a crane's girder, a wrecking ball and a building's steel frame in the Construction Zone, a kart floating off a crater's rim under the Earth and a meteor coming down on Moon Base, the lava lake of Volcano Core with a geyser and a kart lifted out of the lava by the rescue drone, and the Grand Prix podium">
+                 poster="media/hero.jpg" aria-label="Filmed in Dream Circuit: the countdown and the start in Dream Valley, a jump, the pack under and over a figure-eight's bridge, cows crossing, a wing pad and a loop round the roof and the traffic in the Harbor Tunnel, Sunset Mesa's canyon and a boomerang, a coral ridge in Coral Reef, the expressway and a police chase in Tokyo Nights, a crane's girder and a wrecking ball in the Construction Zone, a jump on the moon past the Earth, a geyser and a kart lifted out of the lava by the rescue drone in Volcano Core, the garage, a rocket, a shock and a comet, and the Grand Prix podium">
             <source src="media/hero-648.mp4" type="video/mp4" media="(max-width: 760px)" />
             <source src="media/hero.mp4" type="video/mp4" />
           </video>
@@ -71,6 +71,10 @@
             for laps two and three.</p>
           <div class="cta-row">
             <a class="btn-cta" href="index.html">Play the game</a>
+            <a class="btn-ghost btn-trailer" id="trailer-open" href="#trailer">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor" /></svg>
+              Watch the trailer
+            </a>
             <a class="btn-ghost" href="#designer">How a circuit is dreamed</a>
           </div>
         </div>
@@ -363,6 +367,18 @@
       </div>
       <p class="wrap fineprint">MIT License &middot; &copy; 2026 Nilay Desai</p>
     </footer>
+    <dialog class="trailer" id="trailer" aria-label="The Dream Circuit trailer">
+      <div class="trailer-frame">
+        <video id="trailer-video" controls playsinline preload="none" poster="media/trailer.jpg"
+               aria-label="The Dream Circuit trailer: a diffusion model dreams a figure-eight from noise, it is raced in Dream Valley from the countdown to its bridge, then the Harbor Tunnel's wing pads and a loop round its roof, Sunset Mesa's canyon and a boomerang, Coral Reef, Tokyo's expressway and a police chase, a crane's girder and a wrecking ball, a jump on the moon under the Earth, a geyser and the rescue drone in Volcano Core, the garage, the items and the Grand Prix podium, to the game's own music">
+          <source src="media/trailer-648.mp4" type="video/mp4" media="(max-width: 760px)" />
+          <source src="media/trailer.mp4" type="video/mp4" />
+        </video>
+        <button class="trailer-close" id="trailer-close" type="button" aria-label="Close the trailer">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+        </button>
+      </div>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

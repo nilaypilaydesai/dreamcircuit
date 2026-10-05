@@ -65,6 +65,35 @@ function heroVideo(): void {
   label();
 }
 
+/** The trailer, over the page (a dialog): it plays with sound when opened (the hero film behind it
+ * pauses meanwhile) and stops when closed; a link to #trailer opens it, ready to play. */
+function trailer(): void {
+  const dialog = document.getElementById("trailer") as HTMLDialogElement | null;
+  const video = document.getElementById("trailer-video") as HTMLVideoElement | null;
+  const hero = document.getElementById("hero-video") as HTMLVideoElement;
+  if (!dialog || !video || typeof dialog.showModal !== "function") return; // (no dialogs: the link plays the file)
+  let heroWasPlaying = false;
+  const open = (play: boolean) => {
+    if (dialog.open) return;
+    heroWasPlaying = !hero.paused;
+    hero.pause();
+    dialog.showModal();
+    if (play) void video.play().catch(() => { /* (refused without a gesture: the controls stay up) */ });
+  };
+  document.getElementById("trailer-open")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    open(true);
+  });
+  document.getElementById("trailer-close")?.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); }); // (outside the film)
+  dialog.addEventListener("close", () => {
+    video.pause();
+    if (heroWasPlaying) void hero.play().catch(() => { /* (the hero's own toggle can start it again) */ });
+    if (location.hash === "#trailer") history.replaceState(null, "", location.pathname + location.search);
+  });
+  if (location.hash === "#trailer") open(false);
+}
+
 /** Solid nav once the hero scrolls away; the link for the section in view is marked. */
 function nav(): void {
   const bar = document.getElementById("nav")!;
@@ -180,6 +209,7 @@ function main(): void {
   for (const id of ["gh-link", "repo-link"]) (document.getElementById(id) as HTMLAnchorElement).href = REPO_URL;
   (document.getElementById("issues-link") as HTMLAnchorElement).href = `${REPO_URL}/issues`;
   heroVideo();
+  trailer();
   nav();
   const parallax = startParallax();
   paintHorizons(() => parallax.refresh());

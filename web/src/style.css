@@ -211,6 +211,27 @@ p { text-wrap: pretty; }
   transition: border-color 0.2s, background 0.2s;
 }
 .btn-ghost:hover { border-color: var(--gold); background: rgba(11, 4, 32, 0.55); }
+.btn-trailer { display: inline-flex; align-items: center; gap: 9px; }
+.btn-trailer svg { color: var(--gold); }
+
+/* ---------- the trailer, over the page ---------- */
+.trailer {
+  width: min(1280px, calc(100vw - 2 * var(--gutter))); max-width: none; padding: 0; border: 0;
+  background: transparent; color: var(--text); overflow: visible;
+}
+.trailer::backdrop { background: rgba(5, 2, 16, 0.86); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.trailer-frame { position: relative; }
+.trailer video {
+  display: block; width: 100%; aspect-ratio: 16 / 9; height: auto; background: #000;
+  border-radius: 12px; box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(199, 155, 255, 0.18);
+  image-rendering: pixelated;
+}
+.trailer-close {
+  position: absolute; top: -46px; right: 0; width: 36px; height: 36px; border-radius: 999px; cursor: pointer;
+  display: grid; place-items: center; color: var(--text);
+  background: rgba(11, 4, 32, 0.7); border: 1px solid var(--line-2);
+}
+.trailer-close:hover { border-color: var(--gold); color: var(--gold); }
 .hero-near {
   /* the foreground: crystals and palms standing on ground that reaches 200px below the hero */
   position: absolute; left: 0; right: 0; bottom: -200px; height: calc(clamp(90px, 13vw, 170px) + 200px);
