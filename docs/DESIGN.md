@@ -308,8 +308,8 @@ shadows and drift sparks. Nothing is a bitmap file.
 and rocks scatter near new road as it is committed (never on it), chevron boards go on the
 outside of tight corners, and the distant landscape is placed once the circuit locks.
 
-**Karts and rivals.** Arcade handling: acceleration toward a class top speed (Rookie 24,
-Intermediate 26, Pro 28, Legend 32 m/s), slower surfaces off the asphalt (kerb, shoulder, grass), yaw rate limited by
+**Karts and rivals.** Arcade handling: acceleration toward a class top speed (Rookie 24.5,
+Intermediate 27, Pro 30, Legend 33.5 m/s), slower surfaces off the asphalt (kerb, shoulder, grass), yaw rate limited by
 grip over speed, and drifting: hold drift while steering to slide with a stronger turn, charge blue (0.7 s)
 and orange (1.6 s) sparks, and release for a mini-turbo. Rivals follow a racing line that cuts
 the inside of corners with pure pursuit, brake for a friction-limited speed profile with
@@ -317,6 +317,17 @@ braking-distance lookahead, make room for karts ahead of them, drift tight corne
 per corner, held through it, released on exit), and rubber-band: far behind the player they find
 6%, far ahead they lift 7%. A headless test drives a rival around a twisty circuit and requires
 three clean laps, under 2% of the time on grass, and at least three drifts.
+
+**The classes.** Each is harder than the last by more than the last was. Measured on the three test
+circuits, the best rival laps about 11% slower than a clean lap (the rivals' own driver at full
+pace, full cornering and no slop) on Rookie, 6% on Intermediate, under 3% on Pro and as fast as one
+on Legend, where the middle of the field is still a percent or two behind it; and each class's top
+speed is a bigger step up than the last (+10%, +11%, +12%). A clean-driving pilot in the player's
+kart against seven rivals averaged 1.1, 1.5, 2.8 and 5.0 over 12 to 24 races; it still wins on
+Legend, now and then. (The steps used to be about even, the best rival lapping 18%, 12%, 8% and 1%
+slow, and the same pilot averaged 1.0, 1.1, 1.6 and 4.8: Rookie and Intermediate were won by miles.)
+A test holds the curve: the gaps shrink, faster class by class, and on Legend a clean lap still
+beats the middle of the field.
 
 **Jumps, tricks and boost pads.** As road is committed, the game places features on it: jump
 ramps on straights longer than 95 m (at least 260 m apart, and never near a bridge, an item row
@@ -453,7 +464,7 @@ city of towers with half-built frames and tower cranes in front of it. Moon Base
 (six tenths of the usual), for the karts, their jumps and the items alike, and the game's crest
 rule does the rest: a kart leaves the road where its speed squared times the road's bend over the
 top is more than gravity can hold, which on a crater's rim takes 21 to 28 m/s on the moon and
-27 m/s or more at home, where a Pro kart tops out at 28 (the road's slope and bend are measured over
+27 m/s or more at home, where a Pro kart tops out at 30 (the road's slope and bend are measured over
 2.4 m either side, so the steps between road points do not set karts flying). The ground is regolith pocked with a thousand craters, each a
 bowl lit on one side inside a bright rim of thrown-out dust; the drivers wear helmets; the scenery
 is landers, dishes, habitats, boulders and a rover; and the sky is black, with stars, grey ridges
@@ -463,8 +474,8 @@ Legend 150 m): on a lap of the usual size a ninth of the lap in one leap and oft
 the straight, so the moon came to draw every circuit 1.6 times the size (laps of 1.3 to 2 km). Even
 so a kart flat out skipped whole stretches of road: in ten minutes of flat-out laps on four of its
 circuits a quarter of the distance went by in the air, the longest leaps 118 to 142 m. At six
-tenths a jump flies half again as far as at home (a Pro kart's longest 47 m against 32, a boosted
-Legend's 73 m against 46), and a fast kart still floats off a crater's rim more than four times as
+tenths a jump flies half again as far as at home (a Pro kart's longest 54 m against 39, a boosted
+Legend's 79 m against 48, at the classes' speeds since they went up), and a fast kart still floats off a crater's rim more than four times as
 often as it would at home; the circuits are still drawn 1.6 times the size. The designer dreams, and every check
 runs, at its own size: only the road laid out in the world is scaled, and a map is kept at the usual
 size and raced at the scale of whichever world it is raced in. The ground texture grows to hold the
@@ -540,24 +551,34 @@ two frames of five (now in one of fourteen, sliding off the roof or looping).
 The walls are only for winged karts. Without wings the foot of each wall is a wall, as a
 tunnel's are elsewhere: a kart driven at it from the floor is stopped 0.7 m short of the floor's
 edge and scrapes along it, losing speed, and nothing (a bump from another kart included) puts it
-higher. Wings come from a wing pad: every pad that lies on the floor is one, drawn blue with a
-little plane on it, and besides the pads at corner exits the floor gets one every 300 m or so
-where the road is free, placed without drawing on the race's random numbers, so everything else
-lies where it did. (The tube's circuits are drawn wide, and at corner exits alone a lap had one
-pad, or none.) A wing pad gives eight seconds of wings and a boost: the kart is drawn as a little
+higher. Wings come from a wing pad, drawn blue with a little plane on it, and they are spread out:
+the floor gets one at least every 560 m where the road is free (placed without drawing on the
+race's random numbers, so everything else lies where it did, and on the locked lap any longer
+stretch gets one about halfway along), and a pad at a corner exit on the floor is one too, unless
+another is within 280 m, when it is a plain boost pad. (The tube's circuits are drawn wide, and at
+corner exits alone a lap had one pad, or none; then, one every 300 m with the corner exits' between,
+a lap had eight to ten, some 150 m apart, and the walls were somewhere to live, not a treat to be
+timed.) A wing pad gives eight seconds of wings and a boost: the kart is drawn as a little
 plane (swept white wings tipped in its paint, a light on each tip, a tail fin and tailplane over
 the back, and at speed a vapour trail off each wing tip), a WINGS meter drains under the item
 slot, flashing for its last second and a half, and WALL and LOOP show beside the speed. When the
-wings run out, a kart up a wall or on the roof goes no higher and slides back down to the floor,
-at 6 m/s or faster. The first wing pad of a race puts up a banner (WINGS! RIDE THE WALLS, LOOP THE
-ROOF), and the first scrape along a wall without them another (NO WINGS: THE BLUE PADS GIVE YOU
-WINGS). Rivals go for a wing pad ahead when their wings are gone or running out, and winged and
-fast enough to hold on, now and then for a pad up a wall (the roof's are left to the player);
-without wings they keep to the floor. The other pads go up the walls and on the roof, where only
+wings run out, a kart low on a wall (under 45 degrees up from the floor) goes no higher and slides
+back down to the floor, at 6 m/s or faster; higher up, or on the roof, it falls off (OFF THE
+WALL!): it drops, turning over, onto its roof on the floor (in sight: the screen does not darken,
+and the chase camera swings down to the floor under it and rises with it), the rescue drone comes
+down for it, lifts it and turns it the right way up over the middle of the floor, lowers it and
+lets it go, 2.6 s in all. Two seconds before they run out, high up, the player is told (WINGS LOW:
+GET DOWN!). The first wing pad of a race puts up a banner (WINGS! RIDE THE WALLS: BE DOWN BEFORE
+THEY RUN OUT), and the first scrape along a wall without them another (NO WINGS: THE BLUE PADS GIVE
+YOU WINGS). Rivals go for a wing pad ahead when their wings are gone or running out, take a plain
+pad on the floor whenever they can, and winged and fast enough to hold on, now and then for a pad up
+a wall (the roof's are left to the player), only with wings enough to get there and back down: they
+head down with 3.2 s of them in hand. Without wings they keep to the floor. The other pads go up the walls and on the roof, where only
 a winged kart can reach them (the roof's only one fast enough to loop), and up to four cars
 drive the floor in three lanes, 60 to 95 m apart and slower than any racer, to weave through or,
-winged, ride a wall past. In a race driven by the rivals' own driver on a calm circuit, six wing
-pads a lap kept every kart winged about 45% of the time. Its circuits are drawn 1.6 times the size and dreamed calmer, so the bends are
+winged, ride a wall past. In a race driven by the rivals' own driver on a calm circuit, four wing
+pads a lap keep every kart winged about a third of the time (six had kept them winged 45% of it),
+and no kart falls off a wall. Its circuits are drawn 1.6 times the size and dreamed calmer, so the bends are
 wide enough to drive round the inside of.
 
 In the tube there is no Mode-7 ground and no sky (`render/tube.ts`). It is drawn as road tunnels

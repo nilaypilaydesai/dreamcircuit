@@ -22,7 +22,7 @@ import { type Camera, drawGround, fitCamera, makeCamera, viewScale } from "./ren
 import type { Face, P3 } from "./render/poly";
 import { aimArrow, bankFaces, bridgeFaces, hillFaces, padFaces, rampFaces, tunnelFaces } from "./render/structures";
 import { type ObstacleArt, obstacleArt, obstacleFaces, obstacleSprites } from "./render/obstacles";
-import { elevBetween, kartPlace, tubeBetween, tubeFaces, tubeFrame, tubeHides, tubePlace, tubeView } from "./render/tube";
+import { elevBetween, kartPlace, tubeBetween, tubeFaces, tubeFrame, tubeHides, tubeInside, tubePlace, tubeView } from "./render/tube";
 import type { ObstacleSound } from "./race/obstacles";
 import { landformFaces } from "./render/landforms";
 import { Sky } from "./render/sky";
@@ -43,6 +43,7 @@ import { Hud, formatTime, kartColor } from "./ui/hud";
 import { Menu } from "./ui/menus";
 import { HALF_WIDTH, type Layout, N, checkLap } from "./world/track";
 import { CircuitDesigner, fromSteps, smoothArc, toGame } from "./world/trackgen";
+import { TUBE_R } from "./world/tube";
 
 type Mode = "boot" | "title" | "main" | "garage" | "setup" | "cupSetup" | "howto" | "dreaming" | "race" | "pause"
   | "results" | "standings" | "podium";
@@ -626,9 +627,10 @@ class Game {
       } else if (e.kind === "pad") this.sound.boost();
       else if (e.kind === "wings") {
         this.sound.wings();
-        if (e.first) this.hud.banner("WINGS!", now, SKY, 1.8, "RIDE THE WALLS, LOOP THE ROOF");
+        if (e.first) this.hud.banner("WINGS!", now, SKY, 2.2, "RIDE THE WALLS: BE DOWN BEFORE THEY RUN OUT");
         else this.hud.popup("WINGS!", now, SKY);
       } else if (e.kind === "wingsOff") { this.sound.wingsOff(); this.hud.popup("WINGS GONE", now, DIM); }
+      else if (e.kind === "wingsLow") { this.sound.wingsLow(); this.hud.popup("WINGS LOW: GET DOWN!", now, HOT); }
       else if (e.kind === "needWings") {
         if (e.first) this.hud.banner("NO WINGS", now, SKY, 2.2, "THE BLUE PADS GIVE YOU WINGS");
         else this.hud.popup("NEED WINGS!", now, SKY);
@@ -640,6 +642,7 @@ class Game {
       else if (e.kind === "fell") {
         if (e.into === "pond" || e.into === "trench" || e.into === "quicksand" || e.into === "canal") this.sound.splash();
         else this.sound.fall();
+        if (e.into === "wall") { this.sound.wingsOff(); this.hud.popup("OFF THE WALL!", now, hex("#ff6b6b")); }
         this.shake = Math.max(this.shake, 0.25);
       }
       else if (e.kind === "aimLocked") this.sound.lock();
@@ -655,7 +658,12 @@ class Game {
       else if (e.kind === "horn") this.sound.horn(e.near);
       else if (e.kind === "bite") this.sound.bite();
       else if (e.kind === "bounce" && e.near) this.sound.bounce();
-      else if (e.kind === "rescued") { this.snapCamera(this.cam, race); this.sound.rescue(); }
+      else if (e.kind === "rescued") {
+        // (out of the lava, a hazard or a drop the camera cuts to the road; off a tube's wall it has
+        // come down the wall with the kart, and the drone is coming for it in sight)
+        if (race.player.fallKind !== "wall") this.snapCamera(this.cam, race);
+        this.sound.rescue();
+      }
       else if (e.kind === "obstacle") this.obstacleEvent(e.sound, e.near, now);
     }
   }
@@ -915,7 +923,10 @@ class Game {
       const k = race.karts.find((o) => o.x === x && o.y === y);
       const q = k ? kartPlace(t, k) : tubePlace(t, x, y, hint ?? p.idx);
       if (hides(q.s)) return null;
-      const r = tubeBetween(t, q.i, q.w, q.u, h - elevBetween(t, q.i, q.w));
+      // (falling off a wall, or in the drone's hands: in the tube's air, turned as it is; what is
+      // drawn by it, the drone over it, as far above it as asked)
+      const r = k?.inside ? tubeInside(t, q.i, q.w, k.inside.lat, k.inside.z + h - k.elev, k.inside.roll)
+        : tubeBetween(t, q.i, q.w, q.u, h - elevBetween(t, q.i, q.w));
       return { X: r.p[0], Y: r.p[1], Z: r.p[2], n: r.n };
     };
     const look = (fr: { along: P3; round: P3; up: P3 }, ahead: number, round: number): { f: P3; r: P3; u: P3 } => {
@@ -938,8 +949,11 @@ class Game {
       // (swinging round, closer in and lower, so the kart keeps its place on the screen: 6.2 m to
       // the side of a kart up a wall, the camera would be out through it)
       const near = mirror ? 1 : 1 - 0.6 * Math.sin(chase.swing) ** 2;
-      const back = mirror ? 2.5 : (Math.hypot(flat.x - p.x, flat.y - p.y) || 6.2) * near;
-      const h = ((mirror ? 3.4 : BASE_HEIGHT) + chase.lift) * near; // (as high off the tube as over the road at home)
+      // (falling off a wall, or in the drone's hands, the kart is up in the tube's air over the floor
+      // where the camera rides: the camera rises with it, a little further back, under the roof)
+      const air = !mirror && p.inside ? Math.max(0, p.inside.z - 1.2) : 0;
+      const back = mirror ? 2.5 : (Math.hypot(flat.x - p.x, flat.y - p.y) || 6.2) * near + Math.min(2.5, air);
+      const h = Math.min(2 * TUBE_R - 1.5, ((mirror ? 3.4 : BASE_HEIGHT) + chase.lift) * near + air * 0.8); // (as high off the tube as over the road at home)
       const basis = look(tubeFrame(t, k.i, k.w, uK), ahead, round);
       const at0 = tubeBetween(t, k.i, k.w, uK, 0).p, f = basis.f, up = basis.u;
       const pos: P3 = [at0[0] - f[0] * back + up[0] * h, at0[1] - f[1] * back + up[1] * h, at0[2] - f[2] * back + up[2] * h];
@@ -1100,10 +1114,10 @@ class Game {
     }
     // into the lava (dark red), water (dark blue), a hole (black)...: the view goes dark while the
     // drone lifts the kart out
-    const f = me.fall;
-    if (f >= 0 && f < FALL_SWAP + 0.3 && race === this.race) {
+    const f = me.fall, tint = FALL_TINT[me.fallKind];
+    if (f >= 0 && f < FALL_SWAP + 0.3 && race === this.race && tint !== null) {
       const a = Math.max(0, 1 - Math.abs(f - FALL_SWAP) / 0.26);
-      if (a > 0) this.scr.dimRect(0, 0, W, H, FALL_TINT[me.fallKind], 0.92 * a);
+      if (a > 0) this.scr.dimRect(0, 0, W, H, tint, 0.92 * a);
     }
     // inside a tunnel the light drops
     if (race.features.tunnels.length) {

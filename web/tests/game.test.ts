@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Rand, hex } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
-import { Features, PAD_LEN, RAMP_LEN, TUNNEL_LEN } from "../src/game/race/features";
+import { Features, PAD_LEN, RAMP_LEN, TUNNEL_LEN, WING_APART, WING_GAP } from "../src/game/race/features";
 import {
   AIM_MAX, BOMB_BLAST, BOX_SPACING, COMET_BLAST, type Field, GOLD_TIME, HORN_R, ITEM_KINDS, ITEM_NAMES, Items, JACKPOT,
   ROCKET_TIME, ROULETTE, STATIC_TIME, rocketPasses,
@@ -13,7 +13,7 @@ import { ROCKET_GAP, type Standing, itemOdds, pickItem, tierOf } from "../src/ga
 import { heldArt, itemIcons } from "../src/game/render/sprites";
 import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
 import {
-  CLASSES, COIN_SPEED, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, TUBE_EDGE, WALL_TURN, WING_TIME, collideKarts,
+  CLASSES, COIN_SPEED, type ClassParams, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, TUBE_EDGE, WALL_TURN, WING_TIME, collideKarts,
 } from "../src/game/race/kart";
 import { CALM_BAND, TRACK_TYPES, type TrackTypeId, WILD_BAND, surpriseType, trackType } from "../src/game/race/tracktypes";
 import {
@@ -225,6 +225,37 @@ describe("lap counting", () => {
     drive(8, -1); // back over the line
     expect(k.crossings).toBe(1);
     expect(k.dist).toBeGreaterThan(t.length * 0.8);
+  });
+
+  it("makes each class harder than the last by more than the last, and Legend's field still beatable", () => {
+    // (laps 2 and 3 of a kart alone, driven by the rivals' driver: as a class's rival, and as a clean
+    // lap, with the class's numbers for its decisions, but full pace, full cornering and no slop)
+    const laps = (pts: Float64Array, cls: ClassParams, decide: ClassParams, rank: number) => {
+      const t = Track.fromPoints(pts), k = new Kart(0, "K", 0, false);
+      k.placeOn(t, t.startIndex, 0);
+      const d = new RivalDriver(new Rand(3), k, rank);
+      let time = 0, from = -1;
+      for (let i = 0; i < 60 * 400 && k.crossings < 4; i++) {
+        k.update(1 / 60, d.act(1 / 60, t, decide, k, [k]), t, cls);
+        k.updateProgress(t);
+        time += 1 / 60;
+        if (k.crossings === 2 && from < 0) from = time;
+      }
+      return time - from;
+    };
+    const gap = (d: "rookie" | "intermediate" | "pro" | "legend", rank: number) => {
+      const cls = CLASSES[d], clean = { ...cls, aiSpeed: 1, aiCorner: 1, aiNoise: 0 };
+      const all = [twisty(), calm(), figure8()].map((pts) => laps(pts, cls, cls, rank) / laps(pts, cls, clean, 0) - 1);
+      return all.reduce((a, b) => a + b, 0) / all.length;
+    };
+    const best = (["rookie", "intermediate", "pro", "legend"] as const).map((d) => gap(d, 1)); // (the best rival)
+    expect(best[0]).toBeGreaterThan(0.08); // (a first class: its rivals well off a clean lap)
+    for (let n = 1; n < 4; n++) expect(best[n]).toBeLessThan(best[n - 1]);
+    // the gap closes faster class by class (it shrank about evenly before)
+    expect(best[2] / best[1]).toBeLessThan(best[1] / best[0]);
+    expect(best[3] / best[2]).toBeLessThan(best[2] / best[1]);
+    // and in Legend a clean lap still beats the middle of the field
+    expect(gap("legend", 4)).toBeGreaterThan(0.005);
   });
 
   it("keeps a stationary kart on the road, and the classes ordered by pace", () => {
@@ -641,12 +672,18 @@ describe("a crowded race", () => {
         race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts));
         race.events = [];
         const t = race.track;
-        if (i % 90 === 0 && t.count > 10) { // (oil, now and then, anywhere on the road laid so far)
-          const j = (i * 7919) % t.count;
-          race.items.slicks.push({ x: t.xs[j], y: t.ys[j], elev: t.elev[j] ?? 0, idx: j, ttl: 999, owner: race.karts[1], armed: 0 });
+        // (oil, now and then, anywhere on the road the leader has been over, on its surface: ahead of
+        // it a jump's ramp can still go down where the oil lies, as nowhere a kart could have dropped it)
+        const lead = race.standings[0]?.idx ?? 0;
+        if (i % 90 === 0 && lead > 10) {
+          const j = (i * 7919) % lead;
+          const h = (t.elev[j] ?? 0) + race.features.rampAt(t.s[j], 0).height;
+          race.items.slicks.push({ x: t.xs[j], y: t.ys[j], elev: h, idx: j, ttl: 999, owner: race.karts[1], armed: 0 });
         }
         for (const b of [...race.items.boxes, ...race.items.coins, ...race.items.slicks]) {
-          worst = Math.max(worst, Math.abs(b.elev - (t.elev[b.idx] ?? 0)));
+          // (the road's surface: a jump's ramp too, where oil can lie)
+          const road = (t.elev[b.idx] ?? 0) + race.features.rampAt(t.s[b.idx], t.offset(b.x, b.y, b.idx)).height;
+          worst = Math.max(worst, Math.abs(b.elev - road));
         }
         if (i % 4 === 0) for (let k = 0; k < 6; k++) await Promise.resolve();
       }
@@ -2846,7 +2883,7 @@ describe("the tunnel", () => {
         if (Math.abs(k.offset) > TUBE_FLOOR && !k.air) most = Math.max(most, off(k));
         high = Math.max(high, Math.abs(k.offset));
       }
-      expect(most).toBeLessThan(WALL_TURN + 0.01); // (give or take the road bending under it)
+      expect(most).toBeLessThan(WALL_TURN + 0.015); // (give or take the road bending under it, at a legend's speed)
       expect(most).toBeGreaterThan(WALL_TURN - 0.05);
       expect(high).toBeGreaterThan(TUBE_HALF - 1);
       // turned up the wall and let go: it straightens out and rides the wall along
@@ -2996,7 +3033,7 @@ describe("the tunnel", () => {
         if (Math.abs(p.offset) > HALF_WIDTH) up++;
         if (Math.abs(p.offset) > HALF_WIDTH + Math.PI * TUBE_R) ceiling++;
         if (p.wing) wing++;
-        expect(!!p.wing).toBe(Math.abs(p.offset) < TUBE_FLOOR); // (the floor's are wing pads, and only they are)
+        if (p.wing) expect(Math.abs(p.offset)).toBeLessThan(TUBE_FLOOR); // (wing pads are on the floor, and only there)
       }
       expect(race.scenery.items.length).toBe(0); // nothing outside the tube
       expect(race.tex.size).toBeLessThan(512);
@@ -3027,9 +3064,15 @@ describe("the tunnel", () => {
     const race = new Race({ rivals: 5, difficulty: "pro", theme: tunnel, seed: 5, replay: calm() }, null, () => {});
     await race.prepare();
     // (its bends are wide: wing pads all the way round, not only at the corner exits)
-    const wings = race.features.pads.filter((q) => q.wing).map((q) => q.s0).sort((a, b) => a - b);
-    expect(wings.length).toBeGreaterThan(race.track.length / 600);
-    for (let n = 1; n < wings.length; n++) expect(wings[n] - wings[n - 1]).toBeLessThan(700);
+    // (and spread out: one at least every WING_GAP m or so, none nearer another than WING_APART;
+    // 300 m apart, with the corner exits' between, the walls were somewhere to live)
+    const wings = race.features.pads.filter((q) => q.wing).map((q) => q.s0).sort((a, b) => a - b), L = race.track.length;
+    expect(wings.length).toBeGreaterThanOrEqual(Math.floor(L / (WING_GAP + 60)));
+    for (let n = 0; n < wings.length; n++) {
+      const gap = n + 1 < wings.length ? wings[n + 1] - wings[n] : wings[0] + L - wings[n];
+      expect(gap).toBeGreaterThanOrEqual(WING_APART);
+      expect(gap).toBeLessThan(WING_GAP + 61);
+    }
     // driven onto one: wings (and a word about them the first time), until they run out
     race.phase = "racing";
     const t = race.track, p = race.player, pad = race.features.pads.find((q) => q.wing)!;
@@ -3052,7 +3095,7 @@ describe("the tunnel", () => {
     await again.prepare();
     const pilot = new RivalDriver(new Rand(2), again.player, 0);
     const winged = new Set<Kart>(), was = new Map<Kart, number>();
-    let up = 0, rose = 0;
+    let up = 0, rose = 0, fell = 0;
     for (let i = 0; i < 60 * 300 && again.phase !== "done"; i++) {
       again.update(1 / 60, pilot.act(1 / 60, again.track, again.cls, again.player, again.karts, again.items,
                                      again.obstacles.dangers(), again.features.pads));
@@ -3061,13 +3104,75 @@ describe("the tunnel", () => {
         const a = Math.abs(k.offset);
         if (k.wings > 0 && !k.isPlayer) winged.add(k);
         if (k.wings > 0 && a > TUBE_FLOOR + 1.5) up++;
-        if (k.wings <= 0 && a > TUBE_EDGE + 1e-6) rose = Math.max(rose, a - (was.get(k) ?? a)); // (coming down, never up)
+        if (k.wings <= 0 && a > TUBE_EDGE + 1e-6 && !k.inside) rose = Math.max(rose, a - (was.get(k) ?? a)); // (coming down, never up)
+        if (k.fallKind === "wall" && k.fall >= 0 && k.fall < 1.5 / 60) fell++;
         was.set(k, a);
       }
     }
     expect(winged.size).toBe(5);
     expect(up).toBeGreaterThan(60);
     expect(rose).toBeLessThanOrEqual(1e-9);
+    expect(fell).toBe(0); // (they come back down before their wings run out: off a wall without them, a kart falls)
+  });
+
+  it("drops a kart whose wings run out high on a wall or on the roof: onto its roof, and the drone sets it back on the floor", async () => {
+    // (lower down a wall it slides back down to the floor, as ever)
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: tunnel, seed: 2, replay: calm() }, null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    const t = race.track, p = race.player, i0 = t.wrap(t.startIndex + 500);
+    const ride = (u: number) => {
+      p.placeOn(t, i0, u);
+      p.fall = -1;
+      p.inside = null;
+      p.wings = 0.05;
+      p.v = 26;
+      const seen: string[] = [];
+      let roof = false, lowest = Infinity, landed = Infinity;
+      for (let i = 0; i < 60 * 4; i++) {
+        p.boostTime = 1; // (fast enough to hold on anywhere, but for the wings)
+        race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
+        seen.push(...race.events.map((e) => (e.kind === "fell" ? `fell:${e.into}` : e.kind)));
+        race.events = [];
+        const air = p.inside as Kart["inside"]; // (set by the race's update, not here)
+        if (air) { // (its wheels z m up: on its roof, its top a kart's height below them)
+          lowest = Math.min(lowest, air.z - 1.1 * Math.max(0, -Math.cos(air.roll)));
+          if (Math.abs(Math.abs(air.roll) - Math.PI) < 0.02 && air.z < 1.3) roof = true;
+        }
+        if (!p.inside && p.fall > 0 && landed === Infinity) landed = Math.abs(p.offset); // (let go: where)
+      }
+      return { seen, roof, lowest, landed };
+    };
+    for (const u of [TUBE_FLOOR + 0.3 * Math.PI * TUBE_R, TUBE_FLOOR + 0.75 * Math.PI * TUBE_R, TUBE_HALF - 2, -(TUBE_HALF - 2)]) {
+      const r = ride(u);
+      expect(r.seen, `from ${u.toFixed(1)} m round`).toContain("fell:wall");
+      expect(r.seen).not.toContain("wingsOff"); // (the fall says it)
+      expect(r.roof, `from ${u.toFixed(1)} m round`).toBe(true); // down on its roof on the floor
+      expect(r.lowest).toBeGreaterThan(-0.01); // (never through the floor, however it is turned)
+      expect(r.landed, `from ${u.toFixed(1)} m round`).toBeLessThan(0.01); // let go over the middle of the floor
+      expect(p.fall).toBe(-1); // the drone has been and gone
+      expect(p.inside).toBeNull();
+      expect(Math.abs(p.offset)).toBeLessThan(TUBE_EDGE);
+      expect(p.v).toBeGreaterThan(5); // and it drives on
+    }
+    // just up a wall: no fall, it slides back down
+    const low = ride(TUBE_FLOOR + 0.15 * Math.PI * TUBE_R);
+    expect(low.seen).not.toContain("fell:wall");
+    expect(low.seen).toContain("wingsOff");
+    expect(Math.abs(p.offset)).toBeLessThanOrEqual(TUBE_EDGE + 1e-9);
+    // warned first: two seconds of wings left, high up
+    p.placeOn(t, i0, TUBE_HALF - 2);
+    p.fall = -1;
+    p.wings = 2.1;
+    p.v = 26;
+    const told: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      p.boostTime = 1;
+      race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
+      told.push(...race.events.map((e) => e.kind));
+      race.events = [];
+    }
+    expect(told).toContain("wingsLow");
   });
 });
 

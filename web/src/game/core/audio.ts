@@ -120,6 +120,8 @@ export class Sound {
   }
   /** The wings run out: a falling whistle. */
   wingsOff(): void { this.tone(880, 0.45, "triangle", 0.06, 0, 330); }
+  /** They are running out, high on a wall: two short warning pips. */
+  wingsLow(): void { [0, 0.15].forEach((at) => this.tone(1047, 0.08, "square", 0.06, at)); }
   bump(): void { this.noise(0.18, 0.22, 400); this.tone(90, 0.15, "triangle", 0.15); }
   locked(): void { [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, 0.3, "triangle", 0.09, i * 0.07)); }
   roll(): void { for (let i = 0; i < 12; i++) this.tone(520 + (i % 4) * 140, 0.05, "square", 0.045, i * 0.095); }

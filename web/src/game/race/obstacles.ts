@@ -9,7 +9,7 @@
 import { Rand } from "../core/gfx";
 import { BANK_AT } from "../world/banks";
 import { HALF_WIDTH, type Track } from "../world/track";
-import type { Kart } from "./kart";
+import { CLASSES, type Kart } from "./kart";
 
 export type ObstacleKind = "cow" | "tumbleweed" | "jelly" | "police" | "geyser" | "wrecker" | "meteor" | "traffic";
 
@@ -93,7 +93,7 @@ export class Obstacles {
   wallAt: ((s: number, side: number) => boolean) | null = null;
   /** The race's class: a police car goes no faster than a stock kart's top speed, nor round a bend
    * faster than its grip allows (set by the race). */
-  pace = { vmax: 28, grip: 22 };
+  pace = { vmax: CLASSES.pro.vmax, grip: CLASSES.pro.grip }; // (the race sets its own class's)
   /** Whether an item hits a car at (x, y), z m up: oil, a puck, a bomb's blast... (set by the race). */
   strike: ((x: number, y: number, z: number) => boolean) | null = null;
 

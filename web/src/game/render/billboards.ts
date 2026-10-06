@@ -8,7 +8,7 @@
 // hanging under the rescue drone.
 
 import { H, W, hex, mix, type Screen } from "../core/gfx";
-import { FALL_END, FALL_RELEASE, FALL_SINK, FALL_SWAP, type Kart } from "../race/kart";
+import { FALL_END, FALL_RELEASE, FALL_SINK, FALL_SWAP, type Kart, WALL_GRAB } from "../race/kart";
 import { ORBITS, type ItemKind } from "../race/items";
 import type { FallKind } from "../world/hazards";
 import type { Placed } from "../world/scenery";
@@ -141,13 +141,14 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
   for (const k of karts) {
     if (k === look.hide) continue;
     const drop = k.fallKind === "drop"; // (falling off raised road: down past the deck, to the ground)
+    const offWall = k.fallKind === "wall"; // (off a wall of the tube: in its air, and seen all the way)
     if (k.fall >= 0) {
       const low = lowAt(k.x, k.y, k.ground);
-      if (!drop) splash(k, project, (q, z, draw) => items.push({ ...q, z: z + low, draw }), scr, now);
+      if (!drop && !offWall) splash(k, project, (q, z, draw) => items.push({ ...q, z: z + low, draw }), scr, now);
       if (look.drone) rescueDrone(k, look.drone, project, (q, z, draw) => items.push({ ...q, z, draw }), scr, now, low);
-      if (k.fall >= FALL_SINK && k.fall < FALL_SWAP && !drop) continue; // under the surface
+      if (k.fall >= FALL_SINK && k.fall < FALL_SWAP && !drop && !offWall) continue; // under the surface
     }
-    const falling = drop && k.fall >= 0 && k.fall < FALL_SWAP;
+    const falling = (drop && k.fall >= 0 && k.fall < FALL_SWAP) || k.inside !== null;
     const p = project(k.x, k.y, k.elev, k.idx);
     const ps = project(k.x, k.y, falling ? 0 : k.ground, k.idx);
     if (!p || !ps) continue;
@@ -166,7 +167,7 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const prism = k.prism > 0;
     // sinking into the lava it glows hot (and the lava hides what is under its surface); hanging
     // under the drone it cools off
-    const sinking = k.fall >= 0 && k.fall < FALL_SINK && !drop, carried = k.falling && k.fall >= FALL_SWAP;
+    const sinking = k.fall >= 0 && k.fall < FALL_SINK && !drop && !offWall, carried = k.falling && k.fall >= FALL_SWAP;
     const hot = k.fallKind === "lava"; // (only the lava makes it glow)
     const heat = !hot ? 0 : sinking ? 0.25 + 0.5 * (k.fall / FALL_SINK)
       : carried ? 0.4 * (1 - (k.fall - FALL_SWAP) / (FALL_RELEASE - FALL_SWAP)) : 0;
@@ -336,14 +337,19 @@ function rescueDrone(k: Kart, art: SceneryArt[], project: Project, push: Push, s
                      lowBias: number): void {
   if (k.fall < FALL_SWAP || k.fall >= FALL_END) return;
   const gone = k.fall >= FALL_RELEASE;
-  // (it hovers 1.3 m over the kart's floor while carrying, then climbs away from where it let go)
+  // (it hovers 1.3 m over the kart's floor while carrying, then climbs away from where it let go; a
+  // kart on its roof in the tube it comes down to first, and hooks by its underside, uppermost)
   const x = gone ? k.dropX : k.x, y = gone ? k.dropY : k.y;
   const base = gone ? k.dropZ + 0.55 + (k.fall - FALL_RELEASE) * 7 : k.elev;
-  const q = project(x, y, base + 1.3);
+  const air = gone ? null : k.inside;
+  const top = air ? 0.05 + 0.75 * Math.max(0, Math.cos(air.roll)) : 0.8; // the top of the kart, over its wheels
+  const coming = air ? Math.max(0, 1 - (k.fall - FALL_SWAP) / (WALL_GRAB - FALL_SWAP)) : 0;
+  const over = top + 0.5 + coming * 3.5;
+  const q = project(x, y, base + over);
   if (!q) return;
   const sp = art[Math.floor(now * 20) % art.length];
   const h = sp.height * q.ppm, w = (h * sp.sprite.w) / sp.sprite.h;
-  const hook = gone ? null : project(x, y, base + 0.8); // the top of the kart
+  const hook = gone ? null : project(x, y, base + (coming > 0 ? over - 0.5 : top)); // (still coming: its hook hangs)
   push(q, q.z + (base > 1 ? -0.5 : lowBias) - 0.04, () => {
     if (hook) { // the cable: steel, with a dark edge so it reads over the road and the lava
       const cw = Math.max(1, Math.round(q.ppm * 0.035)), cx = Math.round(q.sx - cw / 2);

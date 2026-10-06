@@ -2,7 +2,8 @@
 // kart-to-kart bumps and a soft outer fence; road height (bridges) with guard rails; jumps off
 // ramps, with a trick for a well-timed hop; in the volcano, falling into the lava, out of which a
 // drone lifts the kart back onto the road; and in the harbor tunnel's tube, wings from a wing pad,
-// to drive up its walls and over its roof. Tuned for fun, not for the research simulator.
+// to drive up its walls and over its roof (run out of them high up, and the kart falls off onto
+// its roof, and the drone sets it back on the floor). Tuned for fun, not for the research simulator.
 
 import type { FallKind } from "../world/hazards";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
@@ -31,11 +32,16 @@ export interface ClassParams {
   aiNoise: number; // rivals' steering sloppiness
 }
 
+// Each class harder than the last by more than the last was: the best rival laps about 11% slower
+// than a clean lap in Rookie, 6% in Intermediate, under 3% in Pro and as fast as one in Legend (the
+// middle of the field a percent or two behind it, so a clean lap still beats most of it); and each
+// class is faster, by more each time. (Before, the steps were about even: the best rival lapped 18%
+// slow in Rookie, 12% in Intermediate, 8% in Pro and 1% in Legend.)
 export const CLASSES: Record<Difficulty, ClassParams> = {
-  rookie: { label: "ROOKIE", vmax: 24, accel: 9, grip: 19, aiSpeed: 0.84, aiCorner: 0.72, aiNoise: 0.18 },
-  intermediate: { label: "INTERMEDIATE", vmax: 26, accel: 9.75, grip: 20.5, aiSpeed: 0.885, aiCorner: 0.78, aiNoise: 0.135 },
-  pro: { label: "PRO", vmax: 28, accel: 10.5, grip: 22, aiSpeed: 0.93, aiCorner: 0.84, aiNoise: 0.09 },
-  legend: { label: "LEGEND", vmax: 32, accel: 12, grip: 25, aiSpeed: 0.99, aiCorner: 0.95, aiNoise: 0.03 },
+  rookie: { label: "ROOKIE", vmax: 24.5, accel: 9.2, grip: 19.3, aiSpeed: 0.895, aiCorner: 0.79, aiNoise: 0.125 },
+  intermediate: { label: "INTERMEDIATE", vmax: 27, accel: 10.1, grip: 21.2, aiSpeed: 0.94, aiCorner: 0.855, aiNoise: 0.08 },
+  pro: { label: "PRO", vmax: 30, accel: 11.25, grip: 23.6, aiSpeed: 0.97, aiCorner: 0.91, aiNoise: 0.05 },
+  legend: { label: "LEGEND", vmax: 33.5, accel: 12.55, grip: 26.3, aiSpeed: 1.0, aiCorner: 0.99, aiNoise: 0.012 },
 };
 
 export interface Controls {
@@ -70,6 +76,15 @@ export const FALL_RELEASE = 2.0; // s: let go, half a meter up; the driver has c
 export const FALL_END = 2.6; // s: the drone has flown off
 export const SINK_DEPTH = 1.8; // m
 const CARRY_HIGH = 3.4, CARRY_LOW = 0.55; // m over the road: where the kart is lowered from and let go
+// off a wall of the tunnel's tube (race.ts decides when: its wings ran out further up a wall than
+// WALL_FALL_TILT, or on the roof): it falls, turning over, and lands on its roof on the floor; the
+// drone comes down for it, lifts it and turns it the right way up over the middle of the floor,
+// lowers it and lets it go (on the same clock as any other rescue: FALL_SWAP the drone is there)
+export const WALL_FALL_TILT = Math.PI / 4; // radians up a wall from the floor (lower down, it slides back down)
+const WALL_LAND = 0.6; // s: on its roof on the floor
+export const WALL_GRAB = 1.05; // s: the drone has it, and lifts it
+const WALL_LIFT = 1.45; // s: the right way up, over the middle of the floor, to be lowered from CARRY_HIGH
+const ON_ROOF = 1.15; // m off the floor its wheels are, lying on its roof
 
 export type TrickGrade = 0 | 1 | 2; // none, good, perfect
 
@@ -130,6 +145,11 @@ export class Kart {
   dropX = 0; // where the drone set it down
   dropY = 0;
   dropZ = 0;
+  // off a wall of the tube, until the drone lets it go: where it is in the tube's air (``lat`` m left
+  // of the road's middle and ``z`` m off the floor, as world/tube.ts measures round the tube) and
+  // how it is turned (``roll``, as a surface's tilt: 0 the right way up, ±π on its roof)
+  inside: { lat: number; z: number; roll: number } | null = null;
+  private wallFrom = { lat: 0, z: 0, roll: 0, u: 0 }; // and where it came off the wall
   private safeIdx = 0; // the last road point the kart was on (not the bank, not in the air)
   // the kart's build (garage parts) and what it does to the class's numbers
   build: Build = DEFAULT_BUILD;
@@ -194,6 +214,11 @@ export class Kart {
   /** Into the lava (or a hazard, or off the edge of raised road: ``kind``): everything the kart was
    * doing stops. */
   fallIn(kind: FallKind = "lava"): void {
+    if (kind === "wall") { // (where it is round the tube, and how high off its surface)
+      const q = tubeAt(this.offset), h = this.elev - this.ground;
+      this.wallFrom = { lat: q.lat - Math.sin(q.tilt) * h, z: q.z + Math.cos(q.tilt) * h, roll: q.tilt, u: this.offset };
+      this.inside = { lat: this.wallFrom.lat, z: this.wallFrom.z, roll: q.tilt };
+    }
     this.fall = 0;
     this.fallKind = kind;
     this.fallX = this.x;
@@ -537,6 +562,7 @@ export class Kart {
     this.hopHeld = !!input.drift;
     this.v = this.vz = 0;
     this.surface = "air";
+    if (this.fallKind === "wall") return this.offWall(dt, track);
     if (this.fall < FALL_SWAP) {
       // into the lava (or water, sand, a hole) it sinks out of sight; off raised road it drops
       this.elev = this.fallKind === "drop" ? Math.max(-SINK_DEPTH, this.fallZ - 0.5 * this.gravity * this.fall ** 2)
@@ -558,6 +584,54 @@ export class Kart {
     if (this.fall + dt >= FALL_RELEASE) { // let go: it drops the rest of the way
       this.air = true;
       this.airTime = 0;
+    }
+    return true;
+  }
+
+  /** Off a wall of the tube (see WALL_FALL_TILT): down to the floor, turning over as it falls; on its
+   * roof until the drone has it; lifted and turned the right way up over the middle of the floor;
+   * lowered there and let go. Its place round the tube (where the chase camera rides) is the floor
+   * under it, and the middle as it is lifted. */
+  private offWall(dt: number, track: Track): boolean {
+    const f = this.fall, from = this.wallFrom;
+    const side = Math.sign(from.roll) || Math.sign(from.lat) || 1;
+    const land = side * Math.min(Math.abs(from.lat), TUBE_FLOOR - 1.6); // (on the floor below, short of the wall)
+    const ease = (p: number) => p * p * (3 - 2 * p);
+    let lat: number, z: number, roll: number;
+    if (f < WALL_LAND) {
+      const p = f / WALL_LAND, e = ease(p);
+      lat = from.lat + (land - from.lat) * e;
+      z = from.z + (ON_ROOF - from.z) * p * p; // (falling: faster and faster)
+      roll = from.roll + (side * Math.PI - from.roll) * e;
+    } else if (f < WALL_GRAB) {
+      [lat, z, roll] = [land, ON_ROOF, side * Math.PI];
+    } else if (f < WALL_LIFT) {
+      const e = ease((f - WALL_GRAB) / (WALL_LIFT - WALL_GRAB));
+      [lat, z, roll] = [land * (1 - e), ON_ROOF + (CARRY_HIGH - ON_ROOF) * e, side * Math.PI * (1 - e)];
+    } else {
+      const p = Math.min(1, (f - WALL_LIFT) / (FALL_RELEASE - WALL_LIFT));
+      [lat, z, roll] = [0, CARRY_HIGH + (CARRY_LOW - CARRY_HIGH) * (1 - (1 - p) ** 2), 0];
+    }
+    // (its place round the tube, where the chase camera rides, swings down to the floor under it at
+    // once: riding round the wall as it fell, the camera lost it off the screen)
+    const u = f < 0.15 ? from.u + (land - from.u) * ease(f / 0.15) : f < WALL_LAND ? land : lat;
+    this.moveInTube(track, 0, u - this.offset);
+    this.inside = { lat, z, roll };
+    this.elev = this.ground; // (how high it is is the inside's: drawn there, round the tube)
+    const [tx, ty] = track.tangent(this.idx), way = Math.atan2(ty, tx);
+    if (f >= WALL_GRAB) { // (the drone turns it to face along the road as it lifts it)
+      this.heading += turnOf(way - this.heading) * Math.min(1, dt * 6);
+      this.slip = this.steer = this.yawRate = 0;
+    }
+    if (f + dt >= FALL_RELEASE) { // let go, over the middle of the floor: it drops the rest of the way
+      this.inside = null;
+      this.heading = way;
+      this.elev = this.ground + CARRY_LOW;
+      this.air = true;
+      this.airTime = 0;
+      this.dropX = this.x;
+      this.dropY = this.y;
+      this.dropZ = this.ground;
     }
     return true;
   }

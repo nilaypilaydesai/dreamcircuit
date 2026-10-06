@@ -16,6 +16,9 @@ import { AIMED, AIM_MAX, type Items, THROWN_BACK, TRAILS } from "./items";
 import type { ClassParams, Controls, Kart } from "./kart";
 
 const WALL_TOP = TUBE_FLOOR + Math.PI * TUBE_R; // m round the tube to the top of a wall (the roof's pads are the player's)
+// s of wings a rival keeps in hand to come back down off a wall: high up one without them, a kart
+// falls off (race.ts), and the drone has to fish it off the floor
+const DESCENT = 3.2;
 
 export class RivalDriver {
   private lane: number;
@@ -116,8 +119,9 @@ export class RivalDriver {
     const k = this.kart, s = track.s[k.idx], v = Math.max(k.v, 0);
     const p = this.seek;
     if (p) {
-      // (gone past it, or it can no longer hold on up there: back down to the floor)
-      const lost = !p.wing && (k.wings < 0.6 || v < holdSpeed(p.offset) + 1);
+      // (gone past it, or it can no longer hold on up there, or its wings are running out: back down
+      // to the floor)
+      const lost = !p.wing && Math.abs(p.offset) >= TUBE_FLOOR && (k.wings < DESCENT || v < holdSpeed(p.offset) + 1);
       if (s > p.s0 + PAD_LEN || s < p.s0 - 90 || lost) {
         this.seek = null;
         this.laneTarget = this.rng.range(-3, 3);
@@ -129,8 +133,10 @@ export class RivalDriver {
     for (const q of pads) {
       const d = q.s0 - s;
       if (d < 12 || d > 70 || q === this.weighed) continue;
-      const want = q.wing ? k.wings < 2.5
-        : Math.abs(q.offset) < WALL_TOP && k.wings > d / Math.max(v, 1) + 1.5 && v > holdSpeed(q.offset) + 3;
+      // (a wing pad when its wings are low or gone; a plain pad on the floor, any time; one up a wall
+      // with wings enough to get there and back down)
+      const want = q.wing ? k.wings < 2.5 : Math.abs(q.offset) < TUBE_FLOOR ? true
+        : Math.abs(q.offset) < WALL_TOP && k.wings > d / Math.max(v, 1) + DESCENT + 0.5 && v > holdSpeed(q.offset) + 3;
       if (!want) continue;
       this.weighed = q;
       if (this.rng.next() > (q.wing ? 0.85 : 0.3 + 0.5 * cls.aiCorner)) continue;

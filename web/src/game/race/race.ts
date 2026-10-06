@@ -10,12 +10,13 @@ import { type FallKind, type Hazard, inHazard, placeHazards } from "../world/haz
 import { Scenery } from "../world/scenery";
 import { WorldTexture } from "../world/texture";
 import { FIRST_SEG, HALF_WIDTH, type Layout, N, SPACING, Track } from "../world/track";
+import { tubeAt } from "../world/tube";
 import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
 import { Features, PAD_LEN, type Pad, RAMP_LEN, TUNNEL_LEN } from "./features";
 import { AIMED, AIM_MAX, AIM_RATE, type Field, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
 import { ALLEY_AT, ALLEY_DEPTH, type ObstacleSite, type ObstacleSound, Obstacles, alleyBlocks } from "./obstacles";
-import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, WING_TIME, collideKarts } from "./kart";
+import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, WALL_FALL_TILT, WING_TIME, collideKarts } from "./kart";
 import type { Standing } from "./odds";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
 import {
@@ -25,6 +26,7 @@ import { LIVERIES } from "../render/sprites";
 
 export const LAPS = 3;
 const FRONTIER_HOLD = 60; // m: below this much dreamed road ahead, speed is capped
+const WINGS_LOW = 2; // s of wings left when a player high on a wall of the tube is told to come down
 
 export type RaceEvent =
   | { kind: "count"; n: number }
@@ -58,6 +60,7 @@ export type RaceEvent =
   | { kind: "pad" } // the player hit a boost pad
   | { kind: "wings"; first: boolean } // a wing pad (in the tunnel's tube): wings, for the walls and the roof
   | { kind: "wingsOff" } // and they ran out
+  | { kind: "wingsLow" } // they are running out, and the player is up a wall where they will fall without them
   | { kind: "needWings"; first: boolean } // the player drove at a wall of the tube without them
   | { kind: "rocket" } // a perfectly timed start
   | { kind: "burnout" } // throttle held too early: wheels spin at GO
@@ -194,6 +197,10 @@ export class Race {
     this.obstacles = new Obstacles(setup.theme.obstacle ?? null, new Rand(setup.seed + 41));
     this.obstacles.pace = { vmax: this.cls.vmax, grip: this.cls.grip };
     this.obstacles.strike = (x, y, z) => this.items.hitsCar(x, y, z);
+    this.items.ground = (x, y, hint) => {
+      const t = this.track, i = t.nearest(x, y, hint);
+      return { idx: i, h: (t.elev[i] ?? 0) + this.features.rampAt(t.s[i], t.offset(x, y, i)).height };
+    };
     this.obstacles.wallAt = (s, side) => !!this.features.bankAt(s, side);
     this.items.gravity = GRAVITY * (setup.theme.gravity ?? 1);
     // a map is a layout: each world draws it at its own scale (the moon's are bigger)
@@ -729,6 +736,7 @@ export class Race {
       const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads);
       const px = d.kart.x, py = d.kart.y;
       d.kart.update(dt, c, this.track, this.cls);
+      this.offTheWall(d.kart);
       this.holdOffBuildings(d.kart, px, py);
       this.fire(d.kart, c);
       if (!d.kart.falling) this.padBoost(d.kart);
@@ -736,9 +744,14 @@ export class Race {
     const controls = this.player.finished ? { steer: 0, throttle: 0.3, brake: 0, drift: false } : playerControls;
     const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
     const wasSunk = this.player.fall >= 0 && this.player.fall < FALL_SWAP;
-    const px = this.player.x, py = this.player.y, hadWings = this.player.wings > 0;
+    const px = this.player.x, py = this.player.y, wingsWere = this.player.wings;
     const { boosted, landed } = this.player.update(dt, controls, this.track, this.cls);
-    if (hadWings && this.player.wings <= 0) this.events.push({ kind: "wingsOff" });
+    const fell = this.offTheWall(this.player);
+    if (wingsWere > 0 && this.player.wings <= 0 && !fell) this.events.push({ kind: "wingsOff" });
+    // (two seconds of wings left, high on a wall or on the roof: time to come down)
+    if (wingsWere > WINGS_LOW && this.player.wings <= WINGS_LOW && this.player.wings > 0 && this.highUp(this.player)) {
+      this.events.push({ kind: "wingsLow" });
+    }
     this.holdOffBuildings(this.player, px, py);
     if (boosted) this.events.push({ kind: "boost" });
     if (!wasAir && this.player.air && !this.player.falling) this.events.push({ kind: "jump" });
@@ -851,6 +864,20 @@ export class Race {
         if (h) this.fall(k, h.kind);
       }
     }
+  }
+
+  /** Up a wall of the tube further than WALL_FALL_TILT, or on its roof, a kart whose wings have run
+   * out falls off it, onto its roof on the floor, and the drone comes for it (Kart.fallIn). Returns
+   * whether it fell. (Lower down a wall, it slides back down to the floor.) */
+  private offTheWall(k: Kart): boolean {
+    if (!k.tube || k.falling || k.air || k.rocket > 0 || k.wings > 0 || !this.highUp(k)) return false;
+    this.fall(k, "wall");
+    return true;
+  }
+
+  /** Whether kart k is high enough up a wall of the tube (or on its roof) to fall without wings. */
+  private highUp(k: Kart): boolean {
+    return k.tube && Math.abs(tubeAt(k.offset).tilt) > WALL_FALL_TILT;
   }
 
   private fall(k: Kart, into: FallKind): void {

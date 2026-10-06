@@ -76,6 +76,21 @@ export function tubeBetween(track: Track, i: number, w: number, u: number, h = 0
   return { p: lerp3(a, b, w), n: lerp3(na, nb, w) };
 }
 
+/** A point in the tube's air ``w`` of the way on from road point i: ``lat`` m left of the road's
+ * middle and ``z`` m off its floor (as world/tube.ts measures them), and which way is up for
+ * something there turned ``roll`` (as a surface's tilt: 0 the right way up, ±π upside down): a kart
+ * falling off a wall, or in the rescue drone's hands. */
+export function tubeInside(track: Track, i: number, w: number, lat: number, z: number, roll: number): { p: P3; n: P3 } {
+  const j = track.wrap(i + 1);
+  const at = (k: number): P3 => {
+    const [tx, ty] = track.tangent(k);
+    return [track.xs[k] - ty * lat, track.ys[k] + tx * lat, (track.elev[k] ?? 0) + z];
+  };
+  const p = w > 0 && j !== i ? lerp3(at(i), at(j), w) : at(i);
+  const [tx, ty] = track.tangent(i), s = Math.sin(roll), c = Math.cos(roll);
+  return { p, n: [ty * s, -tx * s, c] };
+}
+
 /** Where the point (x, y) of the race's flat terms lies along the road and round the tube: between
  * road points, not at the nearest one (snapped to road points half a meter apart, everything in the
  * tube shook as it moved). The road point before it and how far on from it (``w``), its arc

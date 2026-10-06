@@ -200,6 +200,9 @@ export class Items {
   rings: Ring[] = [];
   events: ItemEvent[] = [];
   rowS: number[] = []; // arc length of each row of boxes (other features keep clear of them)
+  /** The road under (x, y) (``hint``: a road point near it): its nearest road point, and how high
+   * the road's surface is there, jump ramps and all (set by the race). */
+  ground: ((x: number, y: number, hint: number) => { idx: number; h: number }) | null = null;
   gravity = GRAVITY; // m/s^2 for anything lobbed (low on the moon)
   private nextRow = BOX_SPACING * 0.6; // first row a little after the start
   private nextCoins = BOX_SPACING * 0.6 + COIN_SPACING / 2;
@@ -411,9 +414,13 @@ export class Items {
         k.boostTime = Math.max(k.boostTime, 1.0);
         break;
       case "oil":
-      case "oil3":
-        this.slicks.push({ x: k.x - c * 3.4, y: k.y - s * 3.4, elev: k.ground, idx: k.idx, ttl: 30, owner: k, armed: 1.0 });
+      case "oil3": {
+        // (on the road where it lands, behind the kart: at the kart's own height, off a jump's ramp
+        // it hung in the air behind it)
+        const x = k.x - c * 3.4, y = k.y - s * 3.4, g = this.ground?.(x, y, k.idx);
+        this.slicks.push({ x, y, elev: g?.h ?? k.ground, idx: g?.idx ?? k.idx, ttl: 30, owner: k, armed: 1.0 });
         break;
+      }
       case "puck":
       case "puck3":
         this.throwPuck(k, "puck", aim);

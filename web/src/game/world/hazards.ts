@@ -8,8 +8,9 @@ import { hash2, hex, mix, shade, valueNoise } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "./track";
 
 export type HazardKind = "pond" | "quicksand" | "trench" | "canal" | "pit" | "chasm";
-/** What a kart fell into: a hazard, the lava, or off the edge of raised road. */
-export type FallKind = HazardKind | "lava" | "drop";
+/** What a kart fell into: a hazard, the lava, off the edge of raised road, or off a wall of the
+ * tunnel's tube (its wings ran out up there). */
+export type FallKind = HazardKind | "lava" | "drop" | "wall";
 
 export interface Hazard {
   kind: HazardKind;
@@ -126,8 +127,9 @@ export function hazardColor(h: Hazard, wx: number, wy: number, c: number): numbe
   return LOOKS[h.kind](d, Math.atan2(v / h.ry, u / h.rx), u, v, wx, wy, c);
 }
 
-/** The colour the screen darkens to as a kart goes in (the drone lifts it out under it). */
-export const FALL_TINT: Record<FallKind, number> = {
+/** The colour the screen darkens to as a kart goes in (the drone lifts it out under it). Off a
+ * tube's wall it does not darken: the fall and the drone coming for it are all to be seen. */
+export const FALL_TINT: Record<FallKind, number | null> = {
   lava: hex("#1c0603"), drop: hex("#0b0b14"), pond: hex("#04122a"), trench: hex("#020a14"), quicksand: hex("#1f140a"),
-  canal: hex("#030a16"), pit: hex("#0b0806"), chasm: hex("#000000"),
+  canal: hex("#030a16"), pit: hex("#0b0806"), chasm: hex("#000000"), wall: null,
 };
