@@ -12,7 +12,9 @@ const isolation = {
 
 /** The pages' films and posters (public/media) linked with a hash of what is in them, ?v=...: a
  * new cut kept the old one's URL, so a browser that had it cached went on showing the old film
- * (or, with the start of the old file cached and the rest from the new one, could play neither). */
+ * (or, with the start of the old file cached and the rest from the new one, could play neither).
+ * The link previews' pictures too, at their whole URLs (og:image must be one): LinkedIn and the
+ * like keep the picture they fetched for a URL. */
 function versionedMedia(): Plugin {
   const known = new Map<string, string>(); // (by size and time: the dev server rehashes a changed file)
   const version = (file: string): string | null => {
@@ -29,9 +31,9 @@ function versionedMedia(): Plugin {
   };
   return {
     name: "versioned-media",
-    transformIndexHtml: (html) => html.replace(/(["'])media\/([\w.-]+\.(?:mp4|jpg|png))\1/g, (whole, q: string, file: string) => {
+    transformIndexHtml: (html) => html.replace(/(["'])((?:https:\/\/[^"'\s]+\/)?media\/)([\w.-]+\.(?:mp4|jpg|png))\1/g, (whole, q: string, dir: string, file: string) => {
       const v = version(file);
-      return v ? `${q}media/${file}?v=${v}${q}` : whole;
+      return v ? `${q}${dir}${file}?v=${v}${q}` : whole;
     }),
   };
 }
