@@ -30,18 +30,21 @@ export interface ClassParams {
   aiSpeed: number; // rivals' straight-line pace relative to vmax
   aiCorner: number; // rivals' cornering commitment
   aiNoise: number; // rivals' steering sloppiness
+  aiPace: number; // rivals' karts' top speed relative to the class's: the CPU's edge, as in the classics' hardest cups
 }
 
-// Each class harder than the last by more than the last was: the best rival laps about 11% slower
-// than a clean lap in Rookie, 6% in Intermediate, under 3% in Pro and as fast as one in Legend (the
-// middle of the field a percent or two behind it, so a clean lap still beats most of it); and each
-// class is faster, by more each time. (Before, the steps were about even: the best rival lapped 18%
-// slow in Rookie, 12% in Intermediate, 8% in Pro and 1% in Legend.)
+// Each class harder than the last: the best rival laps about 7% slower than a clean lap in Rookie,
+// 4% in Intermediate, as fast as one in Pro and 3% faster in Legend, where the rivals' karts have an
+// edge in top speed (aiPace) as the classics' CPUs do in their hardest cups, and the whole field is
+// quicker than a clean lap; and each class is faster, by more each time. In whole races against
+// seven rivals a clean-lap driver came 1.3rd on average in Rookie, 2.4th in Intermediate, 3.5th to
+// 4.5th in Pro and 5.5th in Legend (it had come 1.1st, 1.5th, 2.8th and 5th: winning took no more
+// than a clean lap, in all but Legend).
 export const CLASSES: Record<Difficulty, ClassParams> = {
-  rookie: { label: "ROOKIE", vmax: 24.5, accel: 9.2, grip: 19.3, aiSpeed: 0.895, aiCorner: 0.79, aiNoise: 0.125 },
-  intermediate: { label: "INTERMEDIATE", vmax: 27, accel: 10.1, grip: 21.2, aiSpeed: 0.94, aiCorner: 0.855, aiNoise: 0.08 },
-  pro: { label: "PRO", vmax: 30, accel: 11.25, grip: 23.6, aiSpeed: 0.97, aiCorner: 0.91, aiNoise: 0.05 },
-  legend: { label: "LEGEND", vmax: 33.5, accel: 12.55, grip: 26.3, aiSpeed: 1.0, aiCorner: 0.99, aiNoise: 0.012 },
+  rookie: { label: "ROOKIE", vmax: 24.5, accel: 9.2, grip: 19.3, aiSpeed: 0.935, aiCorner: 0.845, aiNoise: 0.1, aiPace: 1 },
+  intermediate: { label: "INTERMEDIATE", vmax: 27, accel: 10.1, grip: 21.2, aiSpeed: 0.965, aiCorner: 0.9, aiNoise: 0.06, aiPace: 1 },
+  pro: { label: "PRO", vmax: 30, accel: 11.25, grip: 23.6, aiSpeed: 0.985, aiCorner: 0.95, aiNoise: 0.03, aiPace: 1.03 },
+  legend: { label: "LEGEND", vmax: 33.5, accel: 12.55, grip: 26.3, aiSpeed: 1.0, aiCorner: 1.0, aiNoise: 0.008, aiPace: 1.055 },
 };
 
 export interface Controls {
@@ -154,6 +157,7 @@ export class Kart {
   // the kart's build (garage parts) and what it does to the class's numbers
   build: Build = DEFAULT_BUILD;
   perf: Perf = NEUTRAL;
+  pace = 1; // a rival's edge in top speed (the class's aiPace; the player's kart: 1)
   // height: the road under the kart (set by the race each frame), and the kart's own
   ground = 0; // m, road surface height here (bridge decks, ramps)
   elev = 0; // m, the kart's height
@@ -247,7 +251,7 @@ export class Kart {
 
   /** This kart's top speed in a class, from its build and what it is under right now. */
   topSpeed(cls: ClassParams): number {
-    return cls.vmax * this.perf.vmax * (1 + COIN_SPEED * this.coins) * (this.prism > 0 ? PRISM_SPEED : 1) *
+    return cls.vmax * this.perf.vmax * this.pace * (1 + COIN_SPEED * this.coins) * (this.prism > 0 ? PRISM_SPEED : 1) *
       (this.shrink > 0 ? SHRUNK_SPEED : 1);
   }
 

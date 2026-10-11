@@ -27,6 +27,10 @@ import { LIVERIES } from "../render/sprites";
 export const LAPS = 3;
 const FRONTIER_HOLD = 60; // m: below this much dreamed road ahead, speed is capped
 const WINGS_LOW = 2; // s of wings left when a player high on a wall of the tube is told to come down
+// over the line, the player's kart is driven on round its cool-down lap while the camera swings out
+// (main.ts): the results come up once everyone is in, but no sooner than FINISH_SHOW s after the
+// player's finish, and FINISH_WAIT s after it at the latest
+export const FINISH_SHOW = 4, FINISH_WAIT = 8;
 
 export type RaceEvent =
   | { kind: "count"; n: number }
@@ -147,6 +151,8 @@ export class Race {
   readonly karts: Kart[] = [];
   readonly player: Kart;
   private readonly drivers: RivalDriver[] = [];
+  private cruise: RivalDriver | null = null; // over the line: the rivals' driver, at the wheel of the player's kart
+  private final: ReturnType<Race["results"]> | null = null; // the results as they stood when the race was done
   readonly cls;
   clock = 0; // seconds since GO
   countdown = 4; // 3, 2, 1, GO
@@ -238,6 +244,7 @@ export class Race {
     for (const k of this.karts) {
       k.gravity = this.items.gravity;
       k.tube = !!setup.theme.tube;
+      if (!k.isPlayer) k.pace = this.cls.aiPace;
     }
     this.standings = [...this.karts];
   }
@@ -732,7 +739,6 @@ export class Race {
     for (const k of this.karts) this.surfaceUnder(k);
     const dangers = this.obstacles.dangers();
     this.drivers.forEach((d) => {
-      if (d.kart.finished && this.phase === "done") return;
       const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads);
       const px = d.kart.x, py = d.kart.y;
       d.kart.update(dt, c, this.track, this.cls);
@@ -741,7 +747,7 @@ export class Race {
       this.fire(d.kart, c);
       if (!d.kart.falling) this.padBoost(d.kart);
     });
-    const controls = this.player.finished ? { steer: 0, throttle: 0.3, brake: 0, drift: false } : playerControls;
+    const controls = this.player.finished ? this.cooldown(dt, dangers) : playerControls;
     const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
     const wasSunk = this.player.fall >= 0 && this.player.fall < FALL_SWAP;
     const px = this.player.x, py = this.player.y, wingsWere = this.player.wings;
@@ -830,11 +836,22 @@ export class Race {
     for (const k of this.karts) {
       if (k.rocket > ROCKET_TAIL && k.rocketFrom - k.place >= rocketPasses(k.rocketFrom)) k.rocket = ROCKET_TAIL;
     }
-    if (this.player.finished) {
+    if (this.player.finished && this.phase === "racing") {
       this.doneTimer += dt;
       const allIn = this.karts.every((k) => k.finished);
-      if (allIn || this.doneTimer > 12) this.phase = "done";
+      if ((allIn && this.doneTimer > FINISH_SHOW) || this.doneTimer > FINISH_WAIT) {
+        this.final = this.results();
+        this.phase = "done";
+      }
     }
+  }
+
+  /** Over the line, the rivals' driver takes the player's kart on round its cool-down lap, as the
+   * classics do, leaving its items alone (it had coasted on in a straight line, off the road). */
+  private cooldown(dt: number, dangers: readonly { x: number; y: number; r: number }[]): Controls {
+    this.cruise ??= new RivalDriver(new Rand(this.setup.seed + 61), this.player, 0);
+    const c = this.cruise.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads);
+    return { ...c, item: false, back: false };
   }
 
   /** GO: rocket starts (the player's from timing, the rivals' by chance) and burnouts. */
@@ -986,8 +1003,10 @@ export class Race {
     },
   };
 
-  /** Estimated finishing times for anyone still racing when results are shown. */
+  /** Estimated finishing times for anyone still racing when results are shown (once the race is
+   * done, as they stood then: the karts drive on behind them). */
   results(): { kart: Kart; time: number; best: number; estimated: boolean }[] {
+    if (this.final) return this.final;
     const L = this.track.locked ? this.track.length : 1;
     return this.standings.map((k) => {
       const best = k.lapTimes.length ? Math.min(...k.lapTimes) : 0;

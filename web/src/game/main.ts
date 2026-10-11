@@ -43,7 +43,7 @@ import { Hud, formatTime, kartColor } from "./ui/hud";
 import { Menu } from "./ui/menus";
 import { HALF_WIDTH, type Layout, N, checkLap } from "./world/track";
 import { CircuitDesigner, fromSteps, smoothArc, toGame } from "./world/trackgen";
-import { TUBE_R } from "./world/tube";
+import { TUBE_FLOOR, TUBE_R } from "./world/tube";
 
 type Mode = "boot" | "title" | "main" | "garage" | "setup" | "cupSetup" | "howto" | "dreaming" | "race" | "pause"
   | "results" | "standings" | "podium";
@@ -157,6 +157,9 @@ class Game {
   private cupRows: CupRow[] = []; // the standings after its last race
   private standingsAt = 0; // when they were shown (they animate)
   private ceremony: Ceremony | null = null;
+  /** Over the line: the way along the road the camera's swing out is measured from (smoothed), and
+   * which side of the kart it swings round. */
+  private finale: { race: Race; way: number; side: number } | null = null;
 
   constructor() {
     const canvas = document.getElementById("game") as HTMLCanvasElement;
@@ -527,6 +530,8 @@ class Game {
 
   private snapCamera(cam: Camera, race: Race): void {
     const p = race.player;
+    fitCamera(cam); // (a finish's camera had a horizon of its own)
+    cam.clear = undefined;
     cam.heading = p.heading;
     cam.x = p.x - Math.cos(cam.heading) * 6.2;
     cam.y = p.y - Math.sin(cam.heading) * 6.2;
@@ -536,6 +541,10 @@ class Game {
 
   private follow(cam: Camera, race: Race, dt: number): void {
     const p = race.player;
+    if (p.finished && race === this.race) {
+      this.finishCam(cam, race, dt);
+      return;
+    }
     const target = p.heading + p.slip * 0.45;
     let d = target - cam.heading;
     d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -561,6 +570,44 @@ class Game {
     cam.fx += (fx - cam.fx) * (1 - Math.exp(-dt * 6));
     cam.focal = BASE_FOCAL * viewScale() * (1 - 0.12 * cam.fx);
     if (race.setup.theme.tube) this.chaseTube(cam, race, dt);
+  }
+
+  /** Over the line, the rivals' driver has the player's kart (race.ts): the camera swings round in
+   * front of it, low, looking back at it as it comes on, then pulls out and up and wheels slowly about
+   * it, as the classics' does. In the tunnel's tube it keeps over the floor and under the roof. */
+  private finishCam(cam: Camera, race: Race, dt: number): void {
+    const p = race.player, t = race.track, f = Math.max(0, race.clock - p.finishTime);
+    const [tx, ty] = t.tangent(p.idx), road = Math.atan2(ty, tx);
+    if (this.finale?.race !== race) {
+      this.finale = { race, way: road, side: race.setup.seed % 2 ? 1 : -1 };
+      this.tubeChase.delete(cam); // (in the tube: a camera of its own, where its flat terms say)
+    }
+    const fin = this.finale;
+    fin.way += wrapAngle(road - fin.way) * (1 - Math.exp(-dt * 2.5)); // (the road's way, not the kart's: it drifts)
+    const ease = (a: number) => { const u = Math.max(0, Math.min(1, a)); return u * u * (3 - 2 * u); };
+    const swing = ease((f - 0.4) / 2.6), out = ease((f - 3) / 5);
+    const phi = Math.PI * 0.8 * swing + 0.07 * Math.max(0, f - 3); // (from behind, round to in front, and on)
+    const R = 6.2 + 2.4 * swing + 8 * out;
+    let h = BASE_HEIGHT + 0.8 * swing + 6 * out;
+    const th = fin.way + Math.PI + fin.side * phi;
+    let x = p.x + Math.cos(th) * R, y = p.y + Math.sin(th) * R;
+    if (race.setup.theme.tube) { // (over the floor, under the roof)
+      const i = t.nearest(x, y, p.idx), u = t.offset(x, y, i), keep = Math.max(-(TUBE_FLOOR - 0.8), Math.min(TUBE_FLOOR - 0.8, u));
+      const [nx, ny] = t.tangent(i);
+      x -= ny * (keep - u);
+      y += nx * (keep - u);
+      h = Math.min(h, 2 * TUBE_R - 2);
+    }
+    const focal = BASE_FOCAL * viewScale(), d = Math.max(1, Math.hypot(p.x - x, p.y - y));
+    cam.x = x;
+    cam.y = y;
+    cam.heading = Math.atan2(p.y - y, p.x - x);
+    cam.lift = p.elev;
+    cam.height = p.elev + h;
+    cam.focal = focal;
+    cam.fx += (0 - cam.fx) * (1 - Math.exp(-dt * 6));
+    cam.horizon = Math.round(H * 0.62 - (h / d) * focal); // (the kart kept a little below the middle of the picture)
+    cam.clear = 3;
   }
 
   /** White streaks rushing past the edges of the screen while boosting. */
@@ -821,7 +868,9 @@ class Game {
     }
     const r = this.race;
     if (!r) return;
-    if (this.mode === "race" || (this.mode === "dreaming" && r.phase !== "dreaming")) {
+    // (and after the race, behind the results and the standings: the karts drive on, the player's
+    // with the rivals' driver at the wheel, and the camera wheels about it)
+    if (this.mode === "race" || this.mode === "results" || this.mode === "standings" || (this.mode === "dreaming" && r.phase !== "dreaming")) {
       const c: Controls = takesControls(r.phase) ? this.input.drive(r.phase === "countdown")
         : { steer: 0, throttle: 0, brake: 0, drift: false };
       r.update(dt, c);
@@ -1236,7 +1285,7 @@ class Game {
         if (!r || !this.sky) break;
         this.drawWorld(r, this.sky, this.cam);
         this.speedLines(this.cam);
-        if (this.mode === "race") this.drawMirror(r, this.sky);
+        if (this.mode === "race" && !r.player.finished) this.drawMirror(r, this.sky);
         if (this.flash > 0) scr.dimRect(0, 0, W, H, 0xffffffff, Math.min(0.85, this.flash * 4));
         if (this.mode === "race") this.hud.draw(scr, r, now);
         if (this.mode === "pause") {
@@ -1439,7 +1488,7 @@ class Game {
 
   private results(r: Race): void {
     const scr = this.scr, f = this.font;
-    scr.dimRect(0, 0, W, H, INK, 0.6);
+    scr.dimRect(0, 0, W, H, INK, 0.45); // (the karts drive on behind, the camera wheeling about the player's)
     const c0 = Math.round(W / 2);
     f.draw(scr, "RESULTS", W / 2, 6, { scale: 2, rows: LOGO_ROWS, outline: INK, align: "center" });
     f.draw(scr, "TIME", c0 + 70, 28, { color: DIM, align: "right" });

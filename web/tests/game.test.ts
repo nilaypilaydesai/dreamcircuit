@@ -26,7 +26,7 @@ import type { PixelFont } from "../src/game/core/font";
 import type { Screen } from "../src/game/core/gfx";
 import { Menu } from "../src/game/ui/menus";
 import { screenSize } from "../src/game/core/gfx";
-import { LAPS, Race, takesControls } from "../src/game/race/race";
+import { FINISH_SHOW, FINISH_WAIT, LAPS, Race, takesControls } from "../src/game/race/race";
 import { THEMES } from "../src/game/themes";
 import {
   BRIDGE_DECK, BRIDGE_HEIGHT, BRIDGE_RAMP, HALF_WIDTH, MAX_FROM_START, N, SPACING, Track, bridgeLift, checkLap, crSegment,
@@ -231,11 +231,13 @@ describe("lap counting", () => {
     expect(k.dist).toBeGreaterThan(t.length * 0.8);
   });
 
-  it("makes each class harder than the last by more than the last, and Legend's field still beatable", () => {
-    // (laps 2 and 3 of a kart alone, driven by the rivals' driver: as a class's rival, and as a clean
-    // lap, with the class's numbers for its decisions, but full pace, full cornering and no slop)
+  it("makes each class harder than the last: Pro's rivals as fast as a clean lap, Legend's faster", () => {
+    // (laps 2 and 3 of a kart alone, driven by the rivals' driver: as a class's rival, with its
+    // kart's edge, and as a clean lap, with the class's numbers for its decisions, but full pace, full
+    // cornering, no slop and no edge)
     const laps = (pts: Float64Array, cls: ClassParams, decide: ClassParams, rank: number) => {
       const t = Track.fromPoints(pts), k = new Kart(0, "K", 0, false);
+      k.pace = decide.aiPace;
       k.placeOn(t, t.startIndex, 0);
       const d = new RivalDriver(new Rand(3), k, rank);
       let time = 0, from = -1;
@@ -248,18 +250,19 @@ describe("lap counting", () => {
       return time - from;
     };
     const gap = (d: "rookie" | "intermediate" | "pro" | "legend", rank: number) => {
-      const cls = CLASSES[d], clean = { ...cls, aiSpeed: 1, aiCorner: 1, aiNoise: 0 };
+      const cls = CLASSES[d], clean = { ...cls, aiSpeed: 1, aiCorner: 1, aiNoise: 0, aiPace: 1 };
       const all = [twisty(), calm(), figure8()].map((pts) => laps(pts, cls, cls, rank) / laps(pts, cls, clean, 0) - 1);
       return all.reduce((a, b) => a + b, 0) / all.length;
     };
     const best = (["rookie", "intermediate", "pro", "legend"] as const).map((d) => gap(d, 1)); // (the best rival)
-    expect(best[0]).toBeGreaterThan(0.08); // (a first class: its rivals well off a clean lap)
+    expect(best[0]).toBeGreaterThan(0.05); // (a first class: its rivals well off a clean lap)
     for (let n = 1; n < 4; n++) expect(best[n]).toBeLessThan(best[n - 1]);
-    // the gap closes faster class by class (it shrank about evenly before)
-    expect(best[2] / best[1]).toBeLessThan(best[1] / best[0]);
-    expect(best[3] / best[2]).toBeLessThan(best[2] / best[1]);
-    // and in Legend a clean lap still beats the middle of the field
-    expect(gap("legend", 4)).toBeGreaterThan(0.005);
+    expect(Math.abs(best[2])).toBeLessThan(0.015); // (Pro: the best rival as fast as a clean lap)
+    expect(best[3]).toBeLessThan(-0.02); // (Legend: faster than one)
+    // and in Legend the whole field is quicker than a clean lap, but within reach of a better one
+    const mid = gap("legend", 4);
+    expect(mid).toBeLessThan(0);
+    expect(mid).toBeGreaterThan(-0.04);
   });
 
   it("keeps a stationary kart on the road, and the classes ordered by pace", () => {
@@ -641,6 +644,41 @@ describe("the start", () => {
     const kinds = await start(0);
     expect(kinds).not.toContain("rocket");
     expect(kinds).not.toContain("burnout");
+  });
+});
+
+describe("the finish", () => {
+  it("drives the player's kart on round the lap once it is over the line, and keeps the results as they stood", async () => {
+    const race = new Race({ rivals: 3, difficulty: "pro", theme: THEMES[0], seed: 8, replay: calm() }, null, () => {});
+    await race.prepare();
+    const pilot = new RivalDriver(new Rand(2), race.player, 0);
+    const p = race.player, idle = { steer: 0, throttle: 0, brake: 0, drift: false };
+    for (let i = 0; i < 60 * 400 && !p.finished; i++) {
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, p, race.karts, race.items, race.obstacles.dangers(), race.features.pads));
+      race.events = [];
+    }
+    expect(p.finished).toBe(true);
+    // (no hands on the controls from here: the rivals' driver has the kart, on the road at a racing pace)
+    const from = p.dist, at = race.clock;
+    let off = 0, slow = 0, done = -1, results: ReturnType<Race["results"]> | null = null;
+    for (let i = 0; i < 60 * 14; i++) {
+      race.update(1 / 60, idle);
+      race.events = [];
+      if (Math.abs(p.offset) > HALF_WIDTH + 1) off++;
+      if (race.clock - at > 3 && p.v < 0.6 * race.cls.vmax) slow++;
+      if (race.phase === "done" && done < 0) {
+        done = race.clock - at;
+        results = race.results();
+      }
+    }
+    expect(off).toBe(0);
+    expect(slow).toBeLessThan(60 * 1.5);
+    expect(p.dist - from).toBeGreaterThan(14 * 0.75 * race.cls.vmax);
+    // the results come up once the camera has swung out, and stay as they stood while the karts drive on
+    expect(done).toBeGreaterThanOrEqual(FINISH_SHOW - 1e-6);
+    expect(done).toBeLessThanOrEqual(FINISH_WAIT + 1 / 60);
+    expect(race.results()).toBe(results);
+    expect(race.karts.filter((k) => !k.isPlayer).some((k) => k.v > 10)).toBe(true);
   });
 });
 

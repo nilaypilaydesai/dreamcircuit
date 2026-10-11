@@ -341,7 +341,7 @@ export class RivalDriver {
     } else if (this.driftCooldown <= 0 && k.v > 16 && Math.abs(kappa) > 1 / 40 &&
                Math.sign(steer) === Math.sign(kappa) && k.surface === "road") {
       this.driftCooldown = 2.5;
-      if (this.rng.next() < cls.aiCorner * 0.8) {
+      if (this.rng.next() < 0.15 + 0.85 * cls.aiCorner) {
         this.drifting = true;
         this.driftSide = Math.sign(kappa);
       }

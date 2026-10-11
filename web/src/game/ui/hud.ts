@@ -84,6 +84,14 @@ export class Hud {
     const f = this.font;
     const p = race.player;
     const o = { outline: INK };
+    if (p.finished) { // over the line, the camera swinging out: the place and the FINISH! banner, and nothing else
+      this.place(scr, race);
+      const mid = Math.round(H * 0.39);
+      this.banners = this.banners.filter((b) => b.until > race.clock);
+      const b = this.banners[this.banners.length - 1];
+      if (b) this.drawBanner(scr, b, mid, Math.max(1, Math.min(3, Math.floor((W - 12) / f.width(b.text)))), now);
+      return;
+    }
 
     // top left: lap + race time
     f.draw(scr, "LAP", 10, 10, { ...o, color: SILVER });
@@ -91,12 +99,7 @@ export class Hud {
     f.draw(scr, formatTime(race.clock), 10, 26, { ...o, color: WHITE });
     if (p.lapTimes.length) f.draw(scr, `BEST ${formatTime(Math.min(...p.lapTimes))}`, 10, 37, { ...o, color: SILVER });
 
-    // top right: position
-    const pc = p.place === 1 ? GOLD : p.place === 2 ? SILVER : p.place === 3 ? BRONZE : WHITE;
-    const ptxt = String(p.place || 1);
-    f.draw(scr, ptxt, W - 46, 6, { scale: 4, color: pc, outline: INK, align: "right" });
-    f.draw(scr, ordinal(p.place || 1), W - 44, 8, { ...o, scale: 1, color: pc });
-    f.draw(scr, `/${race.karts.length}`, W - 44, 26, { ...o, color: SILVER });
+    this.place(scr, race);
 
     // left: standings (on a phone that corner holds the minimap instead, clear of the thumbs)
     if (race.karts.length > 1 && !this.touch) {
@@ -182,17 +185,30 @@ export class Hud {
     }
 
     // banners: only the newest (two at once would print over each other), as big as fits
-    if (b && !(b.blink && Math.floor(now * 4) % 2)) {
-      const scale = bScale, th = 8 * scale;
-      // a ribbon behind the big text: it spans the screen, so it lies over the standings
-      scr.dimRect(0, mid - 5, W, th + 9 + (b.sub ? 13 : 0), INK, 0.62);
-      f.draw(scr, b.text, W / 2, mid, { scale, color: b.color, outline: INK, align: "center" });
-      if (b.sub) f.draw(scr, b.sub, W / 2, mid + th + 4, { color: WHITE, outline: INK, align: "center" });
-    }
+    if (b) this.drawBanner(scr, b, mid, bScale, now);
     if (p.wrongWay > 45 && Math.floor(now * 3) % 2 === 0) {
       f.draw(scr, "WRONG WAY!", W / 2, mid + 36, { scale: 2, color: RED, outline: INK, align: "center" });
     }
     if (race.phase === "countdown") this.countdown(scr, race);
+  }
+
+  /** Top right: the player's place. */
+  private place(scr: Screen, race: Race): void {
+    const f = this.font, p = race.player;
+    const pc = p.place === 1 ? GOLD : p.place === 2 ? SILVER : p.place === 3 ? BRONZE : WHITE;
+    f.draw(scr, String(p.place || 1), W - 46, 6, { scale: 4, color: pc, outline: INK, align: "right" });
+    f.draw(scr, ordinal(p.place || 1), W - 44, 8, { outline: INK, scale: 1, color: pc });
+    f.draw(scr, `/${race.karts.length}`, W - 44, 26, { outline: INK, color: SILVER });
+  }
+
+  /** A banner across the screen (the newest one: two at once would print over each other). */
+  private drawBanner(scr: Screen, b: Banner, mid: number, scale: number, now: number): void {
+    if (b.blink && Math.floor(now * 4) % 2) return;
+    const f = this.font, th = 8 * scale;
+    // a ribbon behind the big text: it spans the screen, so it lies over the standings
+    scr.dimRect(0, mid - 5, W, th + 9 + (b.sub ? 13 : 0), INK, 0.62);
+    f.draw(scr, b.text, W / 2, mid, { scale, color: b.color, outline: INK, align: "center" });
+    if (b.sub) f.draw(scr, b.sub, W / 2, mid + th + 4, { color: WHITE, outline: INK, align: "center" });
   }
 
   /** A draining bar under the item slot while a prism or a rocket lasts. */

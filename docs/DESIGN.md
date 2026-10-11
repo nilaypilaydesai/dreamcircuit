@@ -323,16 +323,27 @@ per corner, held through it, released on exit), and rubber-band: far behind the 
 6%, far ahead they lift 7%. A headless test drives a rival around a twisty circuit and requires
 three clean laps, under 2% of the time on grass, and at least three drifts.
 
-**The classes.** Each is harder than the last by more than the last was. Measured on the three test
-circuits, the best rival laps about 11% slower than a clean lap (the rivals' own driver at full
-pace, full cornering and no slop) on Rookie, 6% on Intermediate, under 3% on Pro and as fast as one
-on Legend, where the middle of the field is still a percent or two behind it; and each class's top
-speed is a bigger step up than the last (+10%, +11%, +12%). A clean-driving pilot in the player's
-kart against seven rivals averaged 1.1, 1.5, 2.8 and 5.0 over 12 to 24 races; it still wins on
-Legend, now and then. (The steps used to be about even, the best rival lapping 18%, 12%, 8% and 1%
-slow, and the same pilot averaged 1.0, 1.1, 1.6 and 4.8: Rookie and Intermediate were won by miles.)
-A test holds the curve: the gaps shrink, faster class by class, and on Legend a clean lap still
-beats the middle of the field.
+**The classes.** Each is harder than the last. Measured on the three test circuits, the best rival
+laps about 7% slower than a clean lap (the rivals' own driver at full pace, full cornering and no
+slop) on Rookie, 4% on Intermediate, as fast as one on Pro and 3% faster on Legend, where the whole
+field is quicker than a clean lap: from Pro on, the rivals' karts have an edge in top speed (3% on
+Pro, 5.5% on Legend), as the classics' CPUs do in their hardest cups, and they drift every tight
+corner they can for the mini-turbo. Each class's top speed is a bigger step up than the last (+10%,
++11%, +12%). A clean-driving pilot in the player's kart against seven rivals averaged 1.3, 2.4, 3.5
+to 4.5 and 5.5 over 12 races, winning three in four on Rookie, one in six on Intermediate and almost
+never from Pro up: winning takes better than a clean lap, mini-turbos and items. (It had averaged
+1.1, 1.5, 2.8 and 5.0: a clean lap won everything below Legend. Before that, 1.0, 1.1, 1.6 and 4.8.)
+A test holds the curve: the best rival's gap shrinks class by class, Pro's is within 1.5% of a
+clean lap, Legend's best rival is more than 2% faster than one, and its middle of the field faster
+but within 4%.
+
+**The finish.** Over the line the rivals' driver takes the player's kart on round its cool-down
+lap, leaving its items alone (it used to coast on in a straight line, off the road), and the camera
+swings round in front of it, low, looking back as it comes on, then pulls out and up and wheels
+slowly about it, as the classics' does; only the place and the FINISH! banner stay on the screen.
+The results come up once everyone is in, but no sooner than 4 s after the player's finish and 8 s
+after it at the latest, over the karts still driving (they used to freeze where they were), and
+stay as they stood then.
 
 **Jumps, tricks and boost pads.** As road is committed, the game places features on it: jump
 ramps on straights longer than 95 m (at least 260 m apart, and never near a bridge, an item row
