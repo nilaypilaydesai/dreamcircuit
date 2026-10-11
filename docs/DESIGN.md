@@ -207,13 +207,18 @@ gantry and grandstand are placed, and laps 2 and 3 run on the same road.
 
 ### In the browser
 
-The designer is small, so it runs on ONNX Runtime Web's WASM backend, single-threaded, in a
-**Web Worker**: the worker holds the session and runs the whole Heun loop for each request,
+The designer is small, so it runs on ONNX Runtime Web's WASM backend, single-threaded, in
+**Web Workers**: each worker holds a session and runs the whole Heun loop for each request,
 posting the running whole-lap guess a few times along the way (the minimap draws it) and the
 finished steps at the end. The main thread turns steps into points (`fromSteps`, a TypeScript
 mirror of `from_steps`) and does the checks. The exported model says which representation it
 expects, and the game refuses a model that predates steps rather than drawing garbage. Weights
-are stored as fp16 and cast to fp32 in the graph.
+are stored as fp16 and cast to fp32 in the graph. There are up to three workers (one fewer than
+the cores), since an arc's tries after the first are dreamed side by side: the first goes alone,
+as most arcs pass it, then its three retries together, then, with room, the last three together.
+They are still judged in order, so the arc is the one trying one after another would have kept.
+On an M4 Pro a try takes 0.44 s; over three figure-eight laps, an arc with every retry took 1.35 s
+instead of 3.2 s, the opening stretch 0.9 s instead of 1.8 s, and all the dreaming half the time.
 
 Two safety nets cover slow devices. Race speed is capped by the distance left to the frontier,
 so no kart can drive past road that does not exist yet. And the dream mist at the frontier hides
@@ -571,9 +576,14 @@ lets it go, 2.6 s in all. Two seconds before they run out, high up, the player i
 GET DOWN!). The first wing pad of a race puts up a banner (WINGS! RIDE THE WALLS: BE DOWN BEFORE
 THEY RUN OUT), and the first scrape along a wall without them another (NO WINGS: THE BLUE PADS GIVE
 YOU WINGS). Rivals go for a wing pad ahead when their wings are gone or running out, take a plain
-pad on the floor whenever they can, and winged and fast enough to hold on, now and then for a pad up
-a wall (the roof's are left to the player), only with wings enough to get there and back down: they
-head down with 3.2 s of them in hand. Without wings they keep to the floor. The other pads go up the walls and on the roof, where only
+pad on the floor whenever they can, and winged, ride a wall where the road runs straight for 80 m
+(no bend tighter than 60 m), 77 to 85 degrees up it by class, as a player would; now and then they
+go for a pad up a wall (the roof's are left to the player), only with wings enough to get there
+and back down: they head down with 3.2 s of them in hand, and with under 4 s keep to the floor
+(dodging traffic at the foot of a wall with their wings running out, the pursuit of a tight bend's
+inside had carried them up it, and off it: 4 falls in 12 races). Up a wall they had spent 2% of
+their winged time, past 45 degrees almost none; riding the walls, 25 to 34%, 12 to 20% past 45, at
+the same pace and with no falls, over the same 12 races. Without wings they keep to the floor. The other pads go up the walls and on the roof, where only
 a winged kart can reach them (the roof's only one fast enough to loop), and up to four cars
 drive the floor in three lanes, 60 to 95 m apart and slower than any racer, to weave through or,
 winged, ride a wall past. In a race driven by the rivals' own driver on a calm circuit, four wing

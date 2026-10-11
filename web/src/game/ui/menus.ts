@@ -30,6 +30,8 @@ export class Menu {
   /** Where each row was drawn (x, y, w, h), for clicks and taps. A screen that draws its rows
    * itself (the garage) fills these in. */
   rects: [number, number, number, number][] = [];
+  /** Where each row's value was drawn across the row (x from, x to), for clicks on its arrows. */
+  spans: ([number, number] | null)[] = [];
 
   /** How wide (pixels) and how many lines the hint under the panel may take (default: the
    * screen's width, two lines). */
@@ -83,7 +85,10 @@ export class Menu {
     const it = this.items[i];
     sound.select();
     if (it.fixed?.()) return;
-    const onLeft = this.stacked ? x < rx + rw * 0.4 : x < rx + rw * 0.5 && x > rx + rw * 0.3;
+    // (the left half of a value drawn as "< v >", or just left of it, steps back, and the rest of
+    // the row steps on; in a stacked panel, the garage's, the left of the row steps back)
+    const span = this.spans[i];
+    const onLeft = this.stacked ? x < rx + rw * 0.4 : !!span && x >= span[0] - 6 && x < (span[0] + span[1]) / 2;
     if (it.value && it.left && onLeft) it.left();
     else if (it.action) it.action();
     else if (it.right) it.right();
@@ -103,10 +108,12 @@ export class Menu {
     scr.fillRect(x + width - 1, top, 1, h, EDGE);
     if (this.title) f.draw(scr, this.title, cx, top + 9, { color: HOT, outline: INK, align: "center" });
     this.rects = [];
+    this.spans = [];
     this.items.forEach((it, i) => {
       const y = top + head + i * rowH;
       const on = i === this.index;
       this.rects.push([x + 4, y - 4, width - 8, rowH]);
+      this.spans.push(null);
       if (on) {
         scr.dimRect(x + 4, y - 4, width - 8, rowH - 2, EDGE, 0.18);
         if (Math.floor(now * 3) % 2 === 0) f.draw(scr, ">", x + 10, y + (this.stacked ? 4 : 0), { color: HOT });
@@ -118,7 +125,11 @@ export class Menu {
         const arrows = (it.left || it.right) && !fixed;
         const color = on && !fixed ? HOT : DIM;
         if (this.stacked) f.draw(scr, arrows && on ? `< ${v} >` : v, x + 24, y + 9, { color });
-        else f.draw(scr, arrows ? `< ${v} >` : v, x + width - 12, y, { color, align: "right" });
+        else {
+          const text = arrows ? `< ${v} >` : v, end = x + width - 12;
+          f.draw(scr, text, end, y, { color, align: "right" });
+          this.spans[i] = [end - f.width(text), end];
+        }
       }
     });
     const raw = this.items[this.index]?.hint;

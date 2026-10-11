@@ -6,7 +6,8 @@
 // someone is on their tail, aim before they throw (behind them too, at a kart on their tail, when
 // there is nobody to hit ahead), save each item for the moment it works best (a horn for when
 // something is about to hit them), and drive half blind through static. In the harbor tunnel they
-// go for its wing pads, and winged, now and then for a pad up a wall.
+// go for its wing pads, and winged, ride up its walls on the straights, now and then for a pad up
+// there.
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
@@ -19,6 +20,12 @@ const WALL_TOP = TUBE_FLOOR + Math.PI * TUBE_R; // m round the tube to the top o
 // s of wings a rival keeps in hand to come back down off a wall: high up one without them, a kart
 // falls off (race.ts), and the drone has to fish it off the floor
 const DESCENT = 3.2;
+// s of wings under which it keeps to the floor (pure pursuit round a tight bend had carried a kart
+// dodging at the foot of a wall up the inside of it, and its wings ran out up there)
+const SPARE = DESCENT + 0.8;
+// Winged, a rival rides a wall as a player would where the road runs straight for this far ahead
+// (m) and bends no tighter than RIDE_BEND m: nearly upright on it, a little higher the sharper the class
+const RIDE_AHEAD = 80, RIDE_BEND = 60;
 
 export class RivalDriver {
   private lane: number;
@@ -34,6 +41,7 @@ export class RivalDriver {
   private backTapped = false; // and the back button
   private seek: Pad | null = null; // in the tunnel's tube: the pad it is going for
   private weighed: Pad | null = null; // and the last one it thought about going for
+  private ride = 0; // and winged, the wall it is riding (1 or -1; 0: on the floor)
 
   constructor(private readonly rng: Rand, readonly kart: Kart, rank: number) {
     this.lane = rng.range(-2.5, 2.5);
@@ -59,28 +67,31 @@ export class RivalDriver {
     // and to anything in the way (a cow, a geyser, the ring where a meteor will land), more the
     // sharper the class: a lane on the far side of it, from far enough off to make it
     const seen = 18 + 40 * cls.aiCorner;
+    const spare = k.tube && k.wings > SPARE; // (winged in the tube, with wings to spare)
     let dodging = false;
     for (const o of dangers) {
       const dx = o.x - k.x, dy = o.y - k.y;
       const fwd = dx * Math.cos(k.heading) + dy * Math.sin(k.heading);
       const lat = -dx * Math.sin(k.heading) + dy * Math.cos(k.heading);
       if (fwd > 0 && fwd < seen && Math.abs(lat) < o.r + 1.6) {
-        // (in the tube, winged, the foot of a wall will do)
-        const room = k.tube && k.wings > 0 ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.4;
+        // (in the tube, with wings to spare, the foot of a wall will do)
+        const room = spare ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.4;
         this.laneTarget = Math.max(-room, Math.min(room, k.offset + (lat > 0 ? -1 : 1) * (o.r + 2.4)));
         dodging = true;
       }
     }
     const reach = k.tube && !dodging ? this.padLane(track, cls, pads) : null;
+    const ride = k.tube && !dodging && reach === null ? this.wallRide(dt, track, cls) : null;
     if (dodging) this.seek = null;
     this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * 1.2);
 
     const look = track.ahead(k.idx, 7 + v * 0.5);
     const kappa = track.curvature(look);
-    // (in the tube without wings, its walls are walls; winged, the foot of a wall will do, and up
-    // to a pad it is going for)
-    const edge = reach !== null ? Math.max(HALF_WIDTH - 1.5, Math.abs(reach) + 0.5)
-      : k.tube && k.wings > 0 ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.5;
+    // (in the tube without wings, its walls are walls; with wings to spare, the foot of a wall will
+    // do, and up to a pad it is going for or the height it rides a wall at)
+    const up = reach ?? ride;
+    const edge = up !== null ? Math.max(HALF_WIDTH - 1.5, Math.abs(up) + 0.5)
+      : spare ? HALF_WIDTH + 2.5 : HALF_WIDTH - 1.5;
     const line = Math.max(-edge, Math.min(edge, this.lane + Math.sign(kappa) * Math.min(2.8, Math.abs(kappa) * 120)));
     const [tx, ty] = track.tangent(look);
     const gx = track.xs[look] - ty * line, gy = track.ys[look] + tx * line;
@@ -145,6 +156,29 @@ export class RivalDriver {
       return q.offset;
     }
     return null;
+  }
+
+  /** In the tunnel's tube, winged, where the road runs straight: how far round the tube it rides up
+   * a wall (null: on the floor). Back down before a bend, before it is too slow to hold on up there,
+   * and while its wings still last to come down. */
+  private wallRide(dt: number, track: Track, cls: ClassParams): number | null {
+    const k = this.kart, v = Math.max(k.v, 0);
+    const high = TUBE_FLOOR + TUBE_R * (0.75 + 0.75 * cls.aiCorner); // (77 to 85 degrees up)
+    let straight = true;
+    for (let m = 10; m <= RIDE_AHEAD && straight; m += 10) {
+      straight = Math.abs(track.curvature(track.ahead(k.idx, m))) < 1 / RIDE_BEND;
+    }
+    if (!straight || k.wings < SPARE || v < holdSpeed(high) + 3) {
+      if (this.ride !== 0) this.laneTarget = this.rng.range(-3, 3); // (back down to the floor)
+      this.ride = 0;
+      return null;
+    }
+    if (this.ride === 0) {
+      if (this.rng.next() > dt * 2) return null; // (not every kart at the same moment)
+      this.ride = Math.sign(k.offset + this.rng.range(-3, 3)) || 1;
+    }
+    this.laneTarget = this.ride * high;
+    return this.ride * high;
   }
 
   /** Hop at a ramp's lip (a tap of the drift button) for a trick, timed by skill. */

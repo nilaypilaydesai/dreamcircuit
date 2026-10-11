@@ -21,6 +21,10 @@ import {
   cleanBuild, perfOf, rivalBuild, statsOf,
 } from "../src/game/race/parts";
 import { stickControls } from "../src/game/core/input";
+import type { Sound } from "../src/game/core/audio";
+import type { PixelFont } from "../src/game/core/font";
+import type { Screen } from "../src/game/core/gfx";
+import { Menu } from "../src/game/ui/menus";
 import { screenSize } from "../src/game/core/gfx";
 import { LAPS, Race, takesControls } from "../src/game/race/race";
 import { THEMES } from "../src/game/themes";
@@ -738,6 +742,29 @@ async function driveLap(live: LiveCircuit, frames = 400): Promise<void> {
     for (let k = 0; k < 5; k++) await Promise.resolve();
   }
 }
+
+describe("the menus", () => {
+  it("step a row's value back from its left arrow, and on from its right arrow or anywhere else on the row", () => {
+    let rivals = 7;
+    const menu = new Menu("QUICK RACE", [
+      { label: "RIVALS", value: () => String(rivals), left: () => { rivals = (rivals + 7) % 8; }, right: () => { rivals = (rivals + 1) % 8; } },
+    ], 300);
+    const scr = { dimRect: () => {}, fillRect: () => {} } as unknown as Screen;
+    const font = { draw: () => {}, width: (t: string) => 8 * t.length, wrap: (t: string) => [t] } as unknown as PixelFont;
+    const sound = { select: () => {}, move: () => {} } as unknown as Sound;
+    menu.draw(scr, font, 192, 20, 0);
+    const [rx, ry, , rh] = menu.rects[0], y = ry + rh / 2;
+    const [from, to] = menu.spans[0]!; // "< 7 >", at the right of the row
+    menu.click(to - 4, y, sound); // its ">"
+    expect(rivals).toBe(0); // (on from 7 comes round to none)
+    menu.click(from + 3, y, sound); // its "<" (a click there used to step on, so from 7 the count was stuck)
+    expect(rivals).toBe(7);
+    menu.click(from - 4, y, sound); // (just left of it is near enough)
+    expect(rivals).toBe(6);
+    menu.click(rx + 30, y, sound); // its label
+    expect(rivals).toBe(7);
+  });
+});
 
 describe("the designer's steps", () => {
   const lap = () => toModel(twisty());
@@ -1683,9 +1710,19 @@ describe("track types", () => {
   });
 
   it("dream an arc again when it misses its style band, then keep the closest drivable one", async () => {
-    let calls = 0;
+    let calls = 0, running = 0, together = 0;
     const d = fakeDesigner(() => false); // always the calm circuit, which is never wild
-    const spy: Designer = { sample: (req) => { calls++; return d.sample(req); } };
+    const spy: Designer = {
+      sample: async (req) => {
+        calls++;
+        together = Math.max(together, ++running);
+        try {
+          return await d.sample(req);
+        } finally {
+          running--;
+        }
+      },
+    };
     const live = new LiveCircuit(spy, new Rand(7));
     live.bandSource = (arc) => (arc === 0 ? null : WILD_BAND);
     await live.start();
@@ -1695,6 +1732,7 @@ describe("track types", () => {
     expect(live.stats.offBand).toBe(arcs - 1);
     expect(live.stats.fallbacks).toBe(0);
     expect(calls).toBe(1 + (arcs - 1) * 4); // every arc after the first dreamed four times
+    expect(together).toBe(3); // (the three tries after the first all at once: a designer with workers to spare dreams them side by side)
     expect(live.styles.length).toBe(arcs);
   });
 
@@ -3095,7 +3133,7 @@ describe("the tunnel", () => {
     await again.prepare();
     const pilot = new RivalDriver(new Rand(2), again.player, 0);
     const winged = new Set<Kart>(), was = new Map<Kart, number>();
-    let up = 0, rose = 0, fell = 0;
+    let flying = 0, up = 0, rose = 0, fell = 0;
     for (let i = 0; i < 60 * 300 && again.phase !== "done"; i++) {
       again.update(1 / 60, pilot.act(1 / 60, again.track, again.cls, again.player, again.karts, again.items,
                                      again.obstacles.dangers(), again.features.pads));
@@ -3103,6 +3141,7 @@ describe("the tunnel", () => {
       for (const k of again.karts) {
         const a = Math.abs(k.offset);
         if (k.wings > 0 && !k.isPlayer) winged.add(k);
+        if (k.wings > 0) flying++;
         if (k.wings > 0 && a > TUBE_FLOOR + 1.5) up++;
         if (k.wings <= 0 && a > TUBE_EDGE + 1e-6 && !k.inside) rose = Math.max(rose, a - (was.get(k) ?? a)); // (coming down, never up)
         if (k.fallKind === "wall" && k.fall >= 0 && k.fall < 1.5 / 60) fell++;
@@ -3110,7 +3149,7 @@ describe("the tunnel", () => {
       }
     }
     expect(winged.size).toBe(5);
-    expect(up).toBeGreaterThan(60);
+    expect(up / flying).toBeGreaterThan(0.15); // (riding the walls: winged, they had kept to the floor, up one 2% of the time)
     expect(rose).toBeLessThanOrEqual(1e-9);
     expect(fell).toBe(0); // (they come back down before their wings run out: off a wall without them, a kart falls)
   });

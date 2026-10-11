@@ -175,6 +175,25 @@ export function fromSteps(u: ArrayLike<number>, pts: ArrayLike<number>, mask: Ar
   return out;
 }
 
+/** How many workers the designer runs in, each with its own session: an arc dreamed again is
+ * dreamed several times at once (ONNX Runtime runs single-threaded here, one core a worker), so a
+ * slow device does not run out of road while an arc that failed a check is dreamed over. */
+function workerCount(): number {
+  return Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 2) - 1));
+}
+
+function startWorker(info: DesignerInfo, bytes: ArrayBuffer): Promise<Worker> {
+  const worker = new Worker(new URL("./designer.worker.ts", import.meta.url), { type: "module" });
+  return new Promise<Worker>((resolve, reject) => {
+    worker.onmessage = (ev: MessageEvent) => {
+      if (ev.data.kind === "ready") resolve(worker);
+      else if (ev.data.kind === "error") reject(new Error(ev.data.message));
+    };
+    worker.onerror = (e) => reject(new Error(e.message || "the designer worker failed to start"));
+    worker.postMessage({ kind: "init", info, bytes }, [bytes]);
+  });
+}
+
 export class CircuitDesigner implements Designer {
   private readonly pending = new Map<number, {
     resolve: (x: Float32Array) => void;
@@ -182,6 +201,8 @@ export class CircuitDesigner implements Designer {
     onStep?: (x0: Float32Array, frac: number) => void;
   }>();
   private nextId = 1;
+  private readonly idle: Worker[];
+  private readonly queue: ((w: Worker) => void)[] = []; // samples waiting for a worker, in order
 
   get scale(): number {
     return this.info.scale;
@@ -191,20 +212,25 @@ export class CircuitDesigner implements Designer {
     return this.info.style_scale ?? STYLE_SCALE;
   }
 
-  private constructor(private readonly worker: Worker, readonly info: DesignerInfo) {
-    worker.onmessage = (ev: MessageEvent) => {
-      const m = ev.data;
-      const p = this.pending.get(m.id);
-      if (!p) return;
-      if (m.kind === "progress") p.onStep?.(m.x0 as Float32Array, m.frac as number);
-      else if (m.kind === "done") {
+  private constructor(workers: Worker[], readonly info: DesignerInfo) {
+    this.idle = [...workers];
+    for (const worker of workers) {
+      worker.onmessage = (ev: MessageEvent) => {
+        const m = ev.data;
+        const p = this.pending.get(m.id);
+        if (!p) return;
+        if (m.kind === "progress") {
+          p.onStep?.(m.x0 as Float32Array, m.frac as number);
+          return;
+        }
         this.pending.delete(m.id);
-        p.resolve(m.x as Float32Array);
-      } else if (m.kind === "error") {
-        this.pending.delete(m.id);
-        p.reject(new Error(m.message));
-      }
-    };
+        const next = this.queue.shift();
+        if (next) next(worker);
+        else this.idle.push(worker);
+        if (m.kind === "done") p.resolve(m.x as Float32Array);
+        else p.reject(new Error(m.message));
+      };
+    }
   }
 
   static async create(baseUrl: string): Promise<CircuitDesigner> {
@@ -217,27 +243,22 @@ export class CircuitDesigner implements Designer {
     const res = await fetch(`${baseUrl}/${info.file}`);
     if (!res.ok) throw new Error(`could not load the circuit designer (${res.status})`);
     const bytes = await res.arrayBuffer();
-    const worker = new Worker(new URL("./designer.worker.ts", import.meta.url), { type: "module" });
-    await new Promise<void>((resolve, reject) => {
-      worker.onmessage = (ev: MessageEvent) => {
-        if (ev.data.kind === "ready") resolve();
-        else if (ev.data.kind === "error") reject(new Error(ev.data.message));
-      };
-      worker.onerror = (e) => reject(new Error(e.message || "the designer worker failed to start"));
-      worker.postMessage({ kind: "init", info, bytes }, [bytes]);
-    });
-    return new CircuitDesigner(worker, info);
+    const workers = await Promise.all(Array.from({ length: workerCount() }, () => startWorker(info, bytes.slice(0))));
+    return new CircuitDesigner(workers, info);
   }
 
   sample(req: SampleRequest): Promise<Float32Array> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject, onStep: req.onStep });
-      this.worker.postMessage({
+      const send = (worker: Worker) => worker.postMessage({
         kind: "sample", id, mask: req.mask, known: req.known, style: req.style ?? 0,
         styleOn: req.style === null ? 0 : 1, layout: Float32Array.from(ONE_HOT[req.layout]),
         seed: req.seed, steps: STEPS,
       });
+      const worker = this.idle.pop();
+      if (worker) send(worker);
+      else this.queue.push(send);
     });
   }
 }
@@ -341,7 +362,10 @@ export class LiveCircuit {
   }
 
   /** Sample an arc until it passes the checks in context and lands in its style band (or the
-   * retries run out: then the drivable sample closest to the band is kept). */
+   * retries run out: then the drivable sample closest to the band is kept). The first try goes
+   * alone, since most arcs pass it; the tries after it go together, a round at a time, so that a
+   * designer with workers to spare dreams them at once. The tries are judged in order all the same,
+   * so a round gives the arc the one try after another would have. */
   private async dream(arc: number[], first: boolean): Promise<Float64Array> {
     const arcSet = new Set(arc);
     const index = this.stats.arcs;
@@ -349,25 +373,35 @@ export class LiveCircuit {
     const band = this.bandSource?.(index) ?? null;
     const mask = stepMask(this.mask), known = toSteps(this.known, this.mask, this.scale);
     let best: { lap: Float64Array; miss: number; style: number; tight: number } | null = null;
-    for (let attempt = 0; ; attempt++) {
-      let sample: Float32Array;
-      try {
-        sample = await this.designer.sample({
+    let lap: Float64Array | null = null;
+    for (let round = 0, attempt = 0; ; round++) {
+      // (the first try; then the RETRIES it always has; then the rest, if there is time for them: on
+      // a slow phone the race must not run out of road, and not for the opening stretch, which the
+      // race is waiting on)
+      const room = !first && (this.track.frontierSeg - this.leaderSeg + N) % N >= ROOM;
+      const until = round === 0 ? 1 : round === 1 ? RETRIES + 1 : room ? this.retries + 1 : 0;
+      if (until <= attempt) break;
+      const tries: Promise<Float32Array>[] = [];
+      for (let a = attempt; a < until; a++) {
+        tries.push(this.designer.sample({
           mask, known, style: this.style, layout: this.layout, seed: this.rng.int(1, 2 ** 31),
-          onStep: (x0, frac) => {
+          onStep: a > attempt ? undefined : (x0, frac) => {
             this.preview = this.laidOut(fromSteps(x0, this.known, this.mask, this.scale));
             this.denoise = frac;
           },
-        });
-      } catch (e) {
-        if (!best) throw e; // (nothing to keep yet: the arc is tried again later)
-        if (best.miss > 0) this.stats.offBand += 1; // (a retry failed: the best try there is is kept)
-        return this.keep(best);
+        }));
       }
-      const lap = fromSteps(sample, this.known, this.mask, this.scale);
-      const smoothed = smoothArc(lap, arc, ARC_SMOOTH);
-      const game = toGame(smoothed);
-      if (checkLap(game, arcSet, this.layout, first).ok) {
+      for (const t of await Promise.allSettled(tries)) {
+        if (attempt++ > 0) this.stats.retries += 1;
+        if (t.status === "rejected") {
+          if (!best) throw t.reason; // (nothing to keep yet: the arc is tried again later)
+          if (best.miss > 0) this.stats.offBand += 1; // (a retry failed: the best try there is is kept)
+          return this.keep(best);
+        }
+        lap = fromSteps(t.value, this.known, this.mask, this.scale);
+        const smoothed = smoothArc(lap, arc, ARC_SMOOTH);
+        const game = toGame(smoothed);
+        if (!checkLap(game, arcSet, this.layout, first).ok) continue;
         const style = arcStyle(game, arcSet, this.styleScale);
         const miss = band ? bandMiss(style, band) : 0;
         // (m short of a wide enough corner; an arc asked to be wild, a Technical track's, may bend tighter)
@@ -379,21 +413,14 @@ export class LiveCircuit {
           : tight !== best.tight ? tight < best.tight : miss < best.miss;
         if (better) best = { lap: smoothed, miss, style, tight };
       }
-      // (once more, if there is time for it: on a slow phone the race must not run out of road)
-      // (and not the opening stretch's: the race is waiting on it)
-      const room = !first && (this.track.frontierSeg - this.leaderSeg + N) % N >= ROOM;
-      if (attempt < RETRIES || (attempt < this.retries && room)) {
-        this.stats.retries += 1;
-        continue;
-      }
-      if (best) {
-        if (best.miss > 0) this.stats.offBand += 1;
-        return this.keep(best);
-      }
-      this.stats.fallbacks += 1;
-      const ironed = smoothArc(lap, arc, 2.0); // last resort: iron out the wiggle and keep racing
-      return this.measured(ironed, arcStyle(toGame(ironed), arcSet, this.styleScale));
     }
+    if (best) {
+      if (best.miss > 0) this.stats.offBand += 1;
+      return this.keep(best);
+    }
+    this.stats.fallbacks += 1;
+    const ironed = smoothArc(lap!, arc, 2.0); // last resort: iron out the wiggle and keep racing
+    return this.measured(ironed, arcStyle(toGame(ironed), arcSet, this.styleScale));
   }
 
   /** The best try kept, when none passed everything. */

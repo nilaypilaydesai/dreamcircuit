@@ -251,7 +251,7 @@ class Game {
           left: () => this.setEngine(), right: () => this.setEngine() },
       ]),
       setup: new Menu("QUICK RACE", [
-        { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(0, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "HOW MANY AI KARTS RACE YOU (0-7)" },
+        { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = (s.rivals + 7) % 8; }, right: () => { s.rivals = (s.rivals + 1) % 8; }, hint: "HOW MANY AI KARTS RACE YOU (0-7)" },
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + DIFFS.length - 1) % DIFFS.length; }, right: () => { s.diff = (s.diff + 1) % DIFFS.length; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "WORLD", value: () => (s.theme === THEMES.length ? "RANDOM" : THEMES[s.theme].name), left: () => { s.theme = (s.theme + THEMES.length) % (THEMES.length + 1); }, right: () => { s.theme = (s.theme + 1) % (THEMES.length + 1); }, hint: () => (s.theme === THEMES.length ? "A WORLD PICKED AT RANDOM" : THEMES[s.theme].blurb) },
         { label: "TRACK", value: () => { const m = this.pickedMap(); return m ? trackType(m.type).name : TRACKS[s.track].name; },
@@ -269,7 +269,7 @@ class Game {
         { label: "BACK", action: () => this.go("main") },
       ], 300),
       cupSetup: new Menu("GRAND PRIX", [
-        { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = Math.max(1, s.rivals - 1); }, right: () => { s.rivals = Math.min(7, s.rivals + 1); }, hint: "THE SAME RIVALS IN THE SAME KARTS ALL THE WAY (1-7)" },
+        { label: "RIVALS", value: () => String(s.rivals), left: () => { s.rivals = s.rivals <= 1 ? 7 : s.rivals - 1; }, right: () => { s.rivals = s.rivals >= 7 ? 1 : s.rivals + 1; }, hint: "THE SAME RIVALS IN THE SAME KARTS ALL THE WAY (1-7)" },
         { label: "DIFFICULTY", value: () => CLASSES[DIFFS[s.diff]].label, left: () => { s.diff = (s.diff + DIFFS.length - 1) % DIFFS.length; }, right: () => { s.diff = (s.diff + 1) % DIFFS.length; }, hint: "SPEED CLASS, HOW SHARP THE RIVALS DRIVE AND HOW GOOD THEIR KARTS ARE" },
         { label: "TRACK", value: () => TRACKS[s.track].name, left: () => { s.track = (s.track + TRACKS.length - 1) % TRACKS.length; }, right: () => { s.track = (s.track + 1) % TRACKS.length; }, hint: () => trackHint(s.track) },
         { label: "KART", value: () => bodyOf(this.build).name, action: () => this.openGarage("cupSetup"), hint: "OPEN THE GARAGE" },
