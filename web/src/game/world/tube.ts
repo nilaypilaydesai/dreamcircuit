@@ -1,19 +1,22 @@
-// The harbor tunnel's tube. The road runs inside it: a flat floor as wide as any road, walls that
-// curve up in half circles to a flat ceiling, the whole way round. A kart's offset (m left of the
-// centerline, as everywhere) is how far round the tube it has gone from the middle of the floor:
-// past the floor's edge it is up a wall, past the wall it is on the ceiling, and on round it
-// comes down the other wall. So the race goes on in the usual flat terms (the tube unrolled into
-// a road 54 m wide whose edges are one and the same line, the middle of the ceiling), and only
-// drawing it bends it round.
+// The harbor tunnel's tube. The road runs inside it: a flat floor of five lanes, near twice as wide
+// as any other road, walls that curve up in half circles to a flat ceiling 14 m over it, the whole
+// way round. A kart's offset (m left of the centerline, as everywhere) is how far round the tube it
+// has gone from the middle of the floor: past the floor's edge it is up a wall, past the wall it is
+// on the ceiling, and on round it comes down the other wall. So the race goes on in the usual flat
+// terms (the tube unrolled into a road 88 m wide whose edges are one and the same line, the middle
+// of the ceiling), and only drawing it bends it round. (It was 13 m across and 9 m tall: three
+// lanes, walls a few meters off wherever a kart was.)
 //
 // Up the walls a kart is held on by its speed: below TUBE_WALL_SPEED it slides back down to the
 // floor, and on the upper half of the tube it needs TUBE_LOOP_SPEED to stay on, or it peels off
 // and slides back down fast. Fast enough, it can go right round over the ceiling.
 
-import { HALF_WIDTH, type Track } from "./track";
+import type { Track } from "./track";
 
-export const TUBE_FLOOR = HALF_WIDTH; // m: half the floor's width (and the ceiling's)
-export const TUBE_R = 4.5; // m: the walls' radius (the tube is 9 m tall)
+export const TUBE_FLOOR = 11; // m: half the floor's width (and the ceiling's)
+export const TUBE_R = 7; // m: the walls' radius (the tube is 14 m tall)
+/** m between the floor's lane lines: five lanes, between a walkway along each side. */
+export const TUBE_LANE = 3.9;
 export const TUBE_ROUND = 4 * TUBE_FLOOR + 2 * Math.PI * TUBE_R; // m once round
 export const TUBE_HALF = TUBE_ROUND / 2;
 export const TUBE_WALL_SPEED = 12; // m/s to hold onto a wall
@@ -43,14 +46,26 @@ export function tubeAt(u: number): { lat: number; z: number; tilt: number } {
 
 /** How far the race's flat terms carry the road's length ``u`` m out from its middle by road point
  * i, for every meter of the middle: 1 on a straight, more round the outside of a bend, less round
- * the inside, and nothing or less where the inside of a bend tighter than that folds them over. */
+ * the inside, and nothing or less where the inside of a bend tighter than that folds them over.
+ * Measured over STRETCH_SPAN road points either side: from one road point to the next, the little
+ * kinks in the road's heading between them made it swing, 13 m up a wall of the wide tube, from
+ * 0.2 to 0.7 and back in three frames, and a kart moving by it jumped along the tube. */
 export function flatStretch(track: Track, i: number, u: number): number {
-  const j = track.wrap(i + 1);
-  if (j === i) return 1;
-  const [ax, ay] = track.tangent(i), [bx, by] = track.tangent(j), gap = track.between(i, j);
+  const a = track.locked ? track.wrap(i - STRETCH_SPAN) : Math.max(0, i - STRETCH_SPAN);
+  const b = track.locked ? track.wrap(i + STRETCH_SPAN) : Math.min(track.count - 1, i + STRETCH_SPAN);
+  if (a === b) return 1;
+  const [ax, ay] = track.tangent(a), [bx, by] = track.tangent(b), [tx, ty] = track.tangent(i);
+  const gap = track.locked || b > a ? arcBetween(track, a, b) : 0;
   if (gap <= 0) return 1;
-  const dx = track.xs[j] - by * u - (track.xs[i] - ay * u), dy = track.ys[j] + bx * u - (track.ys[i] + ax * u);
-  return (dx * ax + dy * ay) / gap;
+  const dx = track.xs[b] - by * u - (track.xs[a] - ay * u), dy = track.ys[b] + bx * u - (track.ys[a] + ax * u);
+  return (dx * tx + dy * ty) / gap;
+}
+const STRETCH_SPAN = 6;
+
+/** The road's length from road point a on to road point b (round a locked lap). */
+function arcBetween(track: Track, a: number, b: number): number {
+  const d = track.s[b] - track.s[a];
+  return d >= 0 ? d : d + (track.locked ? track.length : 0);
 }
 
 /** How much further a kart ``u`` m round the tube by road point i moves along the road in the
@@ -77,4 +92,14 @@ export function holdSpeed(u: number): number {
   const t = Math.abs(tubeAt(u).tilt);
   if (t < 0.12) return 0;
   return t > Math.PI / 2 ? TUBE_LOOP_SPEED : TUBE_WALL_SPEED * (t / (Math.PI / 2));
+}
+
+/** What the tube is lined with along the lap, a stretch of TUBE_ZONE m at a time: tiles and concrete,
+ * glass (the walls above the tiles and the roof, the harbor's water outside, fish going by), or neon
+ * (dark tiles, strips of coloured light along the walls). From the start, tiles. */
+export type TubeZone = "tiles" | "glass" | "neon";
+export const TUBE_ZONE = 170;
+const ZONES: TubeZone[] = ["tiles", "glass", "tiles", "neon", "glass", "tiles", "neon", "glass"];
+export function tubeZone(s: number): TubeZone {
+  return ZONES[((Math.floor(s / TUBE_ZONE) % ZONES.length) + ZONES.length) % ZONES.length];
 }

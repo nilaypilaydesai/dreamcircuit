@@ -365,22 +365,45 @@ function palette(build: Build, livery: KartLivery): Pal {
   };
 }
 
-/** The voxels of a kart built from ``build``, with the driver in ``livery``'s colours (and with a
- * wing pad's wings: ``wings``). */
-export function kartModel(build: Build, livery: KartLivery, wings = false): Map<number, number> {
+/** What a kart is made into: itself, a rocket, a hover car (a hover pad, in the tunnel's tube: its
+ * wheels folded flat into glowing pods) or a little plane (wings, in the sky). */
+export type KartForm = "kart" | "rocket" | "hover" | "plane";
+
+/** The voxels of a kart built from ``build``, with the driver in ``livery``'s colours, as a hover
+ * car or a plane (``form``). */
+export function kartModel(build: Build, livery: KartLivery, form: KartForm = "kart"): Map<number, number> {
   const m = new Model();
   const c = palette(build, livery);
   const at = (BODY_SHAPES[build.body] ?? BODY_SHAPES.classic)(m, c);
-  addWheels(m, build.wheels, c);
+  if (form === "hover") addHoverPods(m, c);
+  else addWheels(m, build.wheels, c);
   addSpoiler(m, build.spoiler, c, at);
   addExhaust(m, build.exhaust, c, at);
   addDriver(m, c, at.seat);
-  if (wings) addWings(m, c, at);
+  if (form === "plane") addWings(m, c, at);
   return m.vox;
 }
 
-/** A wing pad's wings (the tunnel's tube): the kart made a little plane, with swept wings out of
- * its sides between the wheels, a light on each tip, and a tail fin and tailplane over the back. */
+/** A hover pad's lift (the tunnel's tube): each wheel folded flat under its arch into a pod, a dark
+ * housing with a ring of light round its glowing face, and a strip of light along the sill between. */
+function addHoverPods(m: Model, c: Pal): void {
+  const glow = hex("#7ff0ff"), ring = hex("#3aa8e8"), core = hex("#e8ffff");
+  for (const [x0, x1] of [[16, 23], [0, 7]]) { // front and rear, where the wheels were
+    for (const side of [-1, 1]) {
+      for (let x = x0; x < x1; x++) {
+        for (let y = 7; y < 12; y++) {
+          const yy = side < 0 ? -y - 1 : y, rim = x === x0 || x === x1 - 1 || y === 7 || y === 11;
+          m.put(x, yy, 2, rim ? c.dark : ring); // the housing, its top
+          m.put(x, yy, 1, rim ? ring : (x + y) % 2 ? glow : core); // the glowing face
+        }
+      }
+    }
+  }
+  for (let x = 7; x < 16; x++) for (const y of [-9, 8]) m.put(x, y, 2, glow); // the sill's strip of light
+}
+
+/** Wings (the sky): the kart made a little plane, with swept wings out of its sides between the
+ * wheels, a light on each tip, and a tail fin and tailplane over the back. */
 function addWings(m: Model, c: Pal, at: Mount): void {
   const skin = hex("#e8ebf2"), edge = hex("#b8c0ce"), lamp = hex("#ff3b4f");
   for (let y = 9; y < 20; y++) {
@@ -484,8 +507,10 @@ function splat(vs: Lit[], th: number, scale: number, put: (px: number, py: numbe
  * back of each wing tip is too (its vapour trail streams from there). */
 export type KartViews = Sprite[] & { heads?: [number, number][]; tips?: [number, number][][] };
 
-/** The backs of a wing pad's wing tips (model coordinates: see addWings). */
+/** The backs of a plane's wing tips (model coordinates: see addWings). */
 const WING_TIPS: [number, number, number][] = [[4, 19, 6], [4, -20, 6]];
+/** The backs of a hover car's rear pods (see addHoverPods). */
+const HOVER_PODS: [number, number, number][] = [[0, 11, 1], [0, -12, 1]];
 
 /** Where the driver's head is on a build (model coordinates), for the reef's bubble helmets. */
 export function kartHead(build: Build): [number, number, number] {
@@ -525,15 +550,17 @@ export function bakeVoxels(vox: Map<number, number>, cx = 11.5, marker?: [number
 
 const baked = new Map<string, KartViews>();
 
-/** A kart's 16 views, baked once per build and driver (as a rocket, or with a wing pad's wings). */
-export function kartSprites(build: Build, livery: KartLivery, rocket = false, wings = false): KartViews {
-  const form = rocket ? "R" : wings ? "W" : "K";
+/** A kart's 16 views, baked once per build and driver, in each of its forms (a rocket, a hover car,
+ * a plane). A plane's views know where its wing tips are, and a hover car's where its rear pods are
+ * (vapour and light stream back from there). */
+export function kartSprites(build: Build, livery: KartLivery, form: KartForm = "kart"): KartViews {
   const key = `${form}|${build.body}|${build.wheels}|${build.spoiler}|${build.exhaust}|${build.paint}|${build.accent}|${livery.helmet}|${livery.suit}`;
   let s = baked.get(key);
   if (!s) {
-    if (baked.size > 80) baked.clear();
-    s = rocket ? bakeVoxels(rocketModel(build, livery), 10)
-      : bakeVoxels(kartModel(build, livery, wings), 11.5, kartHead(build), wings ? WING_TIPS : undefined);
+    if (baked.size > 120) baked.clear();
+    s = form === "rocket" ? bakeVoxels(rocketModel(build, livery), 10)
+      : bakeVoxels(kartModel(build, livery, form), 11.5, kartHead(build),
+                   form === "plane" ? WING_TIPS : form === "hover" ? HOVER_PODS : undefined);
     baked.set(key, s);
   }
   return s;

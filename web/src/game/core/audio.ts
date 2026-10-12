@@ -112,16 +112,18 @@ export class Sound {
     (place <= 3 ? win : lose).forEach((f, i) => this.tone(f, 0.22, "square", 0.12, i * 0.13));
   }
   boost(): void { this.tone(300, 0.5, "sawtooth", 0.08, 0, 1200); this.noise(0.4, 0.06, 3000); }
-  /** A wing pad: a jet's rising roar and a bright call. */
-  wings(): void {
-    this.noise(0.8, 0.08, 2400);
-    this.tone(180, 0.7, "sawtooth", 0.06, 0, 720);
-    [784, 1175, 1568].forEach((f, i) => this.tone(f, 0.12, "triangle", 0.07, 0.15 + i * 0.07));
+  /** A hover pad: the kart's wheels fold under it and it lifts off the road, with a hum winding up, a
+   * shimmer and a bright two-note call. */
+  hover(): void {
+    this.tone(110, 0.9, "sine", 0.11, 0, 440);
+    this.tone(220, 0.9, "triangle", 0.05, 0.05, 880);
+    for (let i = 0; i < 6; i++) this.tone(1568 + (i % 3) * 196, 0.06, "square", 0.025, 0.25 + i * 0.05);
+    [1175, 1760].forEach((f, i) => this.tone(f, 0.16, "triangle", 0.07, 0.5 + i * 0.1));
   }
-  /** The wings run out: a falling whistle. */
-  wingsOff(): void { this.tone(880, 0.45, "triangle", 0.06, 0, 330); }
-  /** They are running out, high on a wall: two short warning pips. */
-  wingsLow(): void { [0, 0.15].forEach((at) => this.tone(1047, 0.08, "square", 0.06, at)); }
+  /** The hover runs out: the hum winds down and the wheels come back down onto the road. */
+  hoverOff(): void { this.tone(520, 0.55, "sine", 0.08, 0, 110); this.noise(0.12, 0.05, 900); }
+  /** It is running out, high on a wall: two short warning pips. */
+  hoverLow(): void { [0, 0.15].forEach((at) => this.tone(1047, 0.08, "square", 0.06, at)); }
   bump(): void { this.noise(0.18, 0.22, 400); this.tone(90, 0.15, "triangle", 0.15); }
   locked(): void { [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, 0.3, "triangle", 0.09, i * 0.07)); }
   roll(): void { for (let i = 0; i < 12; i++) this.tone(520 + (i % 4) * 140, 0.05, "square", 0.045, i * 0.095); }

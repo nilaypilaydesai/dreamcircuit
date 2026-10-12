@@ -37,6 +37,7 @@ export interface KartLook {
   art?: (item: ItemKind) => SceneryArt; // any item's art (the jackpot's eight circling a kart)
   grabber?: SceneryArt[]; // the grabber: idle, wide open, snapped shut
   dome?: boolean; // every driver wears a clear helmet (under the sea, on the moon)
+  planes?: boolean; // every kart is a little plane (the sky): vapour streams off its wing tips at speed
   underDeck?: (x: number, y: number) => boolean; // whether a spot on the ground is under a bridge's deck
   hide?: Kart; // a kart not to draw (the player's own, seen past in the rear-view mirror)
   drone?: SceneryArt[]; // the rescue drone's frames (the volcano)
@@ -175,37 +176,43 @@ export function drawWorldSprites(scr: Screen, cam: Camera, scenery: Placed[], ka
     const tintAmount = prism ? (k.prism < 1.5 && Math.floor(now * 10) % 2 ? 0 : 0.42) : heat > 0 ? heat : fogAt(p.z);
     // on raised road (a deck, a climb, a ramp) a kart is drawn over the road it stands on
     const bias = k.ground > 0.05 || k.elev > 1 ? -0.5 : lowAt(k.x, k.y, k.elev);
-    // (a wing pad's wings: which way, on the screen, a vapour trail streams back from the kart, as
-    // the body is drawn: unturned, round the tube)
+    // hovering (a hover pad, in the tube): the kart floats off the surface, bobbing, on the glow of its
+    // pods; a plane (the sky) streams vapour off its wing tips
+    const hovering = k.hover > 0 && k.rocket <= 0 && !k.falling;
+    const lift = hovering ? (0.3 + 0.06 * Math.sin(now * 5.5 + k.id * 1.7)) * p.ppm : 0;
+    // (which way, on the screen, a trail streams back from the kart, as the body is drawn: unturned,
+    // round the tube)
     let trail: [number, number] | null = null;
-    if (k.wings > 0 && Math.abs(k.v) > 12 && k.rocket <= 0 && !k.falling) {
+    if ((hovering || look.planes) && Math.abs(k.v) > 12 && k.rocket <= 0 && !k.falling) {
       const b = project(k.x - Math.cos(k.heading) * 1.6, k.y - Math.sin(k.heading) * 1.6, k.elev + 0.37, k.idx);
-      if (b) { // (from the tips, 0.37 m up)
+      if (b) { // (from the tips or the pods, 0.37 m up)
         const a = -(p.rot ?? 0), dx = b.sx - p.sx, dy = b.gy - p.gy;
         trail = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a) + 0.37 * p.ppm];
       }
     }
     // (round the tube, the kart and its shadow are drawn turned with the surface they are on)
     const body = () => {
-      const top = p.gy - h * KART_ANCHOR + bounce;
+      const top = p.gy - h * KART_ANCHOR + bounce - lift;
       scr.blitScaled(s, p.sx - w / 2, top, w, h, false, k.phantom > 0 ? hex("#c9b8ff") : tint,
                      k.phantom > 0 ? 0.35 : tintAmount, sinking ? Math.round(ps.gy + 0.2 * ps.ppm) : H, k.phantom > 0);
       const head = look.dome && k.rocket <= 0 ? sprites.heads?.[vi] : undefined;
       if (head) drawDome(scr, p.sx - w / 2 + (head[0] * w) / s.w, top + (head[1] * h) / s.h, (5.6 * 1.55 * h) / s.h);
       const sp = look.sparks(k);
       if (sp) drawSparks(scr, p.sx, p.gy, p.ppm, sp, k.driftDir);
-      // winged, at speed: a vapour trail streams back off each wing tip
+      // at speed: vapour streams back off a plane's wing tips, and light off a hover car's rear pods
       if (trail && sprites.tips) {
-        const dot = Math.max(1, Math.round(p.ppm * 0.05));
-        for (const [tx, ty] of sprites.tips[vi]) vapour(scr, p.sx - w / 2 + (tx * w) / s.w, top + (ty * h) / s.h, trail[0], trail[1], dot);
+        const dot = Math.max(1, Math.round(p.ppm * 0.05)), color = hovering ? HOVER_LIGHT : VAPOUR;
+        for (const [tx, ty] of sprites.tips[vi]) vapour(scr, p.sx - w / 2 + (tx * w) / s.w, top + (ty * h) / s.h, trail[0], trail[1], dot, color);
       }
     };
     items.push({
       ...p,
       z: p.z + bias,
       draw: () => {
-        // (in the tube, the shadow lies turned with the surface under it, as the kart is)
-        if (!sinking && !falling) shadow(scr, ps.sx, ps.gy, 1.0 * ps.ppm * shrink, 0.32 * ps.ppm * shrink, ps.rot ?? 0);
+        // (in the tube, the shadow lies turned with the surface under it, as the kart is; under a hover
+        // car, the glow of its pods, pulsing, round a fainter shadow)
+        if (hovering) glowUnder(scr, ps.sx, ps.gy, 1.25 * ps.ppm * shrink, 0.45 * ps.ppm * shrink, ps.rot ?? 0, 0.3 + 0.12 * Math.sin(now * 11 + k.id));
+        if (!sinking && !falling) shadow(scr, ps.sx, ps.gy, (hovering ? 0.8 : 1.0) * ps.ppm * shrink, (hovering ? 0.24 : 0.32) * ps.ppm * shrink, ps.rot ?? 0);
         turn(p, body)();
       },
     });
@@ -413,14 +420,29 @@ function drawSparks(scr: Screen, cx: number, gy: number, ppm: number, level: num
 
 const FLAME = ["#fff6c8", "#ffd23f", "#ff8a1f", "#ff4d2e"].map(hex);
 const VAPOUR = hex("#f2f6ff");
+const HOVER_LIGHT = hex("#7ff0ff"); // a hover car's pods, and the light off them
 
 /** A wing tip's vapour trail: from (x, y), thinning out along (dx, dy) on the screen, in dots
  * ``size`` pixels across. */
-function vapour(scr: Screen, x: number, y: number, dx: number, dy: number, size: number): void {
+function vapour(scr: Screen, x: number, y: number, dx: number, dy: number, size: number, color = VAPOUR): void {
   const n = Math.max(3, Math.min(24, Math.round(Math.hypot(dx, dy) / Math.max(1.5, size))));
   for (let k = 1; k <= n; k++) {
     const u = k / n;
-    scr.dimRect(Math.round(x + dx * u - size / 2), Math.round(y + dy * u - size / 2), size, size, VAPOUR, 0.7 * (1 - u * 0.85));
+    scr.dimRect(Math.round(x + dx * u - size / 2), Math.round(y + dy * u - size / 2), size, size, color, 0.7 * (1 - u * 0.85));
+  }
+}
+
+/** The glow under a hover car: a cyan ellipse, bright in the middle, on the surface it floats over
+ * (turned with it, round the tube). */
+function glowUnder(scr: Screen, cx: number, cy: number, rx: number, ry: number, a: number, alpha: number): void {
+  const buf = scr.buf, c = Math.cos(a), sn = Math.sin(a), R = Math.max(rx, ry);
+  for (let y = Math.floor(cy - R); y <= cy + R; y++) {
+    if (y < 0 || y >= H) continue;
+    for (let x = Math.floor(cx - R); x <= cx + R; x++) {
+      if (x < 0 || x >= W) continue;
+      const dx = x - cx, dy = y - cy, u = dx * c + dy * sn, v = dy * c - dx * sn, d = (u / rx) ** 2 + (v / ry) ** 2;
+      if (d <= 1) buf[y * W + x] = mix(buf[y * W + x], HOVER_LIGHT, alpha * (1 - d * 0.7));
+    }
   }
 }
 

@@ -547,82 +547,107 @@ crater's rim) a kart just lands on the road again, as before. Rivals keep to the
 seldom go in.
 
 **The Harbor Tunnel.** The whole race runs in a road tunnel, a tube (`world/tube.ts`): a flat
-floor as wide as any road, walls that curve up in half circles 4.5 m across to a flat roof as wide
-as the floor, the whole way round. A kart's offset (m left of the centerline, as everywhere) is
-how far round the tube it has gone from the middle of the floor: past the floor's edge it is up a
-wall, past the wall on the roof, and on round it comes down the other wall. So the race goes on
-in its usual flat terms (the tube unrolled is a road 54 m wide whose two edges are one line, the
-middle of the roof), and items, rivals, pads and laps work as anywhere else; only drawing bends
-it round. Up a wall a kart is held on by its speed, the more the higher it is (12 m/s where the
-wall stands upright), and anywhere on the upper half it needs 22.5 m/s; slower, it slides back
-down, fast from the roof. WALL and LOOP show beside the speed, gold when a kart is fast enough
-for each, with ticks on the speed bar. Up a wall or on the roof a kart turns no more than 45
-degrees off the way along the tunnel, the wall carries it round the tunnel's bends, and when the
-steering is let go it straightens out along the tunnel: so a loop is a spiral on down the
-tunnel, with the way on always in view, and a kart left alone rides the wall. Free to turn, a
-kart drove straight round and round the tube, seen side on, with the whole tunnel spinning past
-it: driven by a recording driver steering at random, the view turned 8 to 12 degrees a frame in
-two frames of five (now in one of fourteen, sliding off the roof or looping).
+floor of five lanes, 22 m across (near twice an ordinary road: it was 13 m, three lanes, with the
+walls a few meters off wherever a kart was), walls that curve up in half circles 7 m across to a
+flat roof as wide as the floor, 14 m over it, the whole way round. A kart's offset (m left of the
+centerline, as everywhere) is how far round the tube it has gone from the middle of the floor:
+past the floor's edge it is up a wall, past the wall on the roof, and on round it comes down the
+other wall. So the race goes on in its usual flat terms (the tube unrolled is a road 88 m wide
+whose two edges are one line, the middle of the roof), and items, rivals, pads and laps work as
+anywhere else; only drawing bends it round. Up a wall a kart is held on by its speed, the more the
+higher it is (12 m/s where the wall stands upright), and anywhere on the upper half it needs 22.5
+m/s; slower, it slides back down, fast from the roof. WALL and LOOP show beside the speed, gold
+when a kart is fast enough for each, with ticks on the speed bar. Up a wall or on the roof a kart
+turns no more than 45 degrees off the way along the tunnel, the wall carries it round the
+tunnel's bends, and when the steering is let go it straightens out along the tunnel: so a loop is
+a spiral on down the tunnel, with the way on always in view, and a kart left alone rides the wall.
+Free to turn, a kart drove straight round and round the tube, seen side on, with the whole tunnel
+spinning past it: driven by a recording driver steering at random, the view turned 8 to 12
+degrees a frame in two frames of five (now in one of fourteen, sliding off the roof or looping).
 
-The walls are only for winged karts. Without wings the foot of each wall is a wall, as a
+A kart moves round the tube in the tube's own terms, how far along the road and how far round it,
+and along the road at the tube's own measure: on a bend the flat terms stretch the road's length
+round the outside and squeeze it round the inside. How much is measured over six road points
+either side of the kart: from one road point to the next, the little kinks in the road's heading
+between them made the measure swing, 13 m up a wall of the widened tube, from 0.2 to 0.7 and back
+in three frames, and a kart moving by it jumped along the tube, 30% further in a frame than its
+speed (on the old, smaller tube the swing had stayed small). Where round the inside of a bend the
+flat terms squeeze the road to under 0.3 of itself, nearly folding over, a kart cannot hold on and
+slides back down.
+
+The walls are only for hovering karts. Without hover the foot of each wall is a wall, as a
 tunnel's are elsewhere: a kart driven at it from the floor is stopped 0.7 m short of the floor's
 edge and scrapes along it, losing speed, and nothing (a bump from another kart included) puts it
-higher. Wings come from a wing pad, drawn blue with a little plane on it, and they are spread out:
-the floor gets one at least every 560 m where the road is free (placed without drawing on the
-race's random numbers, so everything else lies where it did, and on the locked lap any longer
-stretch gets one about halfway along), and a pad at a corner exit on the floor is one too, unless
-another is within 280 m, when it is a plain boost pad. (The tube's circuits are drawn wide, and at
-corner exits alone a lap had one pad, or none; then, one every 300 m with the corner exits' between,
-a lap had eight to ten, some 150 m apart, and the walls were somewhere to live, not a treat to be
-timed.) A wing pad gives eight seconds of wings and a boost: the kart is drawn as a little
-plane (swept white wings tipped in its paint, a light on each tip, a tail fin and tailplane over
-the back, and at speed a vapour trail off each wing tip), a WINGS meter drains under the item
-slot, flashing for its last second and a half, and WALL and LOOP show beside the speed. When the
-wings run out, a kart low on a wall (under 45 degrees up from the floor) goes no higher and slides
-back down to the floor, at 6 m/s or faster; higher up, or on the roof, it falls off (OFF THE
-WALL!): it drops, turning over, onto its roof on the floor (in sight: the screen does not darken,
-and the chase camera swings down to the floor under it and rises with it), the rescue drone comes
-down for it, lifts it and turns it the right way up over the middle of the floor, lowers it and
-lets it go, 2.6 s in all. Two seconds before they run out, high up, the player is told (WINGS LOW:
-GET DOWN!). The first wing pad of a race puts up a banner (WINGS! RIDE THE WALLS: BE DOWN BEFORE
-THEY RUN OUT), and the first scrape along a wall without them another (NO WINGS: THE BLUE PADS GIVE
-YOU WINGS). Rivals go for a wing pad ahead when their wings are gone or running out, take a plain
-pad on the floor whenever they can, and winged, ride a wall where the road runs straight for 80 m
-(no bend tighter than 60 m), 77 to 85 degrees up it by class, as a player would; now and then they
-go for a pad up a wall (the roof's are left to the player), only with wings enough to get there
-and back down: they head down with 3.2 s of them in hand, and with under 4 s keep to the floor
-(dodging traffic at the foot of a wall with their wings running out, the pursuit of a tight bend's
-inside had carried them up it, and off it: 4 falls in 12 races). Up a wall they had spent 2% of
-their winged time, past 45 degrees almost none; riding the walls, 25 to 34%, 12 to 20% past 45, at
-the same pace and with no falls, over the same 12 races. Without wings they keep to the floor. The other pads go up the walls and on the roof, where only
-a winged kart can reach them (the roof's only one fast enough to loop), and up to four cars
-drive the floor in three lanes, 60 to 95 m apart and slower than any racer, to weave through or,
-winged, ride a wall past. In a race driven by the rivals' own driver on a calm circuit, four wing
-pads a lap keep every kart winged about a third of the time (six had kept them winged 45% of it),
-and no kart falls off a wall. Its circuits are drawn 1.6 times the size and dreamed calmer, so the bends are
-wide enough to drive round the inside of.
+higher. Hover comes from a hover pad, drawn blue with a hover car on it seen from above (its four
+pods glowing) in a ring that pulses, and they are spread out: the floor gets one at least every
+560 m where the road is free, in one of its five lanes (placed without drawing on the race's random
+numbers, so everything else lies where it did, and on the locked lap any longer stretch gets one
+about halfway along), and a pad at a corner exit on the floor is one too, unless another is within
+280 m, when it is a plain boost pad. (The tube's circuits are drawn wide, and at corner exits alone
+a lap had one pad, or none; then, one every 300 m with the corner exits' between, a lap had eight to
+ten, some 150 m apart, and the walls were somewhere to live, not a treat to be timed.) A hover pad
+gives eight seconds of hover and a boost: the kart becomes a hover car, its wheels folded flat under
+its arches into pods (a dark housing, a ring of light round a glowing face) and a strip of light
+along each sill, floating 0.3 m off the surface and bobbing on a pulsing cyan glow, a streak of
+light off each rear pod at speed; a HOVER meter drains under the item slot, flashing for its last
+second and a half, and WALL and LOOP show beside the speed. (It was a little plane, wings and a
+tail fin; the planes have gone to the sky, where every kart flies.) When the hover runs out, a kart
+low on a wall (under 45 degrees up from the floor) goes no higher and slides back down to the floor,
+at 6 m/s or faster; higher up, or on the roof, it falls off (OFF THE WALL!): it drops, turning
+over, onto its roof on the floor (in sight: the screen does not darken, and the chase camera swings
+down to the floor under it and rises with it), the rescue drone comes down for it, lifts it and
+turns it the right way up over the middle of the floor, lowers it and lets it go, 2.6 s in all.
+Two seconds before it runs out, high up, the player is told (HOVER LOW: GET DOWN!). The first hover
+pad of a race puts up a banner (HOVER! RIDE THE WALLS: BE DOWN BEFORE IT RUNS OUT), and the first
+scrape along a wall without it another (NO HOVER: THE BLUE PADS MAKE YOU HOVER). Rivals go for a
+hover pad ahead when their hover is gone or running out, take a plain pad on the floor whenever
+they can, and hovering, ride a wall where the road runs straight for 80 m (no bend tighter than
+60 m), 77 to 85 degrees up it by class, as a player would; now and then they go for a pad up a wall
+(the roof's are left to the player), only with hover enough to get there and back down: they head
+down with 3.2 s of it in hand, and with under 4 s keep to the floor (dodging traffic at the foot of
+a wall with their hover running out, the pursuit of a tight bend's inside had carried them up it,
+and off it: 4 falls in 12 races). Up a wall they had spent 2% of their hovering time, past 45
+degrees almost none; riding the walls, 25 to 34%, 12 to 20% past 45, at the same pace and with no
+falls, over the same 12 races. Without hover they keep to the floor. The other pads go up the walls
+and on the roof, where only a hovering kart can reach them (the roof's only one fast enough to
+loop), and up to six cars drive the floor in its five lanes, 60 to 95 m apart and slower than any
+racer, to weave through or, hovering, ride a wall past; the item boxes and coins are spread across
+the whole floor, and pucks bounce off the foot of the walls. In a race driven by the rivals' own
+driver on a calm circuit, four hover pads a lap keep every kart hovering about a third of the time,
+and no kart falls off a wall. Its circuits are drawn 1.6 times the size and dreamed calmer, so the
+bends are wide enough to drive round the inside of.
 
 In the tube there is no Mode-7 ground and no sky (`render/tube.ts`). It is drawn as road tunnels
-are built: an asphalt road in three lanes with white edge lines, dashed lane lines and amber
-cat's eyes, a concrete walkway along each side, the walls faced with pale tiles to head height
-under a dark cable tray and bare concrete above, and a concrete roof with a row of lights down
-its middle, every 4.5 m, each throwing a pool of light on the road below; lane signals hang from
-the roof every 160 m. (It began as a tube of neon light, strips and pulsing rings, and was redrawn
-as a real tunnel. Emergency-phone niches, set into the wall every 96 m, were taken out: drawn in
-green on the curve of the wall, they read as splotches.) The 260 m of tube ahead of the camera are drawn (past its far plane, where the fog is
-whole: drawn short of it, the far end of a straight showed as a dark disc), as rings of 22 panels
-(the road in four, a walkway each side, each wall in six facets, the roof in four), in pieces
-that lengthen with distance (3, 6, then 12 road points). Each piece starts at a whole multiple of
-its length and the lining is shaded in sections 12 road points long, so the pieces and their
-shades stay put while the camera moves through them; the dashes, lights and signs are set where
-they fall along the road (counted afresh each lap, so one by the line is the same from either
-side). The panels are the backdrop to everything in the tube: sorted 7 m deeper than they are, a
-panel always goes down before a kart, a pad or a line lying on it, while anything a bend's wall
-really hides is much further behind it than that. Where a figure-eight's tube crosses itself,
-the pass the camera is not on is left out (from inside it is never seen, and drawn it would show
-through the walls), and so is everything on it. Everything in the tube is placed where it lies
-between road points (`tubePlace`): snapped to the nearest point, half a meter apart, every kart
-shook as it moved, by about 10 px a frame on the screen.
+are built: an asphalt road in five lanes with white edge lines, dashed lane lines and amber cat's
+eyes, a concrete walkway along each side, the walls faced with pale tiles to head height under a
+dark cable tray and bare concrete above, and a concrete roof with two rows of lights, every 4.5 m,
+each throwing a pool of light across the road below; lane signals hang over every lane from the
+roof every 160 m. Along the lap its lining changes, 170 m at a time (`tubeZone`): tiles and
+concrete; glass over the tiles and right across the roof, the harbor's water outside, deep at the
+walls and lighter over the roof where the light comes down through it, rippling, with steel frames
+every 4 m and schools of fish swimming by outside, each at its own height, its own way; and neon,
+the tiles dark under strips of coloured light along each wall and the roof's lamps magenta and
+cyan by turns, their pools on the road the same. On the outside wall of every bend tighter than 120
+m, chevrons point the way round, black boards with a yellow arrow every 9 m a little over the
+walkway (their arrows sorted well in front of the boards: by its middle, nearer the board's far
+end, an arrow was drawn first and its board went over it). (It began as a tube of neon light,
+strips and pulsing rings, and was redrawn as a real tunnel. Emergency-phone niches, set into the
+wall every 96 m, were taken out: drawn in green on the curve of the wall, they read as splotches.)
+The 260 m of tube ahead of the camera are drawn (past its far plane, where the fog is whole: drawn
+short of it, the far end of a straight showed as a dark disc), as rings of 26 panels (the road in
+four, a walkway each side, each wall in eight facets, the roof in four), in pieces that lengthen
+with distance (3, 6, then 12 road points). Each piece starts at a whole multiple of its length and
+the lining is shaded in sections 12 road points long, so the pieces and their shades stay put while
+the camera moves through them; the dashes, lights and signs are set where they fall along the road
+(counted afresh each lap, so one by the line is the same from either side), and so are the glass's
+frames, fish and the chevrons, placed by stepping from the camera's road point. The panels are the
+backdrop to everything in the tube: sorted 7 m deeper than they are, a panel always goes down
+before a kart, a pad or a line lying on it, while anything a bend's wall really hides is much
+further behind it than that. Where a figure-eight's tube crosses itself, the pass the camera is not
+on is left out (from inside it is never seen, and drawn it would show through the walls), and so is
+everything on it. Everything in the tube is placed where it lies between road points (`tubePlace`):
+snapped to the nearest point, half a meter apart, every kart shook as it moved, by about 10 px a
+frame on the screen.
 
 The chase camera is fixed to the kart's own frame round the tube: 6.2 m behind it along the
 tube, 2.9 m off the surface along the way the kart's surface faces (rising with the kart up a

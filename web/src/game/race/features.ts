@@ -2,9 +2,9 @@
 //   jump ramps on long straights: fly off the lip, and hop (the drift button) right at the lip
 //   for a trick that pays a boost on landing;
 //   boost pads at corner exits (and, on some track types, along the straights); in the harbor
-//   tunnel's tube, the pads on its floor are wing pads (wings for the walls and the roof, where
-//   the rest of its pads are), well spread out: one at least every WING_GAP m, none nearer another
-//   than WING_APART (a floor pad that near one is a plain boost pad);
+//   tunnel's tube, the pads on its floor are hover pads (hover for the walls and the roof, where
+//   the rest of its pads are), well spread out: one at least every HOVER_GAP m, none nearer another
+//   than HOVER_APART (a floor pad that near one is a plain boost pad);
 //   tunnels on straights, under buildings in Tokyo and through buildings going up on the building
 //   site (their walls keep karts in).
 // How long a straight earns a jump and how far apart pads are depend on the track type
@@ -14,7 +14,7 @@
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import type { Kart } from "./kart";
 import type { Bank } from "../world/banks";
-import { TUBE_FLOOR, TUBE_R } from "../world/tube";
+import { TUBE_FLOOR, TUBE_LANE, TUBE_R } from "../world/tube";
 import { DEFAULT_PADS, DEFAULT_RAMPS, type PadRule, type RampRule } from "./tracktypes";
 
 export const RAMP_LEN = 11; // m
@@ -24,12 +24,12 @@ export const PAD_HALF = 2.6; // m, half the pad's width
 export const TUNNEL_LEN = 52; // m
 export const TUNNEL_H = 5.8; // m from the road to the ceiling
 const TUNNEL_GAP = 320; // m between tunnels
-// in the tube: a wing pad at least every WING_GAP m of its floor (where the road is free), and none
-// nearer another than WING_APART (a pad on the floor that near one is a plain boost pad): the walls
+// in the tube: a hover pad at least every HOVER_GAP m of its floor (where the road is free), and none
+// nearer another than HOVER_APART (a pad on the floor that near one is a plain boost pad): the walls
 // are a treat to be timed, not somewhere to live (300 m apart, with the corner exits' between,
-// wings ran out only where the next pad was in sight)
-export const WING_GAP = 560;
-export const WING_APART = 280;
+// hover ran out only where the next pad was in sight)
+export const HOVER_GAP = 560;
+export const HOVER_APART = 280;
 
 export interface Ramp {
   start: number; // dense index of the foot of the ramp
@@ -40,7 +40,7 @@ export interface Pad {
   start: number;
   s0: number;
   offset: number; // lateral position of the pad's centre
-  wing?: boolean; // a wing pad (on the tube's floor): wings, to drive up the walls and over the roof
+  hover?: boolean; // a hover pad (on the tube's floor): hover, to drive up the walls and over the roof
 }
 
 export interface Tunnel {
@@ -97,7 +97,7 @@ export class Features {
   private lastRamp = -Infinity;
   private scanned = 0; // arc length of the last road scanned
   private lastPad = -Infinity;
-  private lastWing = -Infinity;
+  private lastHover = -Infinity;
 
   /** Place features on newly committed road ``[from, to)``. ``blocked(s)`` says whether a
    * stretch is taken (bridges, item boxes, the start). */
@@ -145,9 +145,9 @@ export class Features {
         const at = Math.max(8, i - Math.round(25 / SPACING));
         if (!this.rampNear(track.s[at] - 20, PAD_LEN + 40)) this.tryPad(track, at, blocked, rng);
       }
-      // in the tube, wing pads on its floor every so far besides (its walls are for winged karts,
+      // in the tube, hover pads on its floor every so far besides (its walls are for hovering karts,
       // and its bends are wide: corner exits alone left a lap one pad, or none)
-      if (this.tube && s - this.lastWing > WING_GAP) this.tryWing(track, i, blocked);
+      if (this.tube && s - this.lastHover > HOVER_GAP) this.tryHover(track, i, blocked);
     }
   }
 
@@ -167,74 +167,74 @@ export class Features {
     const pad = this.pad(track, i, s, this.padOffset(rng));
     this.lastPad = s;
     this.pads.push(pad);
-    if (pad.wing) this.lastWing = s;
+    if (pad.hover) this.lastHover = s;
     return true;
   }
 
-  /** In the tube, a wing pad on its floor at dense index ``i`` if the road there is free and no other
+  /** In the tube, a hover pad on its floor at dense index ``i`` if the road there is free and no other
    * pad or jump is close. (Across the floor by where it is along the road: no draws from the race's
    * random numbers, so everything else is placed as it was.) */
-  private tryWing(track: Track, i: number, blocked: (s: number, len: number) => boolean): void {
+  private tryHover(track: Track, i: number, blocked: (s: number, len: number) => boolean): void {
     const s = track.s[i];
     if (blocked(s - 5, PAD_LEN + 10) || track.fromStart(i) <= 60 || this.padNear(s - 25, PAD_LEN + 50) ||
         this.rampNear(s - 20, PAD_LEN + 40)) return;
-    this.pads.push(this.wingPad(i, s));
-    this.lastWing = s;
+    this.pads.push(this.hoverPad(i, s));
+    this.lastHover = s;
   }
 
-  /** A wing pad at dense index ``i`` (arc length ``s``), in one of the floor's three lanes. */
-  private wingPad(i: number, s: number): Pad {
-    const lane = [0, -1, 1][Math.floor(s / 37) % 3];
-    return { start: i, s0: s, offset: lane * (HALF_WIDTH - PAD_HALF - 1.2), wing: true };
+  /** A hover pad at dense index ``i`` (arc length ``s``), in one of the floor's five lanes. */
+  private hoverPad(i: number, s: number): Pad {
+    const lane = [0, -1, 1, -2, 2][Math.floor(s / 37) % 5];
+    return { start: i, s0: s, offset: lane * TUBE_LANE, hover: true };
   }
 
-  /** On the locked lap, in the tube: a wing pad wherever the floor goes much more than WING_GAP
+  /** On the locked lap, in the tube: a hover pad wherever the floor goes much more than HOVER_GAP
    * without one, about halfway along that stretch (where the road is ``free`` and no other pad or
    * jump is close): the first spot clear past the middle, so neither half is short. Returns how many
    * it added. */
-  fillWings(track: Track, free: Free): number {
+  fillHovers(track: Track, free: Free): number {
     if (!this.tube || !track.locked) return 0;
     const L = track.length;
     let added = 0;
     for (let i = 8; i < track.count; i++) {
       const s = track.s[i], from = track.fromStart(i);
       if (from < 60 || from > L - 120) continue;
-      // the wing pads either side of here, round the lap (none yet: the whole lap is the stretch)
-      const at = this.pads.filter((p) => p.wing).map((p) => p.s0);
+      // the hover pads either side of here, round the lap (none yet: the whole lap is the stretch)
+      const at = this.pads.filter((p) => p.hover).map((p) => p.s0);
       const last = at.length ? Math.max(...at.map((w) => (w <= s ? w : w - L))) : s - L;
       const next = at.length ? Math.min(...at.map((w) => (w > s ? w : w + L))) : s + L;
-      if (next - last <= WING_GAP + 60 || s - last < (next - last) / 2 - 20 || next - s < WING_APART) continue;
+      if (next - last <= HOVER_GAP + 60 || s - last < (next - last) / 2 - 20 || next - s < HOVER_APART) continue;
       if (!free(s - 5, PAD_LEN + 10) || this.padNear(s - 25, PAD_LEN + 50) || this.rampNear(s - 20, PAD_LEN + 40) ||
           this.tunnelNear(s - 5, PAD_LEN + 10, 5)) continue;
-      this.pads.push(this.wingPad(i, s));
+      this.pads.push(this.hoverPad(i, s));
       added += 1;
     }
     this.pads.sort((a, b) => a.s0 - b.s0);
     return added;
   }
 
-  /** Whether a wing pad is within ``d`` m of arc length ``s`` (round a locked lap). */
-  private wingWithin(track: Track, s: number, d: number): boolean {
+  /** Whether a hover pad is within ``d`` m of arc length ``s`` (round a locked lap). */
+  private hoverWithin(track: Track, s: number, d: number): boolean {
     const L = track.locked ? track.length : Infinity;
     return this.pads.some((p) => {
       const g = Math.abs(p.s0 - s);
-      return p.wing && Math.min(g, L - g) < d;
+      return p.hover && Math.min(g, L - g) < d;
     });
   }
 
-  /** A pad: in the tube, one on the floor is a wing pad (the walls and the roof are for winged karts),
-   * unless another wing pad is nearer than WING_APART: then it is a plain boost pad. */
+  /** A pad: in the tube, one on the floor is a hover pad (the walls and the roof are for hovering karts),
+   * unless another hover pad is nearer than HOVER_APART: then it is a plain boost pad. */
   private pad(track: Track, start: number, s0: number, offset: number): Pad {
-    const wing = this.tube && Math.abs(offset) < TUBE_FLOOR && !this.wingWithin(track, s0, WING_APART);
-    return wing ? { start, s0, offset, wing: true } : { start, s0, offset };
+    const hover = this.tube && Math.abs(offset) < TUBE_FLOOR && !this.hoverWithin(track, s0, HOVER_APART);
+    return hover ? { start, s0, offset, hover: true } : { start, s0, offset };
   }
 
   /** Where across the road a pad goes: anywhere on it; in the tube, as often up a wall, and now and
-   * then on the ceiling (where only a winged kart going fast enough to loop can reach it). */
+   * then on the ceiling (where only a hovering kart going fast enough to loop can reach it). */
   private padOffset(rng: () => number): number {
     if (!this.tube) return (rng() * 2 - 1) * (HALF_WIDTH - PAD_HALF - 1.2); // (one draw, as ever, outside the tube)
     const side = rng() < 0.5 ? 1 : -1, r = rng();
-    if (r < 0.4) return (rng() * 2 - 1) * (HALF_WIDTH - PAD_HALF - 1.2);
+    if (r < 0.4) return (rng() * 2 - 1) * (TUBE_FLOOR - PAD_HALF - 2);
     if (r < 0.82) return side * (TUBE_FLOOR + 1.5 + rng() * (Math.PI * TUBE_R - 3));
     return side * (TUBE_FLOOR + Math.PI * TUBE_R + 3.2);
   }

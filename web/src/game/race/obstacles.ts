@@ -9,6 +9,7 @@
 import { Rand } from "../core/gfx";
 import { BANK_AT } from "../world/banks";
 import { HALF_WIDTH, type Track } from "../world/track";
+import { TUBE_LANE } from "../world/tube";
 import { CLASSES, type Kart } from "./kart";
 
 export type ObstacleKind = "cow" | "tumbleweed" | "jelly" | "police" | "geyser" | "wrecker" | "meteor" | "traffic";
@@ -512,11 +513,11 @@ export class Obstacles {
 
   private callTraffic(track: Track, ps: number): void {
     const cars = this.list.filter((o) => o.kind === "traffic");
-    if (cars.length >= 4) return;
+    if (cars.length >= 6) return;
     const far = Math.max(-1, ...cars.map((o) => this.ahead(track, ps, o.s)));
     const s = ps + Math.max(far + this.rng.range(60, 95), 160);
     if (!track.locked && s > (track.s[track.count - 1] ?? 0) - 20) return;
-    const lane = [-3.8, 0, 3.8][this.rng.int(0, 3)];
+    const lane = [-2, -1, 0, 1, 2][this.rng.int(0, 5)] * TUBE_LANE;
     const o = this.make("traffic", track, this.indexAt(track, s), lane);
     o.s = s;
     o.v = this.rng.range(12, 16.5);

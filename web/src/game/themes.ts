@@ -82,14 +82,15 @@ export const THEMES: Theme[] = [
   },
   {
     // a road tunnel under a harbor, as they are built: the whole race inside it (world/tube.ts), an
-    // asphalt road in three lanes between concrete walkways, walls faced with pale tiles to head
-    // height and bare concrete above and over the roof, a row of lights along the roof (render/
-    // tube.ts). Its walls are walls until a wing pad's wings: then ride up them, and fast enough
-    // right round over its roof, to the boost pads up there; traffic in the lanes to weave
-    // through, or winged, to ride the walls past. Its
-    // circuits are drawn bigger, and dreamed calmer, so the bends are wide enough to drive round
-    // the inside of
-    id: "tunnel", name: "HARBOR TUNNEL", blurb: "UNDER THE HARBOR: WING PADS TO RIDE THE WALLS AND LOOP THE ROOF",
+    // asphalt road in five lanes between concrete walkways, walls faced with pale tiles to head
+    // height and bare concrete above and over the roof, two rows of lights along the roof; stretches
+    // of glass over the tiles and across the roof, the harbor's water outside with fish going by, and
+    // of neon (render/tube.ts). Its walls are walls until a hover pad makes a kart a hover car (its
+    // wheels fold under it into glowing pods and it lifts off the road): then ride up them, and fast
+    // enough right round over its roof, to the boost pads up there; traffic in the lanes to weave
+    // through, or hovering, to ride the walls past. Its circuits are drawn bigger, and dreamed
+    // calmer, so the bends are wide enough to drive round the inside of
+    id: "tunnel", name: "HARBOR TUNNEL", blurb: "UNDER THE HARBOR: HOVER PADS TO RIDE THE WALLS, GLASS TO SEE THE SEA",
     skyTop: hex("#101114"), skyHorizon: hex("#26272b"), fog: hex("#121317"), sun: 0, stars: false,
     farHills: hex("#1c1d21"), nearHills: hex("#141518"), clouds: 0,
     ground: [hex("#5d5f63"), hex("#55575b")], groundSpeck: hex("#4c4e52"),

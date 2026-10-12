@@ -10,13 +10,13 @@ import { type FallKind, type Hazard, inHazard, placeHazards } from "../world/haz
 import { Scenery } from "../world/scenery";
 import { WorldTexture } from "../world/texture";
 import { FIRST_SEG, HALF_WIDTH, type Layout, N, SPACING, Track } from "../world/track";
-import { tubeAt } from "../world/tube";
+import { TUBE_FLOOR, tubeAt } from "../world/tube";
 import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
 import { Features, PAD_LEN, type Pad, RAMP_LEN, TUNNEL_LEN } from "./features";
 import { AIMED, AIM_MAX, AIM_RATE, type Field, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
 import { ALLEY_AT, ALLEY_DEPTH, type ObstacleSite, type ObstacleSound, Obstacles, alleyBlocks } from "./obstacles";
-import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, WALL_FALL_TILT, WING_TIME, collideKarts } from "./kart";
+import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, WALL_FALL_TILT, HOVER_TIME, collideKarts } from "./kart";
 import type { Standing } from "./odds";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
 import {
@@ -26,7 +26,7 @@ import { LIVERIES } from "../render/sprites";
 
 export const LAPS = 3;
 const FRONTIER_HOLD = 60; // m: below this much dreamed road ahead, speed is capped
-const WINGS_LOW = 2; // s of wings left when a player high on a wall of the tube is told to come down
+const HOVER_LOW = 2; // s of hover left when a player high on a wall of the tube is told to come down
 // over the line, the player's kart is driven on round its cool-down lap while the camera swings out
 // (main.ts): the results come up once everyone is in, but no sooner than FINISH_SHOW s after the
 // player's finish, and FINISH_WAIT s after it at the latest
@@ -62,10 +62,10 @@ export type RaceEvent =
   | { kind: "jump" } // the player left a ramp
   | { kind: "land"; trick: 0 | 1 | 2 } // and came down (with a trick grade)
   | { kind: "pad" } // the player hit a boost pad
-  | { kind: "wings"; first: boolean } // a wing pad (in the tunnel's tube): wings, for the walls and the roof
-  | { kind: "wingsOff" } // and they ran out
-  | { kind: "wingsLow" } // they are running out, and the player is up a wall where they will fall without them
-  | { kind: "needWings"; first: boolean } // the player drove at a wall of the tube without them
+  | { kind: "hover"; first: boolean } // a hover pad (in the tunnel's tube): hovering, for the walls and the roof
+  | { kind: "hoverOff" } // and it ran out
+  | { kind: "hoverLow" } // it is running out, and the player is up a wall where it will fall without it
+  | { kind: "needHover"; first: boolean } // the player drove at a wall of the tube without it
   | { kind: "rocket" } // a perfectly timed start
   | { kind: "burnout" } // throttle held too early: wheels spin at GO
   | { kind: "bridge" } // the dream crossed itself and built a bridge
@@ -177,8 +177,8 @@ export class Race {
   readonly type: TrackType;
   private readonly hillRule: HillRule | null; // climbs: the track type's, or the world's
   private aimPhase = 0; // where the player's aiming arrow is in its sweep
-  private winged = false; // the player has had a wing pad's wings this race
-  private wingHint = -Infinity; // race clock when the player was last told walls need wings
+  private hovered = false; // the player has hovered this race
+  private hoverHint = -Infinity; // race clock when the player was last told the walls need hover
   private bridgesSeen = 0;
   /** How the player is driving lap 1 (smoothed), which sets the style of the road ahead. */
   readonly driving = { speed: 0.7, offroad: 0, drift: 0, clean: 1 };
@@ -209,6 +209,10 @@ export class Race {
     };
     this.obstacles.wallAt = (s, side) => !!this.features.bankAt(s, side);
     this.items.gravity = GRAVITY * (setup.theme.gravity ?? 1);
+    if (setup.theme.tube) { // (the tube's floor: wider than a road, its foot of the walls the edge)
+      this.items.spread = TUBE_FLOOR / HALF_WIDTH;
+      this.items.edge = TUBE_FLOOR;
+    }
     // a map is a layout: each world draws it at its own scale (the moon's are bigger)
     const scale = setup.theme.scale ?? 1;
     if (setup.replay) {
@@ -301,7 +305,7 @@ export class Race {
       // and a pad on road lifted into the bridge would lie under its deck (pads are drawn on the
       // ground and on climbs, not on bridges): measured from its middle, as blocked() measures the
       // road a pad wants (from its start, the one put just clear of a bridge was taken away again,
-      // and in the tunnel that left 750 m of floor without a wing pad)
+      // and in the tunnel that left 750 m of floor without a hover pad)
       this.features.pads = this.features.pads.filter((pd) =>
         Math.abs(pd.s0 + PAD_LEN / 2 - under) >= UNDER_CLEAR && Math.abs(pd.s0 + PAD_LEN / 2 - b.centerS) >= BRIDGE_CLEAR);
       // and a climb where the bridge, or the road under it, goes would leave no headroom: flatten it
@@ -676,9 +680,9 @@ export class Race {
     this.scenery.items = this.scenery.items.filter((it) => (stand && it.x === stand.x && it.y === stand.y) ||
       !this.inBuilding(it.x, it.y, 1.5));
     this.confirm();
-    // (in the tunnel: wing pads wherever the lap went too long without one, a bridge's clearance
+    // (in the tunnel: hover pads wherever the lap went too long without one, a bridge's clearance
     // having taken one away, say)
-    this.features.fillWings(this.track, (s, len) => !this.blocked(s, len) && !this.kartsNear(s, len));
+    this.features.fillHovers(this.track, (s, len) => !this.blocked(s, len) && !this.kartsNear(s, len));
     // the world's hazard, beside the road, on the outside of the bends
     const kind = this.setup.theme.hazard;
     if (kind) {
@@ -750,13 +754,13 @@ export class Race {
     const controls = this.player.finished ? this.cooldown(dt, dangers) : playerControls;
     const wasAir = this.player.air, wasRocket = this.player.rocket > 0;
     const wasSunk = this.player.fall >= 0 && this.player.fall < FALL_SWAP;
-    const px = this.player.x, py = this.player.y, wingsWere = this.player.wings;
+    const px = this.player.x, py = this.player.y, hoverWas = this.player.hover;
     const { boosted, landed } = this.player.update(dt, controls, this.track, this.cls);
     const fell = this.offTheWall(this.player);
-    if (wingsWere > 0 && this.player.wings <= 0 && !fell) this.events.push({ kind: "wingsOff" });
-    // (two seconds of wings left, high on a wall or on the roof: time to come down)
-    if (wingsWere > WINGS_LOW && this.player.wings <= WINGS_LOW && this.player.wings > 0 && this.highUp(this.player)) {
-      this.events.push({ kind: "wingsLow" });
+    if (hoverWas > 0 && this.player.hover <= 0 && !fell) this.events.push({ kind: "hoverOff" });
+    // (two seconds of hover left, high on a wall or on the roof: time to come down)
+    if (hoverWas > HOVER_LOW && this.player.hover <= HOVER_LOW && this.player.hover > 0 && this.highUp(this.player)) {
+      this.events.push({ kind: "hoverLow" });
     }
     this.holdOffBuildings(this.player, px, py);
     if (boosted) this.events.push({ kind: "boost" });
@@ -772,16 +776,16 @@ export class Race {
     }
     this.obstacles.events = [];
     if (!this.player.falling) {
-      const was = { boost: this.player.boostTime, wings: this.player.wings };
+      const was = { boost: this.player.boostTime, hover: this.player.hover };
       const pad = this.padBoost(this.player);
-      if (pad?.wing && was.wings < WING_TIME - 0.5) {
-        this.events.push({ kind: "wings", first: !this.winged });
-        this.winged = true;
+      if (pad?.hover && was.hover < HOVER_TIME - 0.5) {
+        this.events.push({ kind: "hover", first: !this.hovered });
+        this.hovered = true;
       } else if (pad && was.boost < 0.85) this.events.push({ kind: "pad" });
-      // (at a wall without wings, now and then: what they need)
-      if (this.player.scraped && this.clock - this.wingHint > 6) {
-        this.events.push({ kind: "needWings", first: this.wingHint === -Infinity });
-        this.wingHint = this.clock;
+      // (at a wall without hover, now and then: what they need)
+      if (this.player.scraped && this.clock - this.hoverHint > 6) {
+        this.events.push({ kind: "needHover", first: this.hoverHint === -Infinity });
+        this.hoverHint = this.clock;
       }
     }
     // the aiming arrow sweeps left and right while an aimed item is ready, until a press locks it
@@ -883,16 +887,16 @@ export class Race {
     }
   }
 
-  /** Up a wall of the tube further than WALL_FALL_TILT, or on its roof, a kart whose wings have run
+  /** Up a wall of the tube further than WALL_FALL_TILT, or on its roof, a kart whose hover has run
    * out falls off it, onto its roof on the floor, and the drone comes for it (Kart.fallIn). Returns
    * whether it fell. (Lower down a wall, it slides back down to the floor.) */
   private offTheWall(k: Kart): boolean {
-    if (!k.tube || k.falling || k.air || k.rocket > 0 || k.wings > 0 || !this.highUp(k)) return false;
+    if (!k.tube || k.falling || k.air || k.rocket > 0 || k.hover > 0 || !this.highUp(k)) return false;
     this.fall(k, "wall");
     return true;
   }
 
-  /** Whether kart k is high enough up a wall of the tube (or on its roof) to fall without wings. */
+  /** Whether kart k is high enough up a wall of the tube (or on its roof) to fall without hover. */
   private highUp(k: Kart): boolean {
     return k.tube && Math.abs(tubeAt(k.offset).tilt) > WALL_FALL_TILT;
   }
@@ -917,13 +921,13 @@ export class Race {
     return OPEN_EDGES.has(style) ? 0 : null;
   }
 
-  /** A boost pad under the kart: a second of boost, and a wing pad's wings (the tunnel's tube).
+  /** A boost pad under the kart: a second of boost, and on a hover pad, hovering (the tunnel's tube).
    * Returns the pad. */
   private padBoost(k: Kart): Pad | null {
     const pad = this.features.padUnder(this.track, k);
     if (!pad) return null;
     k.boostTime = Math.max(k.boostTime, 1.0);
-    if (pad.wing) k.wings = WING_TIME;
+    if (pad.hover) k.hover = HOVER_TIME;
     return pad;
   }
 

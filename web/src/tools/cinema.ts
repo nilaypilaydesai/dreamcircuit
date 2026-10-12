@@ -5,7 +5,7 @@
 //     then that circuit raced in Dream Valley, from a crane up over the grid as the lights count
 //     down, a fly-by at GO and a trick off the jump in slow motion, to under its bridge; then the
 //     other seven worlds, every one (the valley too) five bars of the music, a caption naming
-//     each: what is in it (the tunnel's wing pads, a canyon, a coral ridge, an expressway, a
+//     each: what is in it (the tunnel's hover pads, a canyon, a coral ridge, an expressway, a
 //     girder, the Earth over the moon), the items as they are used, each named, an overtake, a
 //     drift, what gets in the way (traffic, the police, a wrecking ball, a jellyfish, a geyser)
 //     and the rescue drone lifting a kart out of quicksand, a chasm and the lava; the garage and
@@ -36,7 +36,7 @@ interface Kart {
   offset: number; fall: number; dropX: number; dropY: number; dropZ: number; // (the volcano's lava)
   slope: number; // how the road climbs under it
   staticT: number; // s left with a rival's static over its screen
-  wings: number; // s left with a wing pad's wings (the tunnel: its walls are for winged karts)
+  hover: number; // s left hovering from a hover pad (the tunnel: its walls are for hovering karts)
   rampU: number; // 0..1 up a jump's ramp, -1 off it
   driftDir: number; // which way it is drifting (1: left)
   spin: number; // s left spinning out (hit)
@@ -55,7 +55,7 @@ interface Track {
 interface Race {
   track: Track; player: Kart; standings: Kart[]; karts: Kart[]; phase: string; countdown: number;
   scenery: { items: { x: number; y: number; art: { solid: boolean } }[] };
-  features: { ramps: { start: number }[]; tunnels: { s0: number }[]; pads: { start: number; offset: number; wing?: boolean }[] };
+  features: { ramps: { start: number }[]; tunnels: { s0: number }[]; pads: { start: number; offset: number; hover?: boolean }[] };
   items: { blasts: unknown[]; rowS: number[]; comets: { phase: string; x: number; y: number; z: number; target: Kart | null }[] };
   aimPhase: number; // the player's aiming arrow (where it is in its sweep)
   obstacles: { list: { kind: string; state: number; t: number; wait: number; s: number; offset: number; idx: number; x: number; y: number;
@@ -100,7 +100,7 @@ export interface Variant { name: string; w: number; h: number; bitrate: number }
 
 export interface FilmOptions {
   url?: string; // capture server
-  figure8: number[]; // a figure-eight (game meters): the tunnel's wing pad and the loop round its roof
+  figure8: number[]; // a figure-eight (game meters): the tunnel's hover pad and the loop round its roof
   // ten plain loops: three for the items (Sunset Mesa, one with a canyon), the reef, the tunnel's
   // traffic, the valley, the volcano, the building site, the moon and Tokyo
   loops: number[][];
@@ -719,18 +719,18 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
   }
 
   // ================================================================ the Harbor Tunnel
-  // 6. Round the tube: over a wing pad (its walls are for winged karts), and on the gas (and a
+  // 6. Round the tube: over a hover pad (its walls are for hovering karts), and on the gas (and a
   //    boost), the player turns up the wall, holds a line slanting round over the roof and down the
   //    other wall, and straightens out on the floor; the chase camera rolls round with it.
   await start(o.figure8, THEME.tunnel, 7);
   {
     const pad = () => {
-      const k = race().player, wing = race().features.pads.filter((q) => q.wing);
-      return wing.sort((a, b) => ahead(k, a.start) - ahead(k, b.start))[0];
+      const k = race().player, pads = race().features.pads.filter((q) => q.hover);
+      return pads.sort((a, b) => ahead(k, a.start) - ahead(k, b.start))[0];
     };
     const near = () => {
       const k = race().player, q = pad();
-      return race().phase === "racing" && !!q && k.wings <= 0 && k.v > 20 && !k.air && ahead(k, q.start) / Math.max(k.v, 10) < 1.2;
+      return race().phase === "racing" && !!q && k.hover <= 0 && k.v > 20 && !k.air && ahead(k, q.start) / Math.max(k.v, 10) < 1.2;
     };
     await until(near, 60 * 60);
     let over = false, last = race().player.offset;
@@ -739,7 +739,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
     for (let f = 0; f < n; f++) {
       const k = race().player;
       let press: string[];
-      if (k.wings <= 0 && to) { // (on to the pad: aimed at its middle, a little way along it)
+      if (k.hover <= 0 && to) { // (on to the pad: aimed at its middle, a little way along it)
         const i = t.wrap(to.start + 5), [tx, ty] = t.tangent(i);
         const gx = t.xs[i] - ty * to.offset, gy = t.ys[i] + tx * to.offset;
         const aimAt = wrapAngle(Math.atan2(gy - k.y, gx - k.x) - k.heading);
@@ -757,7 +757,7 @@ export async function film(o: FilmOptions): Promise<Record<string, number>> {
       dc.shot({ clear: 2.5 });
       await save("n_loop", () => {
         caption("HARBOR TUNNEL", f);
-        banner("WING PADS", f, 30, 80);
+        banner("HOVER PADS", f, 30, 80);
       });
     }
   }

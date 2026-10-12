@@ -204,6 +204,10 @@ export class Items {
    * the road's surface is there, jump ramps and all (set by the race). */
   ground: ((x: number, y: number, hint: number) => { idx: number; h: number }) | null = null;
   gravity = GRAVITY; // m/s^2 for anything lobbed (low on the moon)
+  /** How much wider than a road the road is (the tube's floor: its boxes and coins spread across it). */
+  spread = 1;
+  /** m from the middle of the road to its edge, where a puck bounces back (the tube's floor is wider). */
+  edge = HALF_WIDTH;
   private nextRow = BOX_SPACING * 0.6; // first row a little after the start
   private nextCoins = BOX_SPACING * 0.6 + COIN_SPACING / 2;
   private readonly cooldown = new Map<ItemKind, number>();
@@ -220,14 +224,15 @@ export class Items {
         this.nextRow += BOX_SPACING;
         if (track.bridgeAt(i) > 0) continue; // never on a bridge's ramps (a climb is fine)
         this.rowS.push(track.s[i]);
-        for (const lane of BOX_LANES) {
+        for (const at of BOX_LANES) {
+          const lane = at * this.spread;
           this.boxes.push({ x: track.xs[i] - ty * lane, y: track.ys[i] + tx * lane, elev: track.elev[i], respawn: 0, idx: i });
         }
       } else if (s >= this.nextCoins) {
         // a short line of coins down one lane
         this.nextCoins += COIN_SPACING;
         if (track.bridgeAt(i) > 0) continue;
-        const lane = [-3.2, 0, 3.2][Math.floor(this.rng.next() * 3)];
+        const lane = [-3.2, 0, 3.2][Math.floor(this.rng.next() * 3)] * this.spread;
         for (let c = 0; c < 4; c++) {
           const j = i + Math.round((c * 3.2) / SPACING);
           if (j >= track.count) break;
@@ -773,7 +778,7 @@ export class Items {
         o.idx = track.nearest(o.x, o.y, o.idx);
       } else {
         if (!this.advance(o, track, step)) return false; // flew into the dream mist
-        const want = t ? Math.max(-HALF_WIDTH, Math.min(HALF_WIDTH, t.offset)) : o.offset;
+        const want = t ? Math.max(-this.edge, Math.min(this.edge, t.offset)) : o.offset;
         o.offset += (want - o.offset) * Math.min(1, dt * 1.5);
         const [tx, ty] = track.tangent(o.idx);
         o.x = track.xs[o.idx] - ty * o.offset;
@@ -813,7 +818,7 @@ export class Items {
         p.z = ground + (p.kind === "orb" ? 0.45 : 0.35);
       }
       // the edges of the road (the walls on raised road): bounce back in
-      const off = track.offset(p.x, p.y, p.idx), edge = ground > 0.8 ? HALF_WIDTH - 0.6 : HALF_WIDTH + 1.6;
+      const off = track.offset(p.x, p.y, p.idx), edge = ground > 0.8 ? this.edge - 0.6 : this.edge + (this.edge > HALF_WIDTH ? -0.6 : 1.6);
       if (Math.abs(off) > edge) {
         const [tx, ty] = track.tangent(p.idx);
         const nx = -ty, ny = tx, out = p.vx * nx + p.vy * ny; // left of the road is +n

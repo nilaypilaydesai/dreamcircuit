@@ -52,7 +52,7 @@ const INK = hex("#0b0b14");
 const HOT = hex("#ffd23f");
 const DREAM = hex("#c79bff");
 const DIM = hex("#8f87b8");
-const SKY = hex("#63c8ff"); // a wing pad's wings
+const SKY = hex("#63c8ff"); // a hover pad's glow
 const LOGO_ROWS = ["#ffe66d", "#ffd23f", "#ffb347", "#ff8c42", "#ff6b6b", "#f25f9c", "#c77dff", "#9d6bff"].map(hex);
 const MY_MAPS = 8; // the player's own maps kept
 const BACK_AIM = hex("#ffb347"); // the arrow sweeping behind the kart, in the mirror
@@ -672,15 +672,15 @@ class Game {
         if (e.trick === 2) { this.sound.trick(true); this.hud.popup("PERFECT TRICK!", now, HOT); }
         else if (e.trick === 1) { this.sound.trick(false); this.hud.popup("TRICK!", now, hex("#63c8ff")); }
       } else if (e.kind === "pad") this.sound.boost();
-      else if (e.kind === "wings") {
-        this.sound.wings();
-        if (e.first) this.hud.banner("WINGS!", now, SKY, 2.2, "RIDE THE WALLS: BE DOWN BEFORE THEY RUN OUT");
-        else this.hud.popup("WINGS!", now, SKY);
-      } else if (e.kind === "wingsOff") { this.sound.wingsOff(); this.hud.popup("WINGS GONE", now, DIM); }
-      else if (e.kind === "wingsLow") { this.sound.wingsLow(); this.hud.popup("WINGS LOW: GET DOWN!", now, HOT); }
-      else if (e.kind === "needWings") {
-        if (e.first) this.hud.banner("NO WINGS", now, SKY, 2.2, "THE BLUE PADS GIVE YOU WINGS");
-        else this.hud.popup("NEED WINGS!", now, SKY);
+      else if (e.kind === "hover") {
+        this.sound.hover();
+        if (e.first) this.hud.banner("HOVER!", now, SKY, 2.2, "RIDE THE WALLS: BE DOWN BEFORE IT RUNS OUT");
+        else this.hud.popup("HOVER!", now, SKY);
+      } else if (e.kind === "hoverOff") { this.sound.hoverOff(); this.hud.popup("HOVER GONE", now, DIM); }
+      else if (e.kind === "hoverLow") { this.sound.hoverLow(); this.hud.popup("HOVER LOW: GET DOWN!", now, HOT); }
+      else if (e.kind === "needHover") {
+        if (e.first) this.hud.banner("NO HOVER", now, SKY, 2.2, "THE BLUE PADS MAKE YOU HOVER");
+        else this.hud.popup("NEED HOVER!", now, SKY);
       }
       else if (e.kind === "rocket") { this.sound.rocket(); this.hud.popup("ROCKET START!", now, HOT); }
       else if (e.kind === "burnout") { this.sound.burnout(); this.hud.popup("TOO EARLY!", now, hex("#ff6b6b")); }
@@ -689,7 +689,7 @@ class Game {
       else if (e.kind === "fell") {
         if (e.into === "pond" || e.into === "trench" || e.into === "quicksand" || e.into === "canal") this.sound.splash();
         else this.sound.fall();
-        if (e.into === "wall") { this.sound.wingsOff(); this.hud.popup("OFF THE WALL!", now, hex("#ff6b6b")); }
+        if (e.into === "wall") { this.sound.hoverOff(); this.hud.popup("OFF THE WALL!", now, hex("#ff6b6b")); }
         this.shake = Math.max(this.shake, 0.25);
       }
       else if (e.kind === "aimLocked") this.sound.lock();
@@ -1141,7 +1141,7 @@ class Game {
       }
     }
     drawWorldSprites(scr, cam, race.scenery.items, race.karts, {
-      sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0, k.wings > 0),
+      sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0 ? "rocket" : k.hover > 0 ? "hover" : "kart"),
       sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
       held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
       art: (item: ItemKind) => this.held[item],

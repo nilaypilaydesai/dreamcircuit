@@ -5,7 +5,7 @@
 import { TUBE_LOOP_SPEED, TUBE_WALL_SPEED } from "../world/tube";
 import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
-import { type Kart, WING_TIME } from "../race/kart";
+import { type Kart, HOVER_TIME } from "../race/kart";
 import { LAPS, type Race } from "../race/race";
 import {
   AIMED, FLARES_TIME, GOLD_TIME, GRAB_TIME, ITEM_KINDS, ITEM_NAMES, type ItemKind, PHANTOM_TIME, PRISM_TIME, ROCKET_TIME,
@@ -125,10 +125,10 @@ export class Hud {
       const c = p.boostLevel === 2 ? hex("#ffb347") : p.boostLevel === 1 ? hex("#63c8ff") : SILVER;
       f.draw(scr, p.boostLevel ? "BOOST READY" : "DRIFT", 108, H - 12, { color: c, outline: INK });
     }
-    // in the tunnel's tube, winged (a wing pad's wings: the walls are for winged karts): how fast
+    // in the tunnel's tube, hovering (the walls are for hovering karts): how fast
     // is fast enough, to hold onto a wall and to loop right round over the ceiling (ticks on the
     // speed bar, words that light up), and a warning when the kart is sliding back down
-    if (race.setup.theme.tube && p.wings > 0) {
+    if (race.setup.theme.tube && p.hover > 0) {
       const v = Math.abs(p.v), top = race.cls.vmax * 1.28;
       for (const need of [TUBE_WALL_SPEED, TUBE_LOOP_SPEED]) scr.fillRect(11 + Math.round((90 * need) / top), H - 14, 1, 7, WHITE);
       // (lit, steady: flashing whenever the kart was fast enough to loop, which is most of a race,
@@ -171,8 +171,8 @@ export class Hud {
       f.draw(scr, lunge ? "DODGE!" : "POLICE", W / 2, WARN_Y, { color: red ? hex("#ff2a2a") : hex("#4a8cff"), outline: INK, align: "center" });
     }
     if (p.rocket > 0) this.meter(scr, "ROCKET", p.rocket / ROCKET_TIME, hex("#ff8a1f"));
-    else if (p.wings > 0) { // (flashing as they run out)
-      if (p.wings > 1.5 || Math.floor(now * 6) % 2 === 0) this.meter(scr, "WINGS", p.wings / WING_TIME, hex("#63c8ff"));
+    else if (p.hover > 0) { // (flashing as it runs out)
+      if (p.hover > 1.5 || Math.floor(now * 6) % 2 === 0) this.meter(scr, "HOVER", p.hover / HOVER_TIME, hex("#63c8ff"));
     } else if (p.prism > 0) this.meter(scr, "PRISM", p.prism / PRISM_TIME, hex("#c79bff"));
     else if (p.phantom > 0) this.meter(scr, "PHANTOM", p.phantom / PHANTOM_TIME, hex("#c9b8ff"));
     else if (p.gold > 0) this.meter(scr, "GOLD", p.gold / GOLD_TIME, GOLD);

@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Rand, hex } from "../src/game/core/gfx";
 import { RivalDriver } from "../src/game/race/ai";
-import { Features, PAD_LEN, RAMP_LEN, TUNNEL_LEN, WING_APART, WING_GAP } from "../src/game/race/features";
+import { Features, PAD_LEN, RAMP_LEN, TUNNEL_LEN, HOVER_APART, HOVER_GAP } from "../src/game/race/features";
 import {
   AIM_MAX, BOMB_BLAST, BOX_SPACING, COMET_BLAST, type Field, GOLD_TIME, HORN_R, ITEM_KINDS, ITEM_NAMES, Items, JACKPOT,
   ROCKET_TIME, ROULETTE, STATIC_TIME, rocketPasses,
@@ -13,7 +13,7 @@ import { ROCKET_GAP, type Standing, itemOdds, pickItem, tierOf } from "../src/ga
 import { heldArt, itemIcons } from "../src/game/render/sprites";
 import { Cup, type Entrant, POINTS } from "../src/game/race/cup";
 import {
-  CLASSES, COIN_SPEED, type ClassParams, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, TUBE_EDGE, WALL_TURN, WING_TIME, collideKarts,
+  CLASSES, COIN_SPEED, type ClassParams, FALL_RELEASE, FALL_SWAP, Kart, REVERSE_SPEED, TUBE_EDGE, WALL_TURN, HOVER_TIME, collideKarts,
 } from "../src/game/race/kart";
 import { CALM_BAND, TRACK_TYPES, type TrackTypeId, WILD_BAND, surpriseType, trackType } from "../src/game/race/tracktypes";
 import {
@@ -2832,6 +2832,14 @@ describe("what gets in the way", () => {
   });
 });
 
+/** The curvature (1/m) of a circuit's tightest bend, at the scale its points are given in. */
+function tightest(pts: Float64Array): number {
+  const t = Track.fromPoints(pts);
+  let worst = 0;
+  for (let k = 0; k < t.count; k++) worst = Math.max(worst, Math.abs(t.curvature(k)));
+  return worst;
+}
+
 describe("the tunnel", () => {
   const tunnel = THEMES.find((t) => t.id === "tunnel")!;
 
@@ -2846,10 +2854,10 @@ describe("the tunnel", () => {
     const a = tubeAt(TUBE_HALF), b = tubeAt(-TUBE_HALF);
     expect(Math.hypot(a.lat - b.lat, a.z - b.z)).toBeLessThan(1e-9);
     expect(tubeAt(0)).toEqual({ lat: 0, z: 0, tilt: 0 });
-    expect(Math.abs(tubeAt(HALF_WIDTH).lat)).toBeCloseTo(HALF_WIDTH, 6);
+    expect(Math.abs(tubeAt(TUBE_FLOOR).lat)).toBeCloseTo(TUBE_FLOOR, 6);
     expect(tubeAt(TUBE_HALF).z).toBeCloseTo(2 * TUBE_R, 6);
     expect(holdSpeed(0)).toBe(0);
-    expect(holdSpeed(HALF_WIDTH + 2)).toBeLessThan(TUBE_WALL_SPEED);
+    expect(holdSpeed(TUBE_FLOOR + 2)).toBeLessThan(TUBE_WALL_SPEED);
     expect(holdSpeed(TUBE_HALF - 2)).toBe(TUBE_LOOP_SPEED);
   });
 
@@ -2858,24 +2866,24 @@ describe("the tunnel", () => {
     const at = (u: number, v: number, throttle: number) => {
       const k = new Kart(0, "K", 0, true);
       k.tube = true;
-      k.wings = 99;
+      k.hover = 99;
       k.placeOn(t, 300, u);
       k.v = v;
       for (let i = 0; i < 60; i++) k.update(1 / 60, { steer: 0, throttle, brake: 0, drift: false }, t, CLASSES.legend);
       return k;
     };
-    expect(at(HALF_WIDTH + 4, TUBE_WALL_SPEED + 6, 1).offset).toBeGreaterThan(HALF_WIDTH + 2.5); // holds the wall
-    expect(at(HALF_WIDTH + 4, 3, 0).offset).toBeLessThan(HALF_WIDTH + 1.5); // too slow: down it slides
+    expect(at(TUBE_FLOOR + 4, TUBE_WALL_SPEED + 6, 1).offset).toBeGreaterThan(TUBE_FLOOR + 2.5); // holds the wall
+    expect(at(TUBE_FLOOR + 4, 3, 0).offset).toBeLessThan(TUBE_FLOOR + 1.5); // too slow: down it slides
     expect(Math.abs(at(TUBE_HALF - 3, TUBE_LOOP_SPEED + 4, 1).offset)).toBeGreaterThan(TUBE_HALF - 6); // on the ceiling
     expect(Math.abs(at(TUBE_HALF - 3, TUBE_LOOP_SPEED - 9, 0).offset)).toBeLessThan(TUBE_HALF - 8); // peels off
     // steering round and round at speed: over the ceiling and back down the other wall to the floor
     const k = new Kart(0, "K", 0, true);
     k.tube = true;
-    k.wings = 99;
+    k.hover = 99;
     k.placeOn(t, 200, 0);
     k.v = 30;
     let most = 0, wrapped = false, last = 0;
-    for (let i = 0; i < 60 * 6 && !(wrapped && Math.abs(k.offset) < HALF_WIDTH); i++) {
+    for (let i = 0; i < 60 * 6 && !(wrapped && Math.abs(k.offset) < TUBE_FLOOR); i++) {
       k.boostTime = 1;
       k.update(1 / 60, { steer: 0.55, throttle: 1, brake: 0, drift: false }, t, CLASSES.legend);
       most = Math.max(most, Math.abs(k.offset));
@@ -2884,19 +2892,19 @@ describe("the tunnel", () => {
     }
     expect(most).toBeGreaterThan(TUBE_HALF - 1);
     expect(wrapped).toBe(true);
-    expect(Math.abs(k.offset)).toBeLessThan(HALF_WIDTH); // all the way round, back on the floor
+    expect(Math.abs(k.offset)).toBeLessThan(TUBE_FLOOR); // all the way round, back on the floor
   });
 
-  it("keeps a kart without wings off its walls, and brings one down when its wings run out", () => {
-    // (its walls are only for winged karts: the foot of each is a wall to the rest, as a tunnel's is)
+  it("keeps a kart without hover off its walls, and brings one down when its hover runs out", () => {
+    // (its walls are only for hovering karts: the foot of each is a wall to the rest, as a tunnel's is)
     const t = Track.fromPoints(calm());
     const go = { throttle: 1, brake: 0, drift: false };
     for (const way of [1, -1]) {
-      // driven hard at a wall: stopped at its foot, scraping along it; winged, right up it
-      const at = (wings: number) => {
+      // driven hard at a wall: stopped at its foot, scraping along it; hovering, right up it
+      const at = (hover: number) => {
         const k = new Kart(0, "K", 0, true);
         k.tube = true;
-        k.wings = wings;
+        k.hover = hover;
         k.placeOn(t, 300, 0);
         k.heading += way * 0.5;
         k.v = 25;
@@ -2909,24 +2917,24 @@ describe("the tunnel", () => {
         }
         return { most, scraped };
       };
-      const plain = at(0), winged = at(99);
+      const plain = at(0), hovering = at(99);
       expect(plain.most).toBeLessThanOrEqual(TUBE_EDGE + 1e-9);
       expect(plain.scraped).toBe(true);
-      expect(winged.most).toBeGreaterThan(TUBE_FLOOR + 4);
-      expect(winged.scraped).toBe(false);
-      // up a wall, and on the roof, when its wings run out: down it comes, never higher, steering up
+      expect(hovering.most).toBeGreaterThan(TUBE_FLOOR + 4);
+      expect(hovering.scraped).toBe(false);
+      // up a wall, and on the roof, when its hover runs out: down it comes, never higher, steering up
       // it or not, however fast
-      for (const u of [HALF_WIDTH + 6, TUBE_HALF - 3]) {
+      for (const u of [TUBE_FLOOR + 6, TUBE_HALF - 3]) {
         const r = new Kart(0, "K", 0, true);
         r.tube = true;
-        r.wings = 0.1;
+        r.hover = 0.1;
         r.placeOn(t, 300, way * u);
         r.v = 30;
         let prev = u, rose = 0;
-        for (let i = 0; i < 60 * 4; i++) {
+        for (let i = 0; i < 60 * 6; i++) { // (from the roof of the wide tube, 30 m of tube to slide down)
           r.boostTime = 1;
           r.update(1 / 60, { ...go, steer: way }, t, CLASSES.legend);
-          if (r.wings <= 0 && Math.abs(r.offset) > TUBE_EDGE) rose = Math.max(rose, Math.abs(r.offset) - prev); // (up a wall)
+          if (r.hover <= 0 && Math.abs(r.offset) > TUBE_EDGE) rose = Math.max(rose, Math.abs(r.offset) - prev); // (up a wall)
           prev = Math.abs(r.offset);
         }
         expect(rose, `from ${u.toFixed(1)} m round`).toBeLessThanOrEqual(1e-9);
@@ -2949,8 +2957,8 @@ describe("the tunnel", () => {
       // steering hard up the wall at speed: round over the roof all the same, on a spiral
       const k = new Kart(0, "K", 0, true);
       k.tube = true;
-      k.wings = 99;
-      k.placeOn(t, 200, way * (HALF_WIDTH + 3));
+      k.hover = 99;
+      k.placeOn(t, 200, way * (TUBE_FLOOR + 3));
       k.v = 30;
       let most = 0, high = 0;
       for (let i = 0; i < 60 * 4 && !(high > TUBE_HALF - 1 && Math.abs(k.offset) < TUBE_FLOOR); i++) {
@@ -2965,8 +2973,8 @@ describe("the tunnel", () => {
       // turned up the wall and let go: it straightens out and rides the wall along
       const r = new Kart(0, "K", 0, true);
       r.tube = true;
-      r.wings = 99;
-      r.placeOn(t, 300, way * (HALF_WIDTH + 3));
+      r.hover = 99;
+      r.placeOn(t, 300, way * (TUBE_FLOOR + 3));
       r.heading += way * 0.6;
       r.v = 30;
       for (let i = 0; i < 90; i++) {
@@ -2978,7 +2986,7 @@ describe("the tunnel", () => {
       // and off the floor onto a wall turned further round than that: turned in to it, at no snap
       const s = new Kart(0, "K", 0, true);
       s.tube = true;
-      s.wings = 99;
+      s.hover = 99;
       s.placeOn(t, 300, way * (TUBE_FLOOR - 0.4));
       s.heading += way * 1.2;
       s.v = 22;
@@ -3007,7 +3015,7 @@ describe("the tunnel", () => {
         for (const side of [1, -1]) {
           const k = new Kart(0, "K", 0, true);
           k.tube = true;
-          k.wings = 99;
+          k.hover = 99;
           k.placeOn(t, i0, side * (TUBE_HALF - 0.6));
           k.heading += side * 0.7; // (turned toward the middle of the roof, to go over it)
           k.v = 30;
@@ -3034,16 +3042,18 @@ describe("the tunnel", () => {
     // (the race's flat terms stretch the road's length away from its middle on a bend: unmeasured,
     // a kart on the ceiling went two and a half times as fast round the inside of a bend)
     const { tubeSpot } = await import("../src/game/render/tube");
-    const t = Track.fromPoints(calm().map((v) => v * 3.5)); // (bends wide enough to loop round inside)
+    // (bends wide enough to loop round inside: drawn so big its tightest is near twice as wide as the
+    // tube is round, so even the roof's middle is far from squeezed)
+    const t = Track.fromPoints(calm().map((v) => v * tightest(calm()) * (TUBE_HALF - 3) / 0.55));
     let i = 0, worst = 0;
     for (let k = 0; k < t.count; k++) {
       const c = Math.abs(t.curvature(k));
       if (c > worst) { worst = c; i = k; }
     }
-    for (const u of [0, HALF_WIDTH + 6, TUBE_HALF - 3, -(HALF_WIDTH + 6), -(TUBE_HALF - 3)]) {
+    for (const u of [0, TUBE_FLOOR + 6, TUBE_HALF - 3, -(TUBE_FLOOR + 6), -(TUBE_HALF - 3)]) {
       const k = new Kart(0, "K", 0, true);
       k.tube = true;
-      k.wings = 99;
+      k.hover = 99;
       k.placeOn(t, t.wrap(i - 20), u);
       k.v = 25;
       let went = 0, said = 0, prev = tubeSpot(t, k.x, k.y, k.elev, k.idx).p;
@@ -3061,8 +3071,9 @@ describe("the tunnel", () => {
 
   it("lets no kart hold on high up round the inside of a bend too tight for it", () => {
     // (there the race's flat terms fold over themselves, and a kart on the ceiling jumped about;
-    // a circuit drawn twice the size has a bend that tight, but not so tight it has folded yet)
-    const t = Track.fromPoints(calm().map((v) => v * 2));
+    // a circuit drawn so its tightest bend is that tight round the roof, but not so tight it has
+    // folded yet)
+    const t = Track.fromPoints(calm().map((v) => v * tightest(calm()) * (TUBE_HALF - 3) / 0.85));
     let i = 0, worst = 0;
     for (let k = 0; k < t.count; k++) {
       const c = Math.abs(t.curvature(k));
@@ -3072,7 +3083,7 @@ describe("the tunnel", () => {
     expect(u).toBeDefined();
     const k = new Kart(0, "K", 0, true);
     k.tube = true;
-    k.wings = 99;
+    k.hover = 99;
     k.placeOn(t, i, u);
     k.v = TUBE_LOOP_SPEED + 8; // (fast enough to hold on anywhere else)
     k.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false }, t, CLASSES.legend);
@@ -3084,7 +3095,7 @@ describe("the tunnel", () => {
     const { tubeSpot } = await import("../src/game/render/tube");
     const t = Track.fromPoints(calm());
     const i = 400, [tx, ty] = t.tangent(i);
-    for (const u of [2, HALF_WIDTH + 5, TUBE_HALF - 2]) {
+    for (const u of [2, TUBE_FLOOR + 5, TUBE_HALF - 2]) {
       let prev: number[] | null = null, most = 0, least = Infinity;
       for (let m = 0; m < 3; m += 0.05) {
         const q = tubeSpot(t, t.xs[i] + tx * m - ty * u, t.ys[i] + ty * m + tx * u, 0, i).p;
@@ -3100,16 +3111,16 @@ describe("the tunnel", () => {
     }
   });
 
-  it("puts pads up its walls and on its ceiling, wing pads on its floor, traffic on its floor, and rivals race it to the end", async () => {
+  it("puts pads up its walls and on its ceiling, hover pads on its floor, traffic on its floor, and rivals race it to the end", async () => {
     let up = 0, ceiling = 0, pads = 0, wing = 0;
     for (const seed of [1, 2, 3]) {
       const race = new Race({ rivals: 3, difficulty: "pro", theme: tunnel, seed, replay: calm(), trackType: "speedway" }, null, () => {});
       for (const p of race.features.pads) {
         pads++;
-        if (Math.abs(p.offset) > HALF_WIDTH) up++;
-        if (Math.abs(p.offset) > HALF_WIDTH + Math.PI * TUBE_R) ceiling++;
-        if (p.wing) wing++;
-        if (p.wing) expect(Math.abs(p.offset)).toBeLessThan(TUBE_FLOOR); // (wing pads are on the floor, and only there)
+        if (Math.abs(p.offset) > TUBE_FLOOR) up++;
+        if (Math.abs(p.offset) > TUBE_FLOOR + Math.PI * TUBE_R) ceiling++;
+        if (p.hover) wing++;
+        if (p.hover) expect(Math.abs(p.offset)).toBeLessThan(TUBE_FLOOR); // (hover pads are on the floor, and only there)
       }
       expect(race.scenery.items.length).toBe(0); // nothing outside the tube
       expect(race.tex.size).toBeLessThan(512);
@@ -3118,10 +3129,10 @@ describe("the tunnel", () => {
     expect(up).toBeGreaterThan(0);
     expect(wing).toBeGreaterThan(0);
     expect(ceiling).toBeGreaterThanOrEqual(0);
-    // (and no wing pads anywhere else)
+    // (and no hover pads anywhere else)
     const home = new Race({ rivals: 0, difficulty: "pro", theme: THEMES[0], seed: 1, replay: calm() }, null, () => {});
     expect(home.features.pads.length).toBeGreaterThan(0);
-    expect(home.features.pads.some((p) => p.wing)).toBe(false);
+    expect(home.features.pads.some((p) => p.hover)).toBe(false);
     const race = new Race({ rivals: 3, difficulty: "pro", theme: tunnel, seed: 4, replay: calm() }, null, () => {});
     await race.prepare();
     const pilot = new RivalDriver(new Rand(2), race.player, 0);
@@ -3136,41 +3147,41 @@ describe("the tunnel", () => {
     expect(race.karts.filter((k) => k.finished).length).toBeGreaterThan(2);
   });
 
-  it("gives wings on its wing pads, every lap's worth of them, and rivals go for them and ride the walls", async () => {
+  it("gives hover on its hover pads, every lap's worth of them, and rivals go for them and ride the walls", async () => {
     const race = new Race({ rivals: 5, difficulty: "pro", theme: tunnel, seed: 5, replay: calm() }, null, () => {});
     await race.prepare();
-    // (its bends are wide: wing pads all the way round, not only at the corner exits)
-    // (and spread out: one at least every WING_GAP m or so, none nearer another than WING_APART;
+    // (its bends are wide: hover pads all the way round, not only at the corner exits)
+    // (and spread out: one at least every HOVER_GAP m or so, none nearer another than HOVER_APART;
     // 300 m apart, with the corner exits' between, the walls were somewhere to live)
-    const wings = race.features.pads.filter((q) => q.wing).map((q) => q.s0).sort((a, b) => a - b), L = race.track.length;
-    expect(wings.length).toBeGreaterThanOrEqual(Math.floor(L / (WING_GAP + 60)));
-    for (let n = 0; n < wings.length; n++) {
-      const gap = n + 1 < wings.length ? wings[n + 1] - wings[n] : wings[0] + L - wings[n];
-      expect(gap).toBeGreaterThanOrEqual(WING_APART);
-      expect(gap).toBeLessThan(WING_GAP + 61);
+    const hovers = race.features.pads.filter((q) => q.hover).map((q) => q.s0).sort((a, b) => a - b), L = race.track.length;
+    expect(hovers.length).toBeGreaterThanOrEqual(Math.floor(L / (HOVER_GAP + 60)));
+    for (let n = 0; n < hovers.length; n++) {
+      const gap = n + 1 < hovers.length ? hovers[n + 1] - hovers[n] : hovers[0] + L - hovers[n];
+      expect(gap).toBeGreaterThanOrEqual(HOVER_APART);
+      expect(gap).toBeLessThan(HOVER_GAP + 61);
     }
-    // driven onto one: wings (and a word about them the first time), until they run out
+    // driven onto one: hover (and a word about them the first time), until they run out
     race.phase = "racing";
-    const t = race.track, p = race.player, pad = race.features.pads.find((q) => q.wing)!;
+    const t = race.track, p = race.player, pad = race.features.pads.find((q) => q.hover)!;
     p.placeOn(t, t.wrap(pad.start + 2), pad.offset);
     p.v = 20;
     const seen: string[] = [];
     const step = (c: { steer: number; throttle: number; brake: number; drift: boolean }) => {
       race.update(1 / 60, c);
-      seen.push(...race.events.map((e) => (e.kind === "wings" ? `wings:${e.first}` : e.kind)));
+      seen.push(...race.events.map((e) => (e.kind === "hover" ? `hover:${e.first}` : e.kind)));
       race.events = [];
     };
     step({ steer: 0, throttle: 1, brake: 0, drift: false });
-    expect(p.wings).toBeGreaterThan(WING_TIME - 0.1);
-    expect(seen).toContain("wings:true");
-    for (let i = 0; i < 60 * (WING_TIME + 0.5); i++) step({ steer: 0, throttle: 0, brake: 1, drift: false }); // (stopped short of the next)
-    expect(p.wings).toBe(0);
-    expect(seen).toContain("wingsOff");
-    // a race of it: the rivals take wings too, and with them, and only with them, they go up the walls
+    expect(p.hover).toBeGreaterThan(HOVER_TIME - 0.1);
+    expect(seen).toContain("hover:true");
+    for (let i = 0; i < 60 * (HOVER_TIME + 0.5); i++) step({ steer: 0, throttle: 0, brake: 1, drift: false }); // (stopped short of the next)
+    expect(p.hover).toBe(0);
+    expect(seen).toContain("hoverOff");
+    // a race of it: the rivals take hover too, and with them, and only with them, they go up the walls
     const again = new Race({ rivals: 5, difficulty: "pro", theme: tunnel, seed: 5, replay: calm() }, null, () => {});
     await again.prepare();
     const pilot = new RivalDriver(new Rand(2), again.player, 0);
-    const winged = new Set<Kart>(), was = new Map<Kart, number>();
+    const hovering = new Set<Kart>(), was = new Map<Kart, number>();
     let flying = 0, up = 0, rose = 0, fell = 0;
     for (let i = 0; i < 60 * 300 && again.phase !== "done"; i++) {
       again.update(1 / 60, pilot.act(1 / 60, again.track, again.cls, again.player, again.karts, again.items,
@@ -3178,21 +3189,21 @@ describe("the tunnel", () => {
       again.events = [];
       for (const k of again.karts) {
         const a = Math.abs(k.offset);
-        if (k.wings > 0 && !k.isPlayer) winged.add(k);
-        if (k.wings > 0) flying++;
-        if (k.wings > 0 && a > TUBE_FLOOR + 1.5) up++;
-        if (k.wings <= 0 && a > TUBE_EDGE + 1e-6 && !k.inside) rose = Math.max(rose, a - (was.get(k) ?? a)); // (coming down, never up)
+        if (k.hover > 0 && !k.isPlayer) hovering.add(k);
+        if (k.hover > 0) flying++;
+        if (k.hover > 0 && a > TUBE_FLOOR + 1.5) up++;
+        if (k.hover <= 0 && a > TUBE_EDGE + 1e-6 && !k.inside) rose = Math.max(rose, a - (was.get(k) ?? a)); // (coming down, never up)
         if (k.fallKind === "wall" && k.fall >= 0 && k.fall < 1.5 / 60) fell++;
         was.set(k, a);
       }
     }
-    expect(winged.size).toBe(5);
-    expect(up / flying).toBeGreaterThan(0.15); // (riding the walls: winged, they had kept to the floor, up one 2% of the time)
+    expect(hovering.size).toBe(5);
+    expect(up / flying).toBeGreaterThan(0.15); // (riding the walls: hovering, they had kept to the floor, up one 2% of the time)
     expect(rose).toBeLessThanOrEqual(1e-9);
-    expect(fell).toBe(0); // (they come back down before their wings run out: off a wall without them, a kart falls)
+    expect(fell).toBe(0); // (they come back down before their hover runs out: off a wall without it, a kart falls)
   });
 
-  it("drops a kart whose wings run out high on a wall or on the roof: onto its roof, and the drone sets it back on the floor", async () => {
+  it("drops a kart whose hover runs out high on a wall or on the roof: onto its roof, and the drone sets it back on the floor", async () => {
     // (lower down a wall it slides back down to the floor, as ever)
     const race = new Race({ rivals: 0, difficulty: "pro", theme: tunnel, seed: 2, replay: calm() }, null, () => {});
     await race.prepare();
@@ -3202,12 +3213,12 @@ describe("the tunnel", () => {
       p.placeOn(t, i0, u);
       p.fall = -1;
       p.inside = null;
-      p.wings = 0.05;
+      p.hover = 0.05;
       p.v = 26;
       const seen: string[] = [];
       let roof = false, lowest = Infinity, landed = Infinity;
       for (let i = 0; i < 60 * 4; i++) {
-        p.boostTime = 1; // (fast enough to hold on anywhere, but for the wings)
+        p.boostTime = 1; // (fast enough to hold on anywhere, but for the hover)
         race.update(1 / 60, { steer: 0, throttle: 1, brake: 0, drift: false });
         seen.push(...race.events.map((e) => (e.kind === "fell" ? `fell:${e.into}` : e.kind)));
         race.events = [];
@@ -3223,7 +3234,7 @@ describe("the tunnel", () => {
     for (const u of [TUBE_FLOOR + 0.3 * Math.PI * TUBE_R, TUBE_FLOOR + 0.75 * Math.PI * TUBE_R, TUBE_HALF - 2, -(TUBE_HALF - 2)]) {
       const r = ride(u);
       expect(r.seen, `from ${u.toFixed(1)} m round`).toContain("fell:wall");
-      expect(r.seen).not.toContain("wingsOff"); // (the fall says it)
+      expect(r.seen).not.toContain("hoverOff"); // (the fall says it)
       expect(r.roof, `from ${u.toFixed(1)} m round`).toBe(true); // down on its roof on the floor
       expect(r.lowest).toBeGreaterThan(-0.01); // (never through the floor, however it is turned)
       expect(r.landed, `from ${u.toFixed(1)} m round`).toBeLessThan(0.01); // let go over the middle of the floor
@@ -3235,12 +3246,12 @@ describe("the tunnel", () => {
     // just up a wall: no fall, it slides back down
     const low = ride(TUBE_FLOOR + 0.15 * Math.PI * TUBE_R);
     expect(low.seen).not.toContain("fell:wall");
-    expect(low.seen).toContain("wingsOff");
+    expect(low.seen).toContain("hoverOff");
     expect(Math.abs(p.offset)).toBeLessThanOrEqual(TUBE_EDGE + 1e-9);
-    // warned first: two seconds of wings left, high up
+    // warned first: two seconds of hover left, high up
     p.placeOn(t, i0, TUBE_HALF - 2);
     p.fall = -1;
-    p.wings = 2.1;
+    p.hover = 2.1;
     p.v = 26;
     const told: string[] = [];
     for (let i = 0; i < 30; i++) {
@@ -3249,7 +3260,7 @@ describe("the tunnel", () => {
       told.push(...race.events.map((e) => e.kind));
       race.events = [];
     }
-    expect(told).toContain("wingsLow");
+    expect(told).toContain("hoverLow");
   });
 });
 

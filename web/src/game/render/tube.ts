@@ -1,10 +1,14 @@
 // The harbor tunnel, drawn as road tunnels are built: the tube round the road (world/tube.ts) as
-// rings of panels in sections of lining, an asphalt road in three lanes with white edge lines,
+// rings of panels in sections of lining, an asphalt road in five lanes with white edge lines,
 // dashed lane lines and amber cat's eyes, a concrete walkway along each side, the walls faced with
 // pale tiles to head height under a dark cable tray and bare concrete above, a concrete roof with
-// a row of lights down its middle (each throwing a pool of light on the road below), lane signals
-// on the roof, the start line's checks on the road, and boost pads wherever they lie round the
-// tube (the road, a wall, the roof; the wing pads on the floor). Only the stretch of tube ahead of
+// two rows of lights (each throwing a pool of light on the road below), lane signals on the roof,
+// the start line's checks on the road, and boost pads wherever they lie round the tube (the road, a
+// wall, the roof; the hover pads on the floor, a hover car on each). Along the lap the lining
+// changes (world/tube.ts): stretches of glass over the tiles and across the roof, the harbor's water
+// outside with the light coming down through it and fish going by, and stretches of neon, dark
+// tiles under strips of coloured light; and on the outside wall of every bend, chevrons point the
+// way round. Only the stretch of tube ahead of
 // the camera is drawn, and where the circuit crosses itself the other stretch is left out (from
 // inside the tube it is never seen, and drawn it would show through the walls). Everything is
 // placed between road points where it lies, not snapped to the nearest one.
@@ -13,27 +17,37 @@ import { hex, mix, shade } from "../core/gfx";
 import { PAD_HALF, PAD_LEN, type Features } from "../race/features";
 import type { Theme } from "../themes";
 import { SPACING, type Track } from "../world/track";
-import { TUBE_FLOOR, TUBE_HALF, TUBE_R, TUBE_ROUND, tubeAt, wrapTube } from "../world/tube";
+import { TUBE_FLOOR, TUBE_HALF, TUBE_LANE, TUBE_R, TUBE_ROUND, TUBE_ZONE, type TubeZone, tubeAt, tubeZone, wrapTube } from "../world/tube";
 import { type P3, type Painter, face } from "./poly";
 
 const ARC = Math.PI * TUBE_R; // m round each wall, from the road's edge to the roof
 const WALL_END = TUBE_FLOOR + ARC;
-const WALK = 0.7; // m of walkway along each side of the road
-const EDGE = TUBE_FLOOR - WALK - 0.3; // m from the middle to each edge line
-const LANE = 1.9; // m from the middle to each lane line (three lanes)
-const TILED = 2; // of each wall's six facets, how many from the walkway up are tiled
-const TILE_TOP = TUBE_FLOOR + (TILED / 6) * ARC;
+const EDGE = 2.5 * TUBE_LANE; // m from the middle to each edge line (five lanes)
+const WALK = TUBE_FLOOR - EDGE - 0.3; // m of walkway along each side of the road
+const LANES = [-1.5, -0.5, 0.5, 1.5].map((k) => k * TUBE_LANE); // the lane lines
+const FACETS = 8; // facets round each wall
+const TILED = 2; // of them, how many from the walkway up are tiled (to head height)
+const TILE_TOP = TUBE_FLOOR + (TILED / FACETS) * ARC;
+const ROOF_LAMPS = [-4.5, 4.5]; // m either side of the roof's middle: its two rows of lights
 /** How far round from the road's middle the roof is right over a point ``lat`` m left of it. */
 const roofOver = (lat: number) => (lat >= 0 ? 1 : -1) * (WALL_END + TUBE_FLOOR - Math.abs(lat));
 /** The ring's corners, m round the tube from the road's middle (rising past TUBE_HALF: on round). */
 const RING: number[] = (() => {
   const half = [0, 2, TUBE_FLOOR - WALK, TUBE_FLOOR];
-  for (let k = 1; k <= 6; k++) half.push(TUBE_FLOOR + (k / 6) * ARC);
+  for (let k = 1; k <= FACETS; k++) half.push(TUBE_FLOOR + (k / FACETS) * ARC);
   half.push((WALL_END + TUBE_HALF) / 2, TUBE_HALF);
   const back = half.slice(0, -1).reverse().map((u) => TUBE_ROUND - u); // down the other side, round to the start
   return [...half, ...back];
 })();
 const LAMP = hex("#fff2cc"), EYE = hex("#ffb52e"), SIGNAL = hex("#141518"), ARROW = hex("#3be27a");
+// the glass: the water outside, deep at the walls and lighter over the roof, where the light comes
+// down through it; the frames between the panes; the fish going by; and the lamps there, cooler
+const DEEP = hex("#0a3550"), SHALLOW = hex("#2b86a8"), FRAME = hex("#1b2430"), FISH = hex("#08202e"), GLASS_LAMP = hex("#d6f6ff");
+// neon: dark tiles, a strip of light along each wall at the top of the tiles and another higher up
+const NEON = [hex("#ff3ec8"), hex("#2ee6ff")], NEON_LAMP = hex("#ffb8ee");
+const CHEVRON = hex("#ffd23f"), CHEVRON_BACK = hex("#16171b");
+/** The lamps' light in each lining. */
+const LAMP_OF: Record<TubeZone, number> = { tiles: LAMP, glass: GLASS_LAMP, neon: NEON_LAMP };
 const SEEN = 260; // m of tube drawn ahead of the camera (past the far plane, where the fog is whole: drawn
 // short of it, the far end of a straight showed as a dark disc with an edge)
 // (the panels are the backdrop to all else in the tube: sorted 7 m deeper than they are, so a
@@ -219,16 +233,25 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
   marks();
   pads(p, track, f, from, now, dir);
   startLine(p, track, s0);
+  glass(p, track, from, s0, behind * 0.6, dir, now, out);
+  chevrons(p, track, from, s0, dir, out);
 
   function piece(i: number, j: number, ahead: number): void {
-    const section = Math.floor(i / 12) & 1;
+    const section = Math.floor(i / 12) & 1, zone = tubeZone(track.s[i]);
     for (let k = 0; k < RING.length - 1; k++) {
       const u0 = RING[k], u1 = RING[k + 1], um = (u0 + u1) / 2, a = Math.abs(wrapTube(um));
-      const color = a < TUBE_FLOOR - WALK ? shade(road, section ? 1 : 1.04)
+      let color = a < TUBE_FLOOR - WALK ? shade(road, section ? 1 : 1.04)
         : a < TUBE_FLOOR ? walkway
-        : a < TILE_TOP ? shade(tile, section ? 1 : 0.95)
+        : a < TILE_TOP ? shade(tile, (section ? 1 : 0.95) * (zone === "neon" ? 0.42 : 1))
         : a < WALL_END ? concrete[section]
         : shade(roof, section ? 1 : 1.06);
+      if (zone === "glass" && a >= TILE_TOP) {
+        // the water outside: lighter the higher round (the roof under the light), and the light
+        // coming down through it rippling over the panes
+        const up = Math.min(1, (a - TILE_TOP) / (WALL_END + TUBE_FLOOR - TILE_TOP));
+        const ripple = 0.9 + 0.1 * Math.sin(track.s[i] * 0.35 + now * 1.7 + a * 0.5) * Math.sin(now * 0.9 + a * 0.21);
+        color = shade(mix(DEEP, SHALLOW, up * up), ripple);
+      } else if (zone === "neon" && a >= TILE_TOP) color = shade(color, 0.55);
       face(p, [tubePoint(track, i, u0).p, tubePoint(track, j, u0).p, tubePoint(track, j, u1).p, tubePoint(track, i, u1).p],
            color, normalAt(track, i, um), BACKDROP);
     }
@@ -272,23 +295,38 @@ export function tubeFaces(p: Painter, track: Track, theme: Theme, from: number, 
     // dashed lane lines, 3 m on and 9 m off, and cat's eyes along the edge lines
     each(12, (sa) => {
       if (!near(sa)) return;
-      for (const u of [-LANE, LANE]) patch(sa, 3, u - 0.07, u + 0.07, line);
+      for (const u of LANES) patch(sa, 3, u - 0.07, u + 0.07, line);
     });
     each(6, (sa) => {
       if (!near(sa)) return;
       for (const u of [-(EDGE - 0.25), EDGE - 0.25]) patch(sa, 0.16, u - 0.08, u + 0.08, EYE, 0.03);
     });
-    // a light every 4.5 m down the middle of the roof, a glow round it, and its pool on the road
-    each(4.5, (sl) => {
+    // a light every 4.5 m down each of the roof's two rows, a glow round it, and its pool on the
+    // road (in each lining's light; in the neon, now one colour, now the other)
+    each(4.5, (sl, k) => {
       if (!near(sl)) return;
-      patch(sl - 1.6, 3.2, -4.6, 4.6, LAMP, 0.01, 0.07, MARKS + 0.02); // the pool of light on the road
-      patch(sl - 1.2, 2.4, TUBE_HALF - 1.2, TUBE_HALF + 1.2, LAMP, 0.01, 0.22, MARKS + 0.01);
-      patch(sl - 0.6, 1.2, TUBE_HALF - 0.28, TUBE_HALF + 0.28, LAMP, 0.03);
+      const zone = tubeZone(sl), lamp = zone === "neon" ? NEON[k & 1] : LAMP_OF[zone];
+      patch(sl - 1.6, 3.2, -EDGE + 0.6, EDGE - 0.6, lamp, 0.01, zone === "neon" ? 0.1 : 0.07, MARKS + 0.02); // the pool of light on the road
+      for (const lat of ROOF_LAMPS) {
+        const u = roofOver(lat);
+        patch(sl - 1.2, 2.4, u - 1.2, u + 1.2, lamp, 0.01, 0.22, MARKS + 0.01);
+        patch(sl - 0.6, 1.2, u - 0.28, u + 0.28, lamp, 0.03);
+      }
+    });
+    // the neon's strips of light along each wall, at the top of the tiles and higher up
+    each(6, (sn, k) => {
+      if (!near(sn) || tubeZone(sn) !== "neon") return;
+      const glow = 0.75 + 0.25 * Math.sin(now * 3 + k * 0.6);
+      for (const side of [-1, 1]) {
+        patch(sn, 6.02, side * (TILE_TOP + 0.05) - 0.12, side * (TILE_TOP + 0.05) + 0.12, shade(NEON[0], glow), 0.03);
+        const hi = side * (TUBE_FLOOR + ARC * 0.55);
+        patch(sn, 6.02, hi - 0.12, hi + 0.12, shade(NEON[1], glow), 0.03);
+      }
     });
     // lane signals on the roof over each lane, a green arrow on each: every lane open
     each(160, (sg) => {
       if (!near(sg)) return;
-      for (const lat of [-3.8, 0, 3.8]) {
+      for (const lat of [-2, -1, 0, 1, 2].map((k) => k * TUBE_LANE)) {
         const u = lat === 0 ? TUBE_HALF : roofOver(lat);
         patch(sg - 0.45, 0.9, u - 0.45, u + 0.45, SIGNAL, 0.02);
         const a = at(sg - 0.3), b = at(sg + 0.3), nm = normalAt(track, a.i, u);
@@ -307,7 +345,8 @@ function wrapS(track: Track, s: number): number {
 }
 
 /** Boost pads round the tube: a plate and three chevrons, laid on the surface wherever the pad is,
- * each one decal at one depth; a wing pad (on the floor) is blue, with a little plane on it. */
+ * each one decal at one depth; a hover pad (on the floor) is blue, with a hover car on it seen from
+ * above (its four pods glowing) inside a ring that pulses. */
 function pads(p: Painter, track: Track, f: Features, from: number, now: number, dir: number): void {
   const s0 = track.s[from];
   for (const pad of f.pads) {
@@ -320,15 +359,23 @@ function pads(p: Painter, track: Track, f: Features, from: number, now: number, 
     const nrm = normalAt(track, pad.start, pad.offset), from0 = p.faces.length;
     for (let q = 0; q < 5; q++) {
       const u0 = (PAD_LEN * q) / 5, u1 = (PAD_LEN * (q + 1)) / 5;
-      face(p, [at(u0, -PAD_HALF), at(u1, -PAD_HALF), at(u1, PAD_HALF), at(u0, PAD_HALF)], hex(pad.wing ? "#123a6e" : "#7a2e12"), nrm, 0, 1, true);
+      face(p, [at(u0, -PAD_HALF), at(u1, -PAD_HALF), at(u1, PAD_HALF), at(u0, PAD_HALF)], hex(pad.hover ? "#123a6e" : "#7a2e12"), nrm, 0, 1, true);
     }
-    if (pad.wing) { // the plane, from above: its body, swept wings and tailplane, nose first down the road
-      const col = mix(hex("#63c8ff"), hex("#f2f6ff"), 0.5 + 0.5 * Math.sin(now * 7));
-      face(p, [at(1.0, -0.3), at(6.3, -0.3), at(6.3, 0.3), at(1.0, 0.3)], col, nrm, 0, 1, true);
-      face(p, [at(2.2, -2.3), at(3.4, -0.3), at(4.8, -0.3), at(2.8, -2.3)], col, nrm, 0, 1, true);
-      face(p, [at(2.8, 2.3), at(4.8, 0.3), at(3.4, 0.3), at(2.2, 2.3)], col, nrm, 0, 1, true);
-      face(p, [at(0.8, -1.2), at(1.5, -0.3), at(2.1, -0.3), at(1.3, -1.2)], col, nrm, 0, 1, true);
-      face(p, [at(1.3, 1.2), at(2.1, 0.3), at(1.5, 0.3), at(0.8, 1.2)], col, nrm, 0, 1, true);
+    if (pad.hover) {
+      const pulse = 0.5 + 0.5 * Math.sin(now * 7), ring = mix(hex("#2a7fd0"), hex("#9ff0ff"), pulse);
+      const body = hex("#dfe9f8"), pod = mix(hex("#63c8ff"), hex("#ffffff"), pulse);
+      const cx = PAD_LEN / 2, r0 = 2.15 + 0.15 * pulse, r1 = r0 + 0.35;
+      for (let q = 0; q < 12; q++) { // the ring
+        const a0 = (q / 12) * Math.PI * 2, a1 = ((q + 1) / 12) * Math.PI * 2;
+        const pt = (r: number, a: number) => at(cx + Math.cos(a) * r, Math.sin(a) * r * 0.95);
+        face(p, [pt(r0, a0), pt(r1, a0), pt(r1, a1), pt(r0, a1)], ring, nrm, 0, 1, true);
+      }
+      face(p, [at(cx - 1.5, -0.75), at(cx + 1.5, -0.75), at(cx + 1.5, 0.75), at(cx - 1.5, 0.75)], body, nrm, 0, 1, true); // the car
+      face(p, [at(cx - 0.2, -0.5), at(cx + 0.7, -0.5), at(cx + 0.7, 0.5), at(cx - 0.2, 0.5)], hex("#2c3d5c"), nrm, 0, 1, true); // its screen
+      for (const [du, dv] of [[-1.1, -1], [-1.1, 1], [1.1, -1], [1.1, 1]]) { // its four pods, out at the corners
+        face(p, [at(cx + du - 0.35, dv - 0.25), at(cx + du + 0.35, dv - 0.25), at(cx + du + 0.35, dv + 0.25), at(cx + du - 0.35, dv + 0.25)],
+             pod, nrm, 0, 1, true);
+      }
     } else for (let c = 0; c < 3; c++) {
       const u0 = 1 + c * 2, col = mix(hex("#ff8a1f"), hex("#fff2a8"), 0.5 + 0.5 * Math.sin(now * 9 - c * 1.6));
       face(p, [at(u0, -PAD_HALF + 0.4), at(u0 + 1.4, 0), at(u0 + 2.0, 0), at(u0 + 0.6, -PAD_HALF + 0.4)], col, nrm, 0, 1, true);
@@ -345,7 +392,7 @@ function pads(p: Painter, track: Track, f: Features, from: number, now: number, 
 function startLine(p: Painter, track: Track, s0: number): void {
   const si = track.startIndex;
   if (si < 0 || Math.abs(around(track, s0, track.s[si])) > 120) return;
-  const cells = 10, cell = (2 * TUBE_FLOOR) / cells, from0 = p.faces.length;
+  const cells = 14, cell = (2 * TUBE_FLOOR) / cells, from0 = p.faces.length;
   for (let r = 0; r < 2; r++) {
     const a = track.wrap(si - 2 + r * 2), b = track.wrap(a + 2);
     for (let c = 0; c < cells; c++) {
@@ -360,3 +407,71 @@ function startLine(p: Painter, track: Track, s0: number): void {
   for (const fc of mine) fc.z = depth;
 }
 
+/** The glass's frames, a ring of steel every 4 m over the glass, and the fish going by outside it, a
+ * few schools to each stretch, each at its own height round the tube, swimming its own way. (Placed
+ * by stepping from the camera's road point: from the lap's first, every one cost a walk down the road.) */
+function glass(p: Painter, track: Track, from: number, s0: number, rear: number, dir: number, now: number,
+               out: (s: number) => boolean): void {
+  const lo = dir > 0 ? s0 - rear : s0 - 130, hi = dir > 0 ? s0 + 130 : s0 + rear;
+  const end = track.locked ? Infinity : track.s[track.count - 1] ?? 0;
+  const fold = (s: number) => wrapS(track, s);
+  const spot = (s: number) => (s > end ? null : track.stepAlong(from, around(track, s0, s)));
+  for (let s = Math.ceil(lo / 4) * 4; s <= hi; s += 4) {
+    const sw = fold(s);
+    if (tubeZone(sw) !== "glass" || out(sw)) continue;
+    const a = spot(s), b = spot(s + 0.3);
+    if (!a || !b) continue;
+    for (const [u0, u1] of [[TILE_TOP, WALL_END + TUBE_FLOOR], [TUBE_ROUND - WALL_END - TUBE_FLOOR, TUBE_ROUND - TILE_TOP]]) {
+      for (let q = 0; q < 6; q++) {
+        const ua = u0 + ((u1 - u0) * q) / 6, ub = u0 + ((u1 - u0) * (q + 1)) / 6;
+        face(p, [tubeBetween(track, a.i, a.w, ua, 0.03).p, tubeBetween(track, b.i, b.w, ua, 0.03).p,
+                 tubeBetween(track, b.i, b.w, ub, 0.03).p, tubeBetween(track, a.i, a.w, ub, 0.03).p], FRAME,
+             normalAt(track, a.i, (ua + ub) / 2), MARKS);
+      }
+    }
+  }
+  // fish: schools of six, each fish a body and a tail, outside the glass (drawn on it, behind the frames)
+  for (let z = Math.floor(lo / TUBE_ZONE); z <= Math.floor(hi / TUBE_ZONE); z++) {
+    if (tubeZone(fold(z * TUBE_ZONE + 1)) !== "glass") continue;
+    for (let school = 0; school < 4; school++) {
+      const seed = z * 7.31 + school * 3.17, way = school & 1 ? 1 : -1, speed = 2.2 + (school % 3) * 0.7;
+      const side = school < 2 ? 1 : -1, u = side * (TILE_TOP + 2 + ((Math.sin(seed) + 1) / 2) * (WALL_END - TILE_TOP - 3));
+      const head = z * TUBE_ZONE + ((((seed * 41.7 + way * speed * now) % TUBE_ZONE) + TUBE_ZONE) % TUBE_ZONE);
+      for (let f = 0; f < 6; f++) {
+        const sf = head - way * (f % 3) * 1.4 - (f > 2 ? 0.7 : 0), uf = u + (f > 2 ? 0.9 : 0) + Math.sin(now * 2 + f + seed) * 0.25;
+        if (sf < lo || sf > hi || out(fold(sf))) continue;
+        const a = spot(sf), b = spot(sf + way * 0.9), c = spot(sf - way * 0.35);
+        if (!a || !b || !c) continue;
+        const nrm = normalAt(track, a.i, uf);
+        face(p, [tubeBetween(track, a.i, a.w, uf - 0.18, -0.06).p, tubeBetween(track, b.i, b.w, uf, -0.06).p,
+                 tubeBetween(track, a.i, a.w, uf + 0.18, -0.06).p], FISH, nrm, MARKS + 0.03);
+        face(p, [tubeBetween(track, a.i, a.w, uf, -0.06).p, tubeBetween(track, c.i, c.w, uf - 0.22, -0.06).p,
+                 tubeBetween(track, c.i, c.w, uf + 0.22, -0.06).p], FISH, nrm, MARKS + 0.03);
+      }
+    }
+  }
+}
+
+/** Chevrons on the outside wall of every bend tighter than 120 m, a little over the walkway, every 9
+ * m round it: black boards, a yellow arrow on each pointing on round the bend. */
+function chevrons(p: Painter, track: Track, from: number, s0: number, dir: number, out: (s: number) => boolean): void {
+  const lo = dir > 0 ? s0 : s0 - 120, hi = dir > 0 ? s0 + 120 : s0;
+  const end = track.locked ? Infinity : track.s[track.count - 1] ?? 0;
+  const spot = (s: number) => track.stepAlong(from, around(track, s0, s));
+  for (let s = Math.ceil(lo / 9) * 9; s <= hi; s += 9) {
+    if (s + 2 > end || out(wrapS(track, s))) continue;
+    const a = spot(s), kappa = track.curvature(a.i);
+    if (Math.abs(kappa) < 1 / 120) continue;
+    const side = -Math.sign(kappa); // (the outside of the bend: away from the way it turns)
+    const b = spot(s + 1.8), m = spot(s + 0.7);
+    const u0 = side * (TUBE_FLOOR + ARC * 0.09), u1 = side * (TUBE_FLOOR + ARC * 0.2), um = (u0 + u1) / 2;
+    const nrm = normalAt(track, a.i, um);
+    face(p, [tubeBetween(track, a.i, a.w, u0, 0.04).p, tubeBetween(track, b.i, b.w, u0, 0.04).p,
+             tubeBetween(track, b.i, b.w, u1, 0.04).p, tubeBetween(track, a.i, a.w, u1, 0.04).p], CHEVRON_BACK, nrm, MARKS - 0.3);
+    // the arrow (sorted well in front of its board: by its middle, nearer the board's far end, it was
+    // drawn first and the board went over it)
+    const tip = tubeBetween(track, b.i, b.w, um, 0.06).p; // (pointing on down the road, the way round)
+    const t0 = tubeBetween(track, m.i, m.w, u0 + (u1 - u0) * 0.15, 0.06).p, t1 = tubeBetween(track, m.i, m.w, u1 - (u1 - u0) * 0.15, 0.06).p;
+    face(p, [t0, tip, t1], CHEVRON, nrm, MARKS - 1.2);
+  }
+}

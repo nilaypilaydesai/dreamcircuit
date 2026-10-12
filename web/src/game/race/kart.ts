@@ -1,7 +1,7 @@
 // Arcade kart physics: snappy steering, drifting with mini-turbo boosts, off-road slowdown,
 // kart-to-kart bumps and a soft outer fence; road height (bridges) with guard rails; jumps off
 // ramps, with a trick for a well-timed hop; in the volcano, falling into the lava, out of which a
-// drone lifts the kart back onto the road; and in the harbor tunnel's tube, wings from a wing pad,
+// drone lifts the kart back onto the road; and in the harbor tunnel's tube, a hover pad's lift off the road,
 // to drive up its walls and over its roof (run out of them high up, and the kart falls off onto
 // its roof, and the drone sets it back on the floor). Tuned for fun, not for the research simulator.
 
@@ -13,9 +13,9 @@ import { type Build, DEFAULT_BUILD, NEUTRAL, type Perf, perfOf, statsOf } from "
 
 /** Up a tunnel's wall or on its roof, how far a kart can turn off the way along it (radians). */
 export const WALL_TURN = Math.PI / 4;
-/** s of wings from a wing pad, in the tunnel's tube: up the walls and over the roof, while they last. */
-export const WING_TIME = 8;
-/** m round the tube's floor from its middle a kart without wings can go: the foot of each wall is a
+/** s a hover pad lifts a kart off the road for, in the tunnel's tube: up the walls and over the roof, while it lasts. */
+export const HOVER_TIME = 8;
+/** m round the tube's floor from its middle a kart without hover can go: the foot of each wall is a
  * wall to it, as a tunnel's are. */
 export const TUBE_EDGE = TUBE_FLOOR - 0.7;
 const turnOf = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a)); // (an angle, wrapped to -pi..pi)
@@ -79,7 +79,7 @@ export const FALL_RELEASE = 2.0; // s: let go, half a meter up; the driver has c
 export const FALL_END = 2.6; // s: the drone has flown off
 export const SINK_DEPTH = 1.8; // m
 const CARRY_HIGH = 3.4, CARRY_LOW = 0.55; // m over the road: where the kart is lowered from and let go
-// off a wall of the tunnel's tube (race.ts decides when: its wings ran out further up a wall than
+// off a wall of the tunnel's tube (race.ts decides when: its hover ran out further up a wall than
 // WALL_FALL_TILT, or on the roof): it falls, turning over, and lands on its roof on the floor; the
 // drone comes down for it, lifts it and turns it the right way up over the middle of the floor,
 // lowers it and lets it go (on the same clock as any other rescue: FALL_SWAP the drone is there)
@@ -169,9 +169,9 @@ export class Kart {
   bend = 0; // d2z/ds2 of the road under it: how sharply it crests (< 0) or dips (set by the race)
   walled = false; // in a tunnel, between its walls (set by the race)
   tube = false; // racing inside the tunnel's tube: its offset is how far round the tube it is (world/tube.ts)
-  slipping = false; // in the tube, too slow to hold on where it is (or its wings gone): sliding back down the wall
-  wings = 0; // s left with a wing pad's wings (in the tube: the walls and the roof are only for winged karts)
-  scraped = false; // this frame, without wings: stopped at the foot of the tube's wall
+  slipping = false; // in the tube, too slow to hold on where it is (or its hover gone): sliding back down the wall
+  hover = 0; // s left hovering, from a hover pad (in the tube: the walls and the roof are only for hovering karts)
+  scraped = false; // this frame, without hover: stopped at the foot of the tube's wall
   trick: TrickGrade = 0; // pending: paid out as a boost on landing
   burnout = 0; // s of wheelspin after a too-early start
   trickAngle = 0; // the sprite's extra rotation during a trick
@@ -279,7 +279,7 @@ export class Kart {
     { boosted: boolean; landed: TrickGrade | -1 } {
     if (this.prism > 0) this.prism = Math.max(0, this.prism - dt);
     if (this.shrink > 0) this.shrink = Math.max(0, this.shrink - dt);
-    if (this.wings > 0) this.wings = Math.max(0, this.wings - dt);
+    if (this.hover > 0) this.hover = Math.max(0, this.hover - dt);
     this.scraped = false;
     if (this.rocket > 0) return this.fly(dt, track, cls);
     if (this.fall >= 0 && this.rescue(dt, track, input)) return { boosted: false, landed: -1 };
@@ -458,7 +458,7 @@ export class Kart {
       // it round the inside, where high up they fold over themselves: moved in them, a kart sped
       // up and slowed to a crawl through every bend, and jumped about the tube, 5 to 40 m in a frame)
       const [tx, ty] = track.tangent(this.idx), real = flatStretch(track, this.idx, tubeAt(this.offset).lat);
-      // (without wings, driven at a wall from the floor: it scrapes along the foot of it, as along
+      // (without hover, driven at a wall from the floor: it scrapes along the foot of it, as along
       // a tunnel's wall)
       const round = (vy * tx - vx * ty) * dt, kept = this.keepOff(round);
       if (kept !== round && Math.abs(this.offset) <= TUBE_EDGE && !this.air) {
@@ -473,12 +473,12 @@ export class Kart {
     }
 
     // in the tube, too slow for where it is on the wall: it slides back down toward the floor (fast
-    // off the upper half, where it peels off); and with its wings gone, at any speed
+    // off the upper half, where it peels off); and with its hover gone, at any speed
     if (this.tube && !this.air) {
       const need = holdSpeed(this.offset), speed = Math.abs(this.v);
       // (nor can it hold on round the inside of a tight bend, high up, at any speed)
       const squeezed = need > 0 && flatStretch(track, this.idx, this.offset) < TUBE_SQUEEZE;
-      const grounded = this.wings <= 0 && Math.abs(this.offset) > TUBE_EDGE;
+      const grounded = this.hover <= 0 && Math.abs(this.offset) > TUBE_EDGE;
       this.slipping = (need > 0 && speed < need) || squeezed || grounded;
       if (this.slipping) {
         const upper = need >= TUBE_LOOP_SPEED;
@@ -500,11 +500,11 @@ export class Kart {
     return { boosted, landed };
   }
 
-  /** Of ``round`` m on round the tube, how far a kart may go: winged, all of it; without wings the
+  /** Of ``round`` m on round the tube, how far a kart may go: hovering, all of it; without hover the
    * tube's walls are walls, so from the floor no further than the foot of one, and from up a wall
-   * (its wings ran out up there) no higher than it is (it slides back down). */
+   * (its hover ran out up there) no higher than it is (it slides back down). */
   private keepOff(round: number): number {
-    if (this.wings > 0) return round;
+    if (this.hover > 0) return round;
     const lim = Math.max(TUBE_EDGE, Math.abs(this.offset)), to = this.offset + round;
     return Math.abs(to) > lim ? Math.sign(to) * lim - this.offset : round;
   }
@@ -537,7 +537,7 @@ export class Kart {
     const dx = this.x - (f?.x ?? 0), dy = this.y - (f?.y ?? 0);
     if (f && f.idx === this.idx && Math.hypot(dx, dy) < 4) {
       const [tx, ty] = track.tangent(this.idx), m = Math.max(TUBE_SQUEEZE, flatStretch(track, this.idx, this.offset));
-      this.moveInTube(track, (dx * tx + dy * ty) / m, this.keepOff(dy * tx - dx * ty)); // (no shove up a wall without wings)
+      this.moveInTube(track, (dx * tx + dy * ty) / m, this.keepOff(dy * tx - dx * ty)); // (no shove up a wall without hover)
       return;
     }
     const i = track.foot(this.x, this.y, this.idx), u = track.offset(this.x, this.y, i), j = track.wrap(i + 1);
