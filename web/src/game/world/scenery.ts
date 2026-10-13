@@ -8,7 +8,7 @@ import { Rand, type Sprite } from "../core/gfx";
 import { type SceneryArt, chevron, gantry, grandstand, makeScenery, pillar } from "../render/sprites";
 import type { Theme } from "../themes";
 import { type Hazard, inHazard } from "./hazards";
-import { LANDFORM_CLEAR, LANDFORM_SIZE, type Landform, onLandform, reach } from "./landforms";
+import { ISLE_CLEAR, LANDFORM_CLEAR, LANDFORM_SIZE, type Landform, onLandform, reach } from "./landforms";
 import { type Bridge, HALF_WIDTH, SPACING, type Track } from "./track";
 import { HALF, worldHalf } from "./texture";
 
@@ -21,6 +21,7 @@ export interface Placed {
 
 const CELL = 12;
 const LANDFORMS = 28; // the most a world gets
+const ISLES = 13; // the most the sky's sea gets (a world of the usual size)
 
 export class Scenery {
   items: Placed[] = [];
@@ -81,8 +82,9 @@ export class Scenery {
     const clear = HALF_WIDTH + 2.2;
     this.items = this.items.filter((it) => this.roadDistance(track, it.x, it.y, clear + 1) > clear);
     const t = this.theme;
+    if (t.sky) return; // (the sky's course is in the air: nothing stands beside it; render/air.ts marks it out)
     for (let i = from; i < to; i += 11) {
-      if ((track.elev[i] ?? 0) > 0.3) continue; // a climb or a bridge: its own structure dresses it
+      if ((track.elev[i] ?? 0) - track.base > 0.3) continue; // a climb or a bridge: its own structure dresses it
       const [tx, ty] = track.tangent(i);
       const kappa = track.curvature(i);
       if (Math.abs(kappa) > 1 / 32 && (i % 22) < 11) {
@@ -133,6 +135,7 @@ export class Scenery {
     if (this.theme.tube) return;
     const t = this.theme;
     this.placeLandforms(track);
+    if (t.sky) return; // (the sea has its islands, and no more: the start's banner hangs in the air, render/air.ts)
     // (as thick on the ground in a bigger world)
     for (let k = 0; k < 900 * this.area && this.items.length < 700 * this.area; k++) {
       const x = this.rng.range(-this.half + 12, this.half - 12), y = this.rng.range(-this.half + 12, this.half - 12);
@@ -166,7 +169,8 @@ export class Scenery {
   private placeLandforms(track: Track): void {
     const kinds = this.theme.landforms;
     if (!kinds?.length) return;
-    for (let k = 0; k < 500 * this.area && this.landforms.length < LANDFORMS * this.area; k++) {
+    const most = (this.theme.sky ? ISLES : LANDFORMS) * this.area, clear = this.theme.sky ? ISLE_CLEAR : LANDFORM_CLEAR;
+    for (let k = 0; k < 500 * this.area && this.landforms.length < most; k++) {
       const kind = this.rng.pick(kinds), size = LANDFORM_SIZE[kind];
       const l: Landform = {
         kind, x: 0, y: 0, r: this.rng.range(size.r[0], size.r[1]), stretch: this.rng.range(size.stretch[0], size.stretch[1]),
@@ -175,7 +179,7 @@ export class Scenery {
       const far = reach(l);
       l.x = this.rng.range(-this.half + far + 8, this.half - far - 8);
       l.y = this.rng.range(-this.half + far + 8, this.half - far - 8);
-      if (this.roadDistance(track, l.x, l.y, LANDFORM_CLEAR + far + 2) < LANDFORM_CLEAR + far) continue;
+      if (this.roadDistance(track, l.x, l.y, clear + far + 2) < clear + far) continue;
       if (this.landforms.some((o) => Math.hypot(o.x - l.x, o.y - l.y) < reach(o) + far + 6)) continue;
       this.landforms.push(l);
     }

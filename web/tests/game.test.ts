@@ -1520,9 +1520,10 @@ describe("the grand prix", () => {
     expect(cup.podium().map((x) => x.id)).toEqual([0, 1, 2]); // 39, 37, 35
   });
 
-  it("runs through every world, the reef, Tokyo, the volcano, the building site and the moon too", () => {
+  it("runs through every world, the reef, Tokyo, the volcano, the building site, the moon and the sky too", () => {
     const ids = THEMES.map((t) => t.id);
-    expect(ids).toEqual(["valley", "tunnel", "mesa", "reef", "tokyo", "volcano", "construction", "moon"]);
+    expect(ids).toEqual(["valley", "tunnel", "mesa", "reef", "tokyo", "volcano", "construction", "moon", "sky"]);
+    expect(THEMES.find((t) => t.id === "sky")!.sky).toBe(true);
     expect(THEMES.find((t) => t.id === "reef")!.underwater).toBe(true);
     expect(THEMES.find((t) => t.id === "volcano")!.volcano).toBe(true);
     expect(THEMES.find((t) => t.id === "moon")!.gravity).toBeLessThan(0.7);
@@ -3265,7 +3266,7 @@ describe("the tunnel", () => {
 });
 
 describe("the cuttings", () => {
-  it("cut the road down through the land in every world but the tunnel, and their walls hold karts on it", async () => {
+  it("cut the road down through the land in every world but the tunnel and the sky, and their walls hold karts on it", async () => {
     const { BANK_AT, BANK_LEAN } = await import("../src/game/world/banks");
     for (const theme of THEMES) {
       let banks = 0;
@@ -3298,8 +3299,209 @@ describe("the cuttings", () => {
           if (race.features.bankAt(t.s[k.idx], b.side)) expect(Math.abs(k.offset), theme.id).toBeLessThanOrEqual(BANK_AT);
         }
       }
-      if (theme.tube) expect(banks).toBe(0);
+      if (theme.tube || theme.sky) expect(banks).toBe(0);
       else expect(banks, theme.id).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("the sky", () => {
+  const sky = THEMES.find((t) => t.sky)!;
+  const calmSky = { ...sky, obstacle: undefined }; // (no airliners: nothing to knock a test plane about)
+  const level = { steer: 0, throttle: 0, brake: 0, drift: false, pitch: 0 };
+
+  it("flies the whole race: every plane gets round, the player's pilot through ring after ring, nobody into the sea", async () => {
+    const race = new Race({ rivals: 7, difficulty: "pro", theme: sky, seed: 7, replay: calm() }, null, () => {});
+    await race.prepare();
+    expect(race.karts.every((k) => k.plane)).toBe(true);
+    expect(race.air!.rings.length).toBeGreaterThan(8);
+    expect(race.air!.rings.some((r) => r.gold)).toBe(true);
+    expect(race.air!.drafts.length).toBeGreaterThan(1);
+    expect(race.features.pads.length + race.features.ramps.length).toBe(0); // (rings instead)
+    const pilot = new RivalDriver(new Rand(2), race.player, 0);
+    let rings = 0, sea = 0, low = Infinity;
+    for (let i = 0; i < 60 * 400 && race.phase !== "done"; i++) {
+      race.update(1 / 60, pilot.act(1 / 60, race.track, race.cls, race.player, race.karts, race.items, race.obstacles.dangers(), race.features.pads, race.air));
+      for (const e of race.events) {
+        if (e.kind === "ring") rings++;
+        if (e.kind === "fell" && e.into === "sea") sea++;
+      }
+      race.events = [];
+      for (const k of race.karts) if (!k.falling) low = Math.min(low, k.elev);
+    }
+    expect(race.phase).toBe("done");
+    expect(race.karts.every((k) => k.finished)).toBe(true);
+    expect(rings).toBeGreaterThan(15);
+    expect(sea).toBe(0);
+    expect(low).toBeGreaterThan(20); // (well up over the sea all race)
+  }, 60_000);
+
+  it("climbs on up and dives on down, trading speed for height and back, and the engine pulls it back to cruise", async () => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: calmSky, seed: 3, replay: calm() }, null, () => {});
+    await race.prepare();
+    race.air!.rings = [];
+    race.air!.drafts = [];
+    race.phase = "racing";
+    const p = race.player, t = race.track;
+    p.placeOn(t, 200, 0);
+    // (steered round the course by a rival's pilot, which only steers: out over the wind's wall, the
+    // wind slows it)
+    const pilot = new RivalDriver(new Rand(2), p, 0);
+    const fly = (secs: number, pitch: number) => {
+      for (let i = 0; i < 60 * secs; i++) {
+        const { steer } = pilot.act(1 / 60, t, race.cls, p, race.karts, undefined, [], race.features.pads, race.air);
+        race.update(1 / 60, { ...level, steer, pitch });
+      }
+      expect(p.walled).toBe(false);
+    };
+    fly(6, 0);
+    const cruise = p.v, high = p.elev - p.ground;
+    expect(cruise).toBeGreaterThan(CLASSES.pro.vmax); // (planes are quicker than karts)
+    fly(1.5, 1);
+    expect(p.elev - p.ground).toBeGreaterThan(high + 6);
+    expect(p.v).toBeLessThan(cruise - 1.2); // (the climb costs speed)
+    fly(1.2, -1);
+    expect(p.vz).toBeLessThan(-6);
+    expect(p.v).toBeGreaterThan(cruise); // (the dive pays it back, and more)
+    fly(5, 0);
+    expect(Math.abs(p.v - cruise)).toBeLessThan(3); // (and the engine brings it back)
+  });
+
+  it("flown into the sea, a plane goes under, and the drone lifts it back up onto the course", async () => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: calmSky, seed: 3, replay: calm() }, null, () => {});
+    await race.prepare();
+    race.air!.drafts = [];
+    race.phase = "racing";
+    const p = race.player, t = race.track;
+    p.placeOn(t, 200, 0);
+    const seen: string[] = [];
+    let under = Infinity;
+    for (let i = 0; i < 60 * 12 && !(p.falling && p.fall >= FALL_SWAP); i++) {
+      race.update(1 / 60, { ...level, pitch: -1 });
+      seen.push(...race.events.filter((e) => e.kind === "fell").map((e) => (e.kind === "fell" ? e.into : "")));
+      race.events = [];
+      if (p.falling) under = Math.min(under, p.elev);
+    }
+    expect(seen).toEqual(["sea"]);
+    expect(under).toBeLessThan(0.5); // (into the sea, not 55 m up at the course's height)
+    for (let i = 0; i < 60 * 4 && p.fall >= 0; i++) race.update(1 / 60, level);
+    expect(p.falling).toBe(false);
+    expect(Math.abs(p.elev - t.elev[p.idx])).toBeLessThan(4); // back up at the course
+    expect(Math.abs(p.offset)).toBeLessThan(2);
+  });
+
+  it("boosts a plane that flies through a ring (a gold one for longer), and lifts one in an updraft", async () => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: calmSky, seed: 3, replay: calm() }, null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    const p = race.player, t = race.track, air = race.air!;
+    const boostOf = (gold: boolean) => {
+      const r = air.rings.find((g) => g.gold === gold)!;
+      p.placeOn(t, t.wrap(r.start - Math.round(10 / SPACING)), r.offset);
+      p.elev = t.elev[r.start] + r.lift;
+      p.v = 40;
+      p.vz = p.boostTime = 0;
+      let hit = false, most = 0;
+      for (let i = 0; i < 30; i++) {
+        race.update(1 / 60, level);
+        if (race.events.some((e) => e.kind === "ring" && e.gold === gold)) hit = true;
+        race.events = [];
+        most = Math.max(most, p.boostTime);
+      }
+      expect(hit, gold ? "gold" : "plain").toBe(true);
+      return most;
+    };
+    const plain = boostOf(false), gold = boostOf(true);
+    expect(plain).toBeGreaterThan(0.8);
+    expect(gold).toBeGreaterThan(plain + 0.4);
+    // an updraft: in it, a level plane is carried up
+    const d = air.drafts[0];
+    p.placeOn(t, t.wrap(d.start + 4), d.offset);
+    p.elev = t.elev[d.start] + 2;
+    p.v = 30;
+    p.vz = 0;
+    let lifted = false;
+    for (let i = 0; i < 20; i++) {
+      race.update(1 / 60, level);
+      if (race.events.some((e) => e.kind === "draft")) lifted = true;
+      race.events = [];
+    }
+    expect(lifted).toBe(true);
+    expect(p.vz).toBeGreaterThan(4);
+  });
+
+  it("sends airliners across the course ahead, warned of, and one that meets a plane knocks it into a spin", () => {
+    const t = Track.fromPoints(calm());
+    const ob = new Obstacles("airliner", new Rand(4));
+    const p = new Kart(0, "P", 0, true);
+    p.placeOn(t, 100, 0);
+    let warned = false, jet = false;
+    for (let i = 0; i < 60 * 14 && !ob.list.some((o) => o.kind === "airliner" && Math.abs(o.offset) < 8); i++) {
+      ob.update(1 / 60, t, [p], p, true);
+      if (ob.airlinerComing) warned = true;
+      if (ob.events.some((e) => e.sound === "jet")) jet = true;
+      ob.events = [];
+    }
+    const jetliner = ob.list.find((o) => o.kind === "airliner")!;
+    expect(jet && warned).toBe(true);
+    expect(t.s[jetliner.idx] - t.s[100]).toBeGreaterThan(150); // (well up the course: time to go over or under)
+    // a plane where it crosses, at its height, is knocked down into a spin; one well over it is not
+    const k = new Kart(1, "K", 1, false);
+    k.plane = true;
+    k.placeOn(t, jetliner.idx, jetliner.offset);
+    k.elev = (t.elev[jetliner.idx] ?? 0) + jetliner.z + 12;
+    k.v = 40;
+    ob.update(1 / 60, t, [k], p, true);
+    expect(k.spin).toBe(0);
+    k.placeOn(t, jetliner.idx, jetliner.offset);
+    k.elev = (t.elev[jetliner.idx] ?? 0) + jetliner.z;
+    k.v = 40;
+    ob.update(1 / 60, t, [k], p, true);
+    expect(k.spin).toBeGreaterThan(0);
+    expect(k.vz).toBeLessThan(0);
+    expect(ob.events.some((e) => e.sound === "clipped")).toBe(true);
+  });
+
+  it("hangs its boxes and coins over the course; its oil is smoke where it was let go, and a puck flies on level", async () => {
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: calmSky, seed: 3, replay: calm() }, null, () => {});
+    await race.prepare();
+    race.phase = "racing";
+    const t = race.track, p = race.player;
+    for (const b of race.items.boxes) expect(b.elev - t.elev[b.idx]).toBeCloseTo(2.5, 5);
+    for (const c of race.items.coins) expect(c.elev - t.elev[c.idx]).toBeCloseTo(2.5, 5);
+    expect(Math.max(...race.items.boxes.map((b) => Math.abs(t.offset(b.x, b.y, b.idx))))).toBeGreaterThan(6); // (spread wider)
+    p.placeOn(t, 300, 0);
+    p.elev += 7;
+    p.v = 40;
+    const press = (item: boolean) => race.update(1 / 60, { ...level, item });
+    race.items.grant(p, "oil");
+    press(true);
+    press(false);
+    expect(race.items.slicks.length).toBe(1);
+    expect(Math.abs(race.items.slicks[0].elev - p.elev)).toBeLessThan(1); // (up where the plane let it go)
+    race.items.grant(p, "puck");
+    press(true); // aim
+    press(false);
+    press(true); // throw
+    press(false);
+    expect(race.items.pucks.length).toBe(1);
+    const z0 = race.items.pucks[0].z;
+    for (let i = 0; i < 30; i++) race.update(1 / 60, level);
+    if (race.items.pucks.length) expect(race.items.pucks[0].z).toBe(z0);
+    expect(z0 - t.elev[300]).toBeGreaterThan(5); // (from the plane's height)
+  });
+
+  it("sets its islands out in the sea well clear of the course, beaches and shallows round them", async () => {
+    const { ISLE_CLEAR, reach } = await import("../src/game/world/landforms");
+    const race = new Race({ rivals: 0, difficulty: "pro", theme: sky, seed: 5, replay: figure8() }, null, () => {});
+    const t = race.track, isles = race.scenery.landforms;
+    expect(isles.length).toBeGreaterThan(8);
+    expect(isles.every((l) => l.kind === "isle")).toBe(true);
+    expect(race.scenery.items.length).toBe(0); // (nothing stands beside a course in the air)
+    for (const l of isles) {
+      for (let i = 0; i < t.count; i += 4) expect(Math.hypot(t.xs[i] - l.x, t.ys[i] - l.y)).toBeGreaterThan(ISLE_CLEAR + reach(l) - 1);
+      const [tx, ty] = race.tex.texel(l.x, l.y), c = race.tex.levels[0][Math.floor(ty) * race.tex.size + Math.floor(tx)];
+      expect(c & 255, "sand under it").toBeGreaterThan(180); // (red: sand, not the blue sea)
     }
   });
 });

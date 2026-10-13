@@ -25,6 +25,8 @@ import { type ObstacleArt, obstacleArt, obstacleFaces, obstacleSprites } from ".
 import { elevBetween, kartPlace, tubeBetween, tubeFaces, tubeFrame, tubeHides, tubeInside, tubePlace, tubeView } from "./render/tube";
 import type { ObstacleSound } from "./race/obstacles";
 import { landformFaces } from "./render/landforms";
+import { type AirArt, airFaces, airSprites } from "./render/air";
+import { balloonArt, cloudArt, smokeArt, updraftArt } from "./render/skyart";
 import { Sky } from "./render/sky";
 import {
   LIVERIES, type SceneryArt, blastFrames, bombFrames, boomerangFrames, coinFrames, cometArt, droneFrames, flareFrames,
@@ -72,6 +74,8 @@ const BASE_HEIGHT = 2.9; // m, camera over the player's kart
 const BASE_FOCAL = 250;
 const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 const SWING = 0.45; // s for the chase camera in the tunnel to swing round behind a kart turned round
+const PLANE_CAM = 1; // m: the camera rides BASE_HEIGHT - this over a plane (it is drawn a little below the middle of the screen)
+const SKY_FAR = 420; // m the camera sees in the sky (240 elsewhere)
 
 /** A chase camera's ride in the tunnel's tube: which way down the tube it looks (``dir``), how far
  * it turns from there toward where the kart heads (``yaw``), how high it rides with the kart off the
@@ -129,6 +133,8 @@ class Game {
   private readonly coinArt: SceneryArt[] = coinFrames();
   private readonly grabArt: SceneryArt[] = grabberFrames();
   private readonly obstacleArt: ObstacleArt = obstacleArt();
+  private readonly airArt: AirArt = { balloons: balloonArt(), clouds: cloudArt(), speck: updraftArt() };
+  private readonly smokeArt: SceneryArt[] = smokeArt(); // (oil let go in the sky)
   private sirenAt = 0; // when the police siren next wails (while a car is after the player)
   private readonly held: Record<ItemKind, SceneryArt> = heldArt();
   private mode: Mode = "boot";
@@ -532,9 +538,13 @@ class Game {
     const p = race.player;
     fitCamera(cam); // (a finish's camera had a horizon of its own)
     cam.clear = undefined;
+    cam.far = race.setup.theme.sky ? SKY_FAR : 240; // (from up in the sky, the sea is seen a long way off)
     cam.heading = p.heading;
     cam.x = p.x - Math.cos(cam.heading) * 6.2;
     cam.y = p.y - Math.sin(cam.heading) * 6.2;
+    // (at the kart's height at once: the sky's grid is 55 m up, and the camera rose to it from the sea)
+    cam.lift = p.plane && !p.falling ? p.elev - PLANE_CAM : p.elev - Math.min((p.elev - p.ground) * 0.45, 1.8);
+    cam.height = BASE_HEIGHT + cam.lift;
     this.tubeChase.delete(cam);
     if (race.setup.theme.tube) this.chaseTube(cam, race, 0);
   }
@@ -560,8 +570,12 @@ class Game {
     // go twice as high, out of the picture); and never more than 0.3 m over the kart (landing a
     // jump, it dropped out of the bottom of the picture)
     const rate = p.air ? 5 : 9, [tx, ty] = race.track.tangent(p.idx);
-    const lead = p.air ? 0 : (p.v * (Math.cos(p.heading) * tx + Math.sin(p.heading) * ty) * p.slope) / rate;
-    const lift = p.elev + lead - Math.min((p.elev - p.ground) * 0.45, 1.8);
+    // (a plane: the camera rides the same way over it and behind it whatever the course under it does,
+    // ahead of it, up or down, as it climbs or dives; by the course's height under it, it rode 3 m
+    // over a plane flying under a rise of the course, and the plane slid off the foot of the screen)
+    const flying = p.plane && !p.falling;
+    const lead = flying ? p.vz / rate : p.air ? 0 : (p.v * (Math.cos(p.heading) * tx + Math.sin(p.heading) * ty) * p.slope) / rate;
+    const lift = flying ? p.elev - PLANE_CAM + lead : p.elev + lead - Math.min((p.elev - p.ground) * 0.45, 1.8);
     cam.lift += (lift - cam.lift) * (1 - Math.exp(-dt * rate));
     cam.lift = Math.min(cam.lift, p.elev + 0.3);
     cam.height = BASE_HEIGHT + cam.lift;
@@ -570,6 +584,15 @@ class Game {
     cam.fx += (fx - cam.fx) * (1 - Math.exp(-dt * 6));
     cam.focal = BASE_FOCAL * viewScale() * (1 - 0.12 * cam.fx);
     if (race.setup.theme.tube) this.chaseTube(cam, race, dt);
+    // in the sky the view pitches with the plane: the horizon drops as it climbs and rises in a dive,
+    // and the plane stays where it was on the screen (the camera, which cannot pitch, goes down or up
+    // a little to keep it there)
+    if (race.setup.theme.sky && !p.falling) {
+      const level = Math.round(74 * viewScale());
+      const want = Math.round(level + Math.max(-18, Math.min(14, p.vz * 1.4)) * viewScale());
+      cam.horizon += Math.round((want - cam.horizon) * Math.min(1, dt * 5));
+      cam.height -= ((cam.horizon - level) * back) / cam.focal;
+    }
   }
 
   /** Over the line, the rivals' driver has the player's kart (race.ts): the camera swings round in
@@ -687,7 +710,8 @@ class Game {
       else if (e.kind === "bridge") this.hud.popup("BRIDGE AHEAD!", now, DREAM);
       else if (e.kind === "lava") { this.sound.lava(); this.shake = Math.max(this.shake, 0.3); }
       else if (e.kind === "fell") {
-        if (e.into === "pond" || e.into === "trench" || e.into === "quicksand" || e.into === "canal") this.sound.splash();
+        if (e.into === "pond" || e.into === "trench" || e.into === "quicksand" || e.into === "canal" || e.into === "sea") this.sound.splash();
+        if (e.into === "sea") this.hud.popup("SPLASHDOWN!", now, hex("#7fe7ff"));
         else this.sound.fall();
         if (e.into === "wall") { this.sound.hoverOff(); this.hud.popup("OFF THE WALL!", now, hex("#ff6b6b")); }
         this.shake = Math.max(this.shake, 0.25);
@@ -712,6 +736,12 @@ class Game {
         this.sound.rescue();
       }
       else if (e.kind === "obstacle") this.obstacleEvent(e.sound, e.near, now);
+      else if (e.kind === "ring") {
+        this.sound.ring(e.gold);
+        this.hud.popup(e.gold ? "GOLD RING!" : "RING!", now, e.gold ? HOT : hex("#7fe7ff"));
+      }
+      else if (e.kind === "draft") { this.sound.updraft(); this.hud.popup("UPDRAFT!", now, hex("#d8f2ff")); }
+      else if (e.kind === "slip") { this.sound.slipstream(); this.hud.popup("SLIPSTREAM!", now, hex("#b8ffcf")); }
     }
   }
 
@@ -735,6 +765,11 @@ class Game {
       case "honk": this.sound.honk(); break;
       case "spun": this.sound.hit(); said("GOT 'EM!", hex("#7dff9a")); break;
       case "shaken": this.sound.lock(); said("SHAKEN OFF!", hex("#7dff9a")); break;
+      case "jet":
+        this.sound.jet();
+        this.hud.banner("AIRLINER!", now, hex("#ff6b6b"), 1.8, "CROSSING THE COURSE AHEAD: OVER IT OR UNDER IT", true);
+        break;
+      case "clipped": this.sound.clipped(); this.shake = Math.max(this.shake, 0.4); said("CLIPPED!", hex("#ff6b6b")); break;
     }
   }
 
@@ -860,7 +895,7 @@ class Game {
     if (this.flash > 0) this.flash -= dt;
     const a = this.attract;
     if (a && (this.mode === "title" || this.mode === "main" || this.mode === "setup" || this.mode === "howto")) {
-      const c = a.driver.act(dt, a.race.track, a.race.cls, a.race.player, a.race.karts, a.race.items, [], a.race.features.pads);
+      const c = a.driver.act(dt, a.race.track, a.race.cls, a.race.player, a.race.karts, a.race.items, [], a.race.features.pads, a.race.air);
       a.race.update(dt, c);
       a.race.events = [];
       this.follow(a.cam, a.race, dt);
@@ -1053,27 +1088,33 @@ class Game {
     const it = race.items;
     // oil lies flat on the road: painted into the ground where the road is the ground, and laid on
     // the road as faces where it is not (a deck, a climb, a jump ramp, round the tube)
-    const laid = it.slicks.filter((sl) => inTube || slickRaised(t, race.features, sl));
+    // (in the sky oil hangs in the air, a cloud of black smoke)
+    const aloft = !!theme.sky;
+    const laid = aloft ? [] : it.slicks.filter((sl) => inTube || slickRaised(t, race.features, sl));
     if (!inTube) {
       drawGround(scr, cam, race.tex, theme.fog, {
         mist, light: theme.underwater ? { color: CAUSTIC, at: caustics(now) } : undefined, lava: lavaShift(now),
-        paint: slickPaint(it.slicks.filter((sl) => !laid.includes(sl)), now, cam.heading),
+        paint: slickPaint(aloft ? [] : it.slicks.filter((sl) => !laid.includes(sl)), now, cam.heading),
       });
     }
     const extras: WorldSprite[] = [];
+    if (aloft) {
+      it.slicks.forEach((sl, n) => extras.push({ x: sl.x, y: sl.y, art: this.smokeArt[(Math.floor(now * 4) + n) & 1], base: sl.elev - 1.2, idx: sl.idx }));
+    }
     it.boxes.forEach((b, i) => {
       if (b.respawn > 0) return;
       const art = this.boxArt[(Math.floor(now * 10) + i * 3) % this.boxArt.length];
       extras.push({ x: b.x, y: b.y, art, lift: 0.3 + 0.12 * Math.sin(now * 3 + i), base: b.elev, idx: b.idx });
     });
+    // (in the sky the items fly where they are, up or down from the course: race/items.ts, aloft)
     for (const o of it.orbs) {
-      extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: t.elev[o.idx] ?? 0, idx: o.idx });
+      extras.push({ x: o.x, y: o.y, art: this.orbArt, lift: 0.45 + 0.1 * Math.sin(now * 9), base: o.z ?? t.elev[o.idx] ?? 0, idx: o.idx });
     }
     for (const b of it.boomerangs) {
       extras.push({ x: b.x, y: b.y, art: this.boomArt[Math.floor(now * 24) % this.boomArt.length], lift: 0.4, base: b.z - 0.9, idx: b.idx });
     }
     for (const b of it.bombs) {
-      const ground = t.elev[b.idx] ?? 0;
+      const ground = aloft ? b.z : t.elev[b.idx] ?? 0;
       extras.push({ x: b.x, y: b.y, art: this.bombArt[Math.floor(now * 8) % 2], lift: Math.max(0, b.z - ground), base: ground, idx: b.idx });
     }
     for (const b of it.blasts) {
@@ -1082,7 +1123,7 @@ class Game {
       extras.push({ x: b.x, y: b.y, art: set[f], base: b.z });
     }
     for (const p of it.pucks) {
-      const ground = t.elev[p.idx] ?? 0;
+      const ground = aloft ? p.z - (p.kind === "flare" ? 0.8 : p.kind === "orb" ? 0.45 : 0.35) : t.elev[p.idx] ?? 0;
       const art = p.kind === "puck" ? this.puckArt[Math.floor(now * 14 + p.t * 9) % this.puckArt.length]
         : p.kind === "orb" ? this.orbArt : this.flareArt[Math.floor(now * 12) % this.flareArt.length];
       extras.push({ x: p.x, y: p.y, art, base: ground, lift: p.kind === "flare" ? Math.max(0.05, p.z - ground) : p.kind === "orb" ? 0.45 : 0.02, idx: p.idx });
@@ -1112,6 +1153,11 @@ class Game {
     if (inTube) {
       tubeFaces(painter, t, theme, inTube.idx, race.features, now, inTube.back, inTube.behind);
       rampFaces(painter, t, race.features, race.setup.theme);
+    } else if (race.air) { // the sky: its islands far below, its rings and the start's banner (no road is built)
+      const ci = t.nearest(cam.x, cam.y, race.player.idx);
+      landformFaces(painter, race.scenery.landforms, theme);
+      airFaces(painter, t, race.air, ci, now);
+      extras.push(...airSprites(t, race.air, ci, now, this.airArt));
     } else {
       landformFaces(painter, race.scenery.landforms, theme);
       bankFaces(painter, t, race.features.banks, theme);
@@ -1131,22 +1177,25 @@ class Game {
     // (in the tube, on the floor only: an arrow is drawn on flat road)
     if (me.item && me.roulette <= 0 && me.rocket <= 0 && !me.falling && race === this.race &&
         (!inTube || Math.abs(me.offset) < HALF_WIDTH)) {
+      // (in the sky, in the air just under the plane, as it flies)
+      const by = me.plane ? { x: me.x, y: me.y, heading: me.heading, ground: me.elev - 0.5 } : me;
       if (AIMED.has(me.item)) {
         const locked = me.aimLocked;
         const reach = mirror ? 1.6 : 1;
-        if (locked === null) aimArrow(painter, me, mirror ? Math.PI - me.aim : me.aim, mirror ? BACK_AIM : HOT, reach);
-        else if (Math.cos(locked) < 0 === !!mirror) aimArrow(painter, me, locked, hex("#63c8ff"), reach);
+        if (locked === null) aimArrow(painter, by, mirror ? Math.PI - me.aim : me.aim, mirror ? BACK_AIM : HOT, reach);
+        else if (Math.cos(locked) < 0 === !!mirror) aimArrow(painter, by, locked, hex("#63c8ff"), reach);
       } else if (mirror && THROWN_BACK.has(me.item)) {
-        aimArrow(painter, me, Math.PI, BACK_AIM, 1.6);
+        aimArrow(painter, by, Math.PI, BACK_AIM, 1.6);
       }
     }
     drawWorldSprites(scr, cam, race.scenery.items, race.karts, {
-      sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0 ? "rocket" : k.hover > 0 ? "hover" : "kart"),
+      sprites: (k: Kart) => kartSprites(k.build, LIVERIES[k.livery], k.rocket > 0 ? "rocket" : k.plane ? "plane" : k.hover > 0 ? "hover" : "kart"),
       sparks: (k: Kart) => (k.drifting ? Math.max(1, k.boostLevel) : 0),
       held: (k: Kart) => (k.item && k.roulette <= 0 ? this.held[k.item] : null),
       art: (item: ItemKind) => this.held[item],
       grabber: this.grabArt,
       dome: !!(theme.underwater || theme.helmets),
+      planes: aloft,
       drone: this.droneArt,
       underDeck: inTube ? undefined
         : (x: number, y: number) => t.bridges.some((b) => (x - t.xs[b.lower]) ** 2 + (y - t.ys[b.lower]) ** 2 < 24 * 24),
@@ -1317,18 +1366,19 @@ class Game {
       steer: (held.has("left") ? 1 : 0) - (held.has("right") ? 1 : 0),
       throttle: held.has("gas") ? 1 : 0, brake: held.has("brake") ? 1 : 0, drift: held.has("drift"),
       hop: held.has("drift") || held.has("hop"), item: held.has("item"), back: held.has("back"),
+      pitch: (held.has("up") || held.has("gas") ? 1 : 0) - (held.has("down") || held.has("brake") ? 1 : 0),
     };
     const original = this.input.drive.bind(this.input);
     const r = this.race;
     if (held.has("auto") && r) {
       if (this.debugPilot?.kart !== r.player) this.debugPilot = new RivalDriver(new Rand(5), r.player, 0);
       this.input.drive = () => {
-        const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items, [], r.features.pads);
+        const a = this.debugPilot!.act(1 / 60, r.track, r.cls, r.player, r.karts, r.items, r.obstacles.dangers(), r.features.pads, r.air);
         // ("noitems": the autopilot drives but leaves the items to the script)
         const flat = held.has("flat");
         return { ...a, throttle: flat ? 1 : a.throttle, brake: flat ? 0 : a.brake,
                  hop: !!a.hop || held.has("hop"), item: held.has("item") || (!held.has("noitems") && !!a.item),
-                 back: held.has("back") || (!held.has("noitems") && !!a.back) };
+                 back: held.has("back") || (!held.has("noitems") && !!a.back), pitch: a.pitch ?? 0 };
       };
     } else {
       this.input.drive = () => c;
@@ -1514,9 +1564,13 @@ class Game {
       }
     }
     // the track type, and what was built on the circuit
-    const t = r.track, ft = r.features;
-    const built = ([[t.bridges.length, "BRIDGE"], [t.hills.length, "CLIMB"], [ft.tunnels.length, "TUNNEL"],
-                    [ft.ramps.length, "JUMP"], [ft.pads.length, "PAD"]] as [number, string][])
+    // (in the sky: what the course was marked out with, its rings, gold ones among them, and its updrafts)
+    const t = r.track, ft = r.features, air = r.air;
+    const counts: [number, string][] = air ? [[air.rings.length, "RING"], [air.rings.filter((g) => g.gold).length, "GOLD RING"],
+                                              [air.drafts.length, "UPDRAFT"], [t.hills.length, "CLIMB"]]
+      : [[t.bridges.length, "BRIDGE"], [t.hills.length, "CLIMB"], [ft.tunnels.length, "TUNNEL"],
+         [ft.ramps.length, "JUMP"], [ft.pads.length, "PAD"]];
+    const built = counts
       .filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}${n > 1 ? "S" : ""}`).join("  ");
     for (const line of f.wrap(`${r.type.name}: ${built || "A PLAIN CIRCUIT"}`, W - 16).slice(0, 2)) {
       f.draw(scr, line, W / 2, y, { color: DIM, align: "center", outline: INK });

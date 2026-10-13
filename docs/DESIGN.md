@@ -376,7 +376,8 @@ start was impossible; filming one found it, and a test now drives the start proc
 (`core/music.ts`): four channels (pulse lead, pulse arpeggio, triangle bass, noise drums) over a
 chord progression, synthesized with WebAudio. The building site's is a hammering riff on the flat
 seventh with a hat on every sixteenth; the moon's is slow and weightless, long notes on the raised
-fourth of the lydian mode over a glittering arpeggio and hardly any drums. A test checks that
+fourth of the lydian mode over a glittering arpeggio and hardly any drums; the sky's is a bright
+major-key flight theme, long notes climbing over a quick arpeggio and a bouncing bass. A test checks that
 every world has a song of its own and that every bar of every song is whole. The tempo steps up
 on the final lap. The music
 leads the mix: the engine note (a sawtooth and a square an octave apart, pitched by speed) sits
@@ -690,6 +691,63 @@ worked out round the tube too (from where the camera stood in flat terms, a kart
 middle of the roof was seen from the wrong side for a frame). Sprites going by within 4 m of the
 camera, behind the kart it follows, are drawn see-through, and within 2.2 m not at all.
 
+**Sky Isles.** The whole race on the wing (`race/air.ts`, and a branch of `race/kart.ts` that
+flies). The dreamed circuit is a course through the air: the track's base is 55 m over the sea,
+and its climbs (the "air" style, which builds nothing under them) lift and drop it from there.
+Every kart is a plane: its voxel model gets swept wings out of its sides, it banks into its turns
+on the screen, and vapour streams off its wing tips. Up and down are its own controls (the keys
+that are gas and brake on the road, the stick's up and down on a pad or a phone); the engine runs
+by itself. Pitch eases the climb rate toward 9 m/s up or 15 m/s down, and the plane trades height
+for speed, 0.32 m/s of speed for every meter per second of climb, while the engine pulls it back
+toward cruising speed (the class's top speed and 15%), at 0.9 a second from under it and 0.3 from
+over it, so a dive's speed lasts; it never stalls under 12 m/s or goes over 1.42 times cruise.
+34 m over the course the air is too thin to climb, and 26 m either side of it a wind turns the
+plane back in, slowing it. The drift button pulls a plane round 35% tighter and charges a
+mini-turbo, as a drift does on the road. The ways to go faster are three: rings, one about every
+115 m (from 0.85 to 1.15 of that), each set across the course by a sine of where it is along the
+lap and up off it by another, so the line through them weaves, worth a second of boost and the
+gold ring, every fourth, 1.7; updrafts every 430 m or so, 38 m long and 7 m in radius, to one side,
+that lift a plane at 24 m/s² up to a climb of 16 m/s, to dive out of; and the slipstream of a
+plane from 2.5 to 14 m ahead and within 2.4 m across and up, 6% on cruise. Like pads and ramps,
+rings and updrafts are placed by where they are along the lap, never from the race's random
+numbers, so everything else lies where it would have. A plane under 1.2 m over the sea has
+flown into it: it goes under there (the race keeps the sea under it until the drone has it: kept
+at the course's height, it sank 55 m up in the air) and the drone lifts it back to the course.
+
+The camera rides the same way over and behind a plane whatever the course under it does (by the
+course's height under it, as on the road, it rode 3 m over a plane flying under a rise of the
+course, and the plane slid off the foot of the screen), and ahead of it, up or down, as it
+climbs or dives. The view pitches with the plane, the horizon dropping as it climbs and rising in
+a dive, and since a Mode-7 camera cannot pitch, it goes down or up a little to keep the plane
+where it was on the screen. It sees 420 m, the sea far below in Mode 7, the course painted
+across it as a pale shoal (no start line or grid on it: the start is a checkered banner hung
+over the course), and its islands as solids (13 for a world of the usual size, so about 30 in the
+sky's, which draws its courses 1.6 times as big), a beach round the
+foot, wooded slopes and bare rock at the top, set 50 m and their own size clear of the course
+so no plane diving low beside it flies into one, with sand painted under each and the shallows
+round it fading out into the deep. Balloons mark out either side of the course every 24 m,
+clouds stand off to the sides, over the course and under it, and specks of air rise through the
+updrafts (see-through, and not drawn by the camera: there they were white bars). A rival flying
+by under or over the camera, nearer it than the player's plane, is drawn see-through, and right
+by it not at all, or it filled the screen. Nothing stands beside the course, and nothing has a
+shadow but the planes, on the sea.
+
+The items work in the air (`Items.aloft`). Boxes and coins hang 2.5 m over the course, about
+where the rivals fly, and a plane gets them from 3.4 m above or below and 2.4 m across; rows of
+boxes are set out 1.6 times as wide. Oil let go is a cloud of black smoke where the plane was;
+pucks and flares fly on level at the height they were thrown from, bouncing off the wind's wall;
+an orb climbs or dives to its target's height; a bomb thrown back falls back to its thrower's
+height and hangs there, waiting; a rocket flies the course's line, easing to just over it. Rivals
+throw only at a plane within 2.6 m of their height. Rivals fly a line of their own: a band of
+height over the course, through the rings ahead (the sharper the class, the more often), up and
+over or down and under an airliner in the way. The obstacle is airliners: every 7 to 12 s, one
+starts across the course 170 to 230 m ahead of the player, side on, 110 m out, at 44 m/s and a
+height of its own (2 m under the course to 9 m over it). AIRLINER! warns of it until it is over
+the course; it is 30 m long and catches a plane within 3.2 m of it along the course and up and
+down, knocking it down into a spin. The countdown shows how to fly on a card, the HUD an
+altimeter (the course marked on it, PULL UP! low over the sea), and HOW TO PLAY has a page for
+flying. The results list the course's rings, gold rings and updrafts.
+
 **Something in the way.** Every world has its own (`race/obstacles.ts`), set out along the road as
 it is committed, each kind its own distance apart (a cow every 260 m, a geyser every 230, a
 wrecking ball every 360), and on flat road if it stands on the ground. Cows graze beside the road
@@ -726,7 +784,8 @@ as they rise (a grassy bank lies well back, a street's shop fronts stand upright
 with a dry-stone wall at their foot in the valley, a canyon of red rock in beds on the mesa, rock
 walls topped with coral on the reef, streets of lit shop fronts with their signs and floors of
 windows above in Tokyo, basalt cliffs with glowing seams in the volcano, site hoardings with
-containers stacked behind on the building site, banks of regolith on the moon. They keep clear of
+containers stacked behind on the building site, banks of regolith on the moon (none in the tunnel,
+nor in the sky, where nothing stands beside the course). They keep clear of
 bridges, tunnels, jumps, the line and whatever comes in from the side (cows, the police's alleys,
 a crane's mast); a wall holds a kart at the edge of the shoulder, and hazards and scenery keep
 off its land.
@@ -774,8 +833,8 @@ hard turn before a ramp was a trick, popping TRICK! up at the same ramps as the 
 wins over the gas, and held at a standstill it backs the kart up at up to 7 m/s; the grass slows
 a reversing kart's top speed but no longer drags it to a halt (it once cancelled all but 1 m/s^2
 of the reverse thrust, and reversing is how a kart gets out of the grass). HOW TO PLAY on the main menu is
-four short pages (keys, pad, touch and tips), each control drawn as a key cap or the stick beside a
-few words; it was one page of small text, too crowded to read.
+five short pages (keys, pad, touch, flying and tips), each control drawn as a key cap or the stick
+beside a few words; it was one page of small text, too crowded to read.
 
 **Items.** A row of four boxes spans the road every 210 m of committed road (the first one
 shortly after the start, none in the last 70 m before the line), with lines of coins between, so

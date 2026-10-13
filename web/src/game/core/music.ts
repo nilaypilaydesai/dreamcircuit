@@ -158,6 +158,25 @@ export const SONGS: Record<string, Song> = {
     arp: 16,
     drums: { kick: "x.........x.....", snare: "................", hat: "......x.......x." },
   },
+  // the sky: bright and soaring, a major-key flight theme, long notes climbing over a quick
+  // arpeggio and a bouncing bass, the drums light and airy
+  sky: {
+    bpm: 140,
+    chords: ["D", "A", "Bm", "G", "D", "A", "G", "A"],
+    lead: [
+      "F#5 - - . A5 - - . D6 - - - C#6 . A5 .",
+      "E5 - - . A5 - - . C#6 - - - B5 . A5 .",
+      "F#5 - - . B5 - - . D6 - - - F#6 - - .",
+      "G5 - - . B5 - - . D6 - - - B5 . G5 .",
+      "A5 . F#5 . A5 . D6 - - . E6 . F#6 - - .",
+      "E6 - - . C#6 - - . A5 - - . E6 . C#6 .",
+      "D6 - - . B5 - - . G5 - - . B5 . D6 .",
+      "C#6 - - - - - E6 - - - A6 - - - - .",
+    ],
+    bass: "bounce",
+    arp: 16,
+    drums: { kick: "x.......x.......", snare: "....x.......x...", hat: "x.x.x.x.x.x.x.x." },
+  },
 };
 
 const NAMES: Record<string, number> = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };

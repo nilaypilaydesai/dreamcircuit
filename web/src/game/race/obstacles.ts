@@ -2,7 +2,8 @@
 // valley, tumbleweeds blowing across the mesa, jellyfish drifting over the reef road, police cars
 // pulling out of the alleys in Tokyo to chase the player down, lava geysers bursting up through
 // the volcano's road, a wrecking ball swinging across the building site, meteors falling on the
-// moon (a ring on the road where each will land), and traffic in the tunnel. Pure logic:
+// moon (a ring on the road where each will land), traffic in the tunnel, and in the sky airliners
+// crossing the course, side on, out of the haze on one side and away on the other. Pure logic:
 // where each one is, when it can hit and what a hit does; main.ts draws them, and rivals steer
 // round them (dangers()).
 
@@ -10,9 +11,10 @@ import { Rand } from "../core/gfx";
 import { BANK_AT } from "../world/banks";
 import { HALF_WIDTH, type Track } from "../world/track";
 import { TUBE_LANE } from "../world/tube";
+import { SKY_LANE } from "./air";
 import { CLASSES, type Kart } from "./kart";
 
-export type ObstacleKind = "cow" | "tumbleweed" | "jelly" | "police" | "geyser" | "wrecker" | "meteor" | "traffic";
+export type ObstacleKind = "cow" | "tumbleweed" | "jelly" | "police" | "geyser" | "wrecker" | "meteor" | "traffic" | "airliner";
 
 /** Something in the way, at road point ``idx`` (arc length ``s``), ``offset`` m left of the
  * centerline, ``z`` m over the road; ``state`` and ``t`` (s in that state) say what it is doing. */
@@ -56,7 +58,8 @@ export function alleyBlocks(site: ObstacleSite): { a0: number; a1: number; b0: n
 }
 
 export type ObstacleSound = "moo" | "puff" | "zap" | "siren" | "ram" | "geyser" | "clang" | "impact" | "honk"
-  | "spun" | "shaken"; // (a police car spun out by an item; one that has given up the chase)
+  | "spun" | "shaken" // (a police car spun out by an item; one that has given up the chase)
+  | "jet" | "clipped"; // (an airliner coming; a plane it caught)
 export interface ObstacleEvent { sound: ObstacleSound; player: boolean; x: number; y: number }
 
 // states
@@ -68,6 +71,11 @@ export const METEOR_FALL = 0, METEOR_BURST = 1;
 export const WRECKER_PIVOT = 13.8, WRECKER_CABLE = 12.3, WRECKER_SWING = 1.0, WRECKER_PERIOD = 3.8;
 export const METEOR_FALL_TIME = 1.8, METEOR_HEIGHT = 70, METEOR_BLAST = 3.4;
 export const GEYSER_WARN_TIME = 1.0, GEYSER_BLOW_TIME = 1.3, GEYSER_HEIGHT = 7.5;
+// an airliner: AIRLINER_LEN m nose to tail, crossing the course side on at AIRLINER_SPEED, from
+// AIRLINER_OUT m out on one side to as far out on the other (seen coming for a couple of seconds
+// before it is over the course: race.ts warns the player)
+export const AIRLINER_LEN = 30, AIRLINER_SPEED = 44, AIRLINER_OUT = 110;
+const AIRLINER_THICK = 3.2; // m above and below its middle, and either side along the course, that it fills
 const POLICE_LEN = 4.4; // m, a police car's length (it rams from behind)
 const POLICE_STEER = 3; // m/s: the fastest a police car moves across the road onto the player's line
 const POLICE_LUNGE_AT = 9; // m behind the player: where it settles on a line and goes for the ram
@@ -76,10 +84,14 @@ const POLICE_ROAD = HALF_WIDTH + 1.5; // m: how far out from the middle of the r
 
 /** How far apart (m along the road) a world's obstacles are set out. */
 const SPACING: Record<ObstacleKind, number> = {
-  cow: 260, tumbleweed: 200, jelly: 170, police: 240, geyser: 230, wrecker: 360, meteor: 0, traffic: 0,
+  cow: 260, tumbleweed: 200, jelly: 170, police: 240, geyser: 230, wrecker: 360, meteor: 0, traffic: 0, airliner: 0,
 };
 /** The ones that stand on the ground, and so need flat road (not a climb, a bridge or a tunnel). */
 const GROUNDED = new Set<ObstacleKind>(["cow", "tumbleweed", "geyser", "wrecker"]);
+
+/** Where something in the way is, for rivals to steer round (``z``: an airliner's height over the
+ * sky's course, and ``s``, where it crosses it). */
+export interface Danger { x: number; y: number; r: number; z?: number; s?: number }
 
 export class Obstacles {
   list: Obstacle[] = [];
@@ -238,6 +250,7 @@ export class Obstacles {
       case "police": this.callPolice(track, player, ps, racing); break;
       case "meteor": if (racing) this.callMeteors(dt, track, player, ps); break;
       case "traffic": if (racing) this.callTraffic(track, ps); break;
+      case "airliner": if (racing) this.callAirliners(dt, track, player, ps); break;
       default: break;
     }
     for (const o of this.list) {
@@ -253,12 +266,13 @@ export class Obstacles {
         case "wrecker": this.wrecker(o, track); break;
         case "meteor": this.meteor(o); break;
         case "traffic": this.traffic(o, dt, track, ps); break;
+        case "airliner": this.airliner(o, dt, track); break;
       }
       if (racing && o.hot) for (const k of karts) this.hit(o, k, track);
     }
     this.list = this.list.filter((o) => !(o.kind === "tumbleweed" && o.state === 1) &&
       !(o.kind === "police" && o.state === POLICE_GONE && o.t > 3) && !(o.kind === "meteor" && o.state === METEOR_BURST && o.t > 0.7) &&
-      !(o.kind === "traffic" && this.ahead(track, ps, o.s) < -120));
+      !(o.kind === "traffic" && this.ahead(track, ps, o.s) < -120) && !(o.kind === "airliner" && o.state === 1));
   }
 
   // -------------------------------------------------------------------------------------- cows
@@ -536,6 +550,43 @@ export class Obstacles {
     this.locate(track, o);
   }
 
+  // ---------------------------------------------------------------------------------- airliners
+
+  /** Now and then an airliner, 170 to 230 m up the course from the player, coming across it from one
+   * side, at its own height over the course. */
+  private callAirliners(dt: number, track: Track, player: Kart, ps: number): void {
+    this.spawnIn -= dt;
+    if (this.spawnIn > 0 || player.finished) return;
+    this.spawnIn = this.rng.range(7, 12);
+    if (this.list.some((o) => o.kind === "airliner")) return;
+    const s = ps + this.rng.range(170, 230);
+    if (!track.locked && s > (track.s[track.count - 1] ?? 0) - 10) return;
+    const side = this.rng.next() < 0.5 ? 1 : -1;
+    const o = this.make("airliner", track, this.indexAt(track, s), side * AIRLINER_OUT);
+    o.s = s;
+    o.side = side;
+    o.v = AIRLINER_SPEED;
+    o.z = this.rng.range(-2, 9); // m over the course
+    o.r = AIRLINER_LEN / 2;
+    this.list.push(o);
+    this.events.push({ sound: "jet", player: true, x: o.x, y: o.y });
+  }
+
+  /** Across the course, side on: in the way while any of it is over the course. */
+  private airliner(o: Obstacle, dt: number, track: Track): void {
+    o.offset -= o.side * o.v * dt;
+    o.hot = Math.abs(o.offset) < SKY_LANE + AIRLINER_LEN / 2;
+    if (o.side * o.offset < -AIRLINER_OUT) o.state = 1; // (gone on its way)
+    const [tx, ty] = track.tangent(o.idx);
+    o.heading = Math.atan2(-o.side * tx, o.side * ty); // (across the course, the way it is going)
+    this.locate(track, o);
+  }
+
+  /** Whether an airliner is on its way across the course, and not yet over it: for the warning. */
+  get airlinerComing(): Obstacle | null {
+    return this.list.find((o) => o.kind === "airliner" && o.state === 0 && !o.hot && o.side * o.offset > 0) ?? null;
+  }
+
   // -------------------------------------------------------------------------------------- hits
 
   /** Kart k against obstacle o: what happens if it is in the way (and low enough to hit). */
@@ -564,6 +615,17 @@ export class Obstacles {
         k.v = Math.min(k.v, o.v * 0.6);
         this.events.push({ sound: "honk", player: k.isPlayer, x: o.x, y: o.y });
       }
+      return;
+    }
+    if (o.kind === "airliner") {
+      // side on across the course: its length across it, its thickness along it and up and down
+      const [tx, ty] = track.tangent(o.idx);
+      const along = dx * tx + dy * ty, across = -dx * ty + dy * tx;
+      if (Math.abs(along) > AIRLINER_THICK || Math.abs(across) > AIRLINER_LEN / 2 || Math.abs(up - o.z) > AIRLINER_THICK) return;
+      if (!k.spinOut(1.3)) return;
+      k.v *= 0.7;
+      k.vz = Math.min(k.vz, -6); // (knocked down out of its way)
+      this.events.push({ sound: "clipped", player: k.isPlayer, x: o.x, y: o.y });
       return;
     }
     const d = Math.hypot(dx, dy);
@@ -617,10 +679,13 @@ export class Obstacles {
     }
   }
 
-  /** What rivals should steer round: where each obstacle that could hit them is. */
-  dangers(): { x: number; y: number; r: number }[] {
+  /** What rivals should steer round: where each obstacle that could hit them is (and, for an airliner
+   * crossing the sky's course, how high it is over the course: rivals fly over or under it). */
+  dangers(): Danger[] {
     return this.list.filter((o) => (o.kind === "meteor" && o.state === METEOR_FALL) || o.hot ||
-      (o.kind === "geyser" && o.state === GEYSER_WARN) || (o.kind === "wrecker" && o.z < 6))
-      .map((o) => ({ x: o.x, y: o.y, r: o.kind === "wrecker" ? 3 : o.r + 0.5 }));
+      (o.kind === "geyser" && o.state === GEYSER_WARN) || (o.kind === "wrecker" && o.z < 6) ||
+      (o.kind === "airliner" && o.state === 0))
+      .map((o) => o.kind === "airliner" ? { x: o.x, y: o.y, r: AIRLINER_LEN / 2 + 2, z: o.z, s: o.s }
+        : { x: o.x, y: o.y, r: o.kind === "wrecker" ? 3 : o.r + 0.5 });
   }
 }

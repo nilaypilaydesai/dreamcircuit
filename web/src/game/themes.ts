@@ -2,7 +2,7 @@
 
 import { hex } from "./core/gfx";
 import {
-  type HillRule, MESA_HILLS, MOON_HILLS, REEF_HILLS, SITE_HILLS, TOKYO_HILLS, TUBE_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
+  type HillRule, MESA_HILLS, MOON_HILLS, REEF_HILLS, SITE_HILLS, SKY_HILLS, TOKYO_HILLS, TUBE_HILLS, VALLEY_HILLS, VOLCANO_HILLS,
 } from "./race/tracktypes";
 import type { ObstacleKind } from "./race/obstacles";
 import type { BankRule } from "./world/banks";
@@ -46,6 +46,7 @@ export interface Theme {
   winding?: boolean; // a more winding road (the dream leans wild): Tokyo's streets, for drifting
   smooth?: boolean; // a smoother road (the dream leans calm): the tube's bends wide enough to drive round inside
   tube?: boolean; // the whole race is run inside a tube (world/tube.ts), up its walls and round over its ceiling
+  sky?: boolean; // the whole race is flown: every kart a little plane, over the sea (race/air.ts)
   farAmp?: number; // how tall the far hills on the horizon are (default 26 px)
   volcano?: boolean; // a lake of lava around a rock road (drive into it and a drone fishes you
   // out), crater walls with lava falls all around, embers in the air
@@ -186,5 +187,22 @@ export const THEMES: Theme[] = [
     gravity: 0.6, scale: 1.6, hills: MOON_HILLS, hillStyle: "crater", helmets: true, terrain: "craters", skyline: "moon",
     wall: hex("#9aa0aa"), relief: 3, landforms: ["rim"], hazard: "chasm", obstacle: "meteor",
     banks: { style: "regolith", len: [40, 90], h: [2.5, 5], gap: [140, 280], both: 0.3 },
+  },
+  {
+    // the sky: the whole race on the wing, every kart a little plane (race/air.ts), over a sea of
+    // islands late in the afternoon. The dreamed circuit is a course through the air 55 m over the
+    // water, climbing and diving (its climbs build nothing under them), marked out by balloons
+    // either side, threaded with rings to fly through and updrafts to ride; far below, the circuit
+    // shows as a shoal across the sea. Airliners cross it, and a plane flown into the sea is fished
+    // out by the drone. Its circuits are drawn bigger and dreamed calmer: planes fly fast, and turn
+    // wide
+    id: "sky", name: "SKY ISLES", blurb: "THE WHOLE RACE ON THE WING: FLY THE RINGS, RIDE THE UPDRAFTS",
+    skyTop: hex("#2c6fd2"), skyHorizon: hex("#ffe2b4"), fog: hex("#cde3f2"), sun: hex("#fff1bd"), stars: false,
+    farHills: hex("#8fb0cf"), nearHills: hex("#5f9a7a"), clouds: hex("#ffffff"),
+    ground: [hex("#1f6dac"), hex("#1d66a3")], groundSpeck: hex("#4a97d2"),
+    shoulder: hex("#2f93bd"), road: hex("#4bbfbe"), roadSpeck: hex("#61d1cd"),
+    edge: hex("#eafcff"), kerb: [hex("#eafcff"), hex("#4bbfbe")], barrier: hex("#2f93bd"),
+    near: [], far: [],
+    sky: true, smooth: true, scale: 1.6, hills: SKY_HILLS, hillStyle: "air", ripples: true, landforms: ["isle"], obstacle: "airliner",
   },
 ];

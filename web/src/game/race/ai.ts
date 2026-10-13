@@ -7,14 +7,17 @@
 // there is nobody to hit ahead), save each item for the moment it works best (a horn for when
 // something is about to hit them), and drive half blind through static. In the harbor tunnel they
 // go for its hover pads, and hovering, ride up its walls on the straights, now and then for a pad up
-// there.
+// there. In the sky they fly: the same racing line across the course, each at its own height over
+// it, climbing or diving for a ring ahead, and over or under an airliner crossing.
 
 import { Rand } from "../core/gfx";
 import { HALF_WIDTH, type Track } from "../world/track";
 import { TUBE_FLOOR, TUBE_R, holdSpeed } from "../world/tube";
+import { type AirCourse, type Ring, SKY_LANE } from "./air";
 import { PAD_LEN, type Pad } from "./features";
 import { AIMED, AIM_MAX, type Items, THROWN_BACK, TRAILS } from "./items";
 import type { ClassParams, Controls, Kart } from "./kart";
+import type { Danger } from "./obstacles";
 
 const WALL_TOP = TUBE_FLOOR + Math.PI * TUBE_R; // m round the tube to the top of a wall (the roof's pads are the player's)
 // s of hover a rival keeps in hand to come back down off a wall: high up one without it, a kart
@@ -43,6 +46,10 @@ export class RivalDriver {
   private weighed: Pad | null = null; // and the last one it thought about going for
   private ride = 0; // and hovering, the wall it is riding (1 or -1; 0: on the floor)
   private lanes = 3; // m either side of the middle of the road it picks a lane in (more on the tube's wide floor)
+  private ring: Ring | null = null; // in the sky: the ring it is flying for
+  private weighedRing: Ring | null = null; // and the last one it thought about
+  private airDrifting = false; // in the sky: pulled round a tight turn (the drift button)
+  private airDriftCd = 0;
 
   constructor(private readonly rng: Rand, readonly kart: Kart, rank: number) {
     this.lane = rng.range(-2.5, 2.5);
@@ -53,8 +60,9 @@ export class RivalDriver {
   /** ``dangers``: what is in the way on the road (race/obstacles.ts), to steer round; ``pads``, the
    * boost pads (in the tunnel's tube, the hover pads are worth going for). */
   act(dt: number, track: Track, cls: ClassParams, player: Kart, others: Kart[], items?: Items,
-      dangers: readonly { x: number; y: number; r: number }[] = [], pads: readonly Pad[] = []): Controls {
+      dangers: readonly Danger[] = [], pads: readonly Pad[] = [], air?: AirCourse | null): Controls {
     const k = this.kart;
+    if (k.plane) return this.fly(dt, track, cls, player, others, items, dangers, air ?? null);
     const v = Math.max(k.v, 0);
     // (the tube's floor is near twice as wide as a road: its lanes are wider apart, and its edge further out)
     const lanes = k.tube ? TUBE_FLOOR - 3 : 3, floor = k.tube ? TUBE_FLOOR : HALF_WIDTH;
@@ -185,6 +193,86 @@ export class RivalDriver {
     return this.ride * high;
   }
 
+  /** In the sky: flown. The racing line across the course as on the road, a lane drifting about it,
+   * and a height to fly at: its own band over the course ahead (each rival its own), a ring ahead to
+   * fly through (by class, not every one), and over or under an airliner crossing ahead. The engine
+   * runs by itself: there are no brakes in the air, so the class's pace, its own skill and the
+   * rubber band go in its kart's edge in speed (Kart.pace). */
+  private fly(dt: number, track: Track, cls: ClassParams, player: Kart, others: Kart[], items: Items | undefined,
+              dangers: readonly Danger[], air: AirCourse | null): Controls {
+    const k = this.kart, v = Math.max(k.v, 0), s = track.s[k.idx];
+    const L = track.locked ? track.length : Infinity;
+    const ahead = (s0: number) => (Number.isFinite(L) ? ((((s0 - s + L / 2) % L) + L) % L) - L / 2 : s0 - s);
+    if (this.rng.next() < dt * 0.3) this.laneTarget = this.rng.range(-9, 9);
+    // room for a plane right in front, at its height
+    for (const o of others) {
+      if (o === k) continue;
+      const dx = o.x - k.x, dy = o.y - k.y;
+      const fwd = dx * Math.cos(k.heading) + dy * Math.sin(k.heading);
+      const lat = -dx * Math.sin(k.heading) + dy * Math.cos(k.heading);
+      if (fwd > 0 && fwd < 9 && Math.abs(lat) < 2.5 && Math.abs(o.elev - k.elev) < 2.5) this.laneTarget = lat > 0 ? -4 : 4;
+    }
+    // a height: its own band over the course ahead (each rival its own, a meter under it to five over)
+    const course = (m: number) => track.elev[track.ahead(k.idx, m)] ?? k.ground;
+    let alt = course(35) - 1 + ((k.id * 37) % 7);
+    // a ring ahead to fly through, the sharper the class the more of them
+    if (air) {
+      const d = this.ring ? ahead(this.ring.s0) : 0;
+      if (this.ring && (d < 1 || d > 140)) this.ring = null;
+      if (!this.ring) {
+        for (const r of air.rings) {
+          const dr = ahead(r.s0);
+          if (dr < 25 || dr > 120 || r === this.weighedRing) continue;
+          this.weighedRing = r;
+          if (this.rng.next() < 0.45 + 0.55 * cls.aiCorner) this.ring = r;
+          break;
+        }
+      }
+      if (this.ring) {
+        this.laneTarget = this.ring.offset;
+        alt = (track.elev[this.ring.start] ?? k.ground) + this.ring.lift;
+      }
+    }
+    // an airliner crossing ahead at its height: over it, or under it (never down into the sea)
+    for (const o of dangers) {
+      if (o.z === undefined || o.s === undefined) continue;
+      const d = ahead(o.s);
+      if (d < -8 || d > 75) continue;
+      const z = k.ground + o.z;
+      if (Math.abs(alt - z) < 7.5) alt = k.elev >= z || z - 9 < 10 ? z + 9 : z - 9;
+    }
+    this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * 1.2);
+    // steering: pure pursuit on a line through the lane, cutting the inside of a bend
+    const look = track.ahead(k.idx, 9 + v * 0.45);
+    const kappa = track.curvature(look), edge = SKY_LANE - 3;
+    const line = Math.max(-edge, Math.min(edge, this.lane + Math.sign(kappa) * Math.min(4, Math.abs(kappa) * 150)));
+    const [tx, ty] = track.tangent(look);
+    const gx = track.xs[look] - ty * line, gy = track.ys[look] + tx * line;
+    const ang = Math.atan2(gy - k.y, gx - k.x) - k.heading;
+    const err = Math.atan2(Math.sin(ang), Math.cos(ang));
+    const blind = k.staticT > 0 ? 4 : 1;
+    this.wobble += (this.rng.range(-1, 1) * cls.aiNoise * blind - this.wobble) * Math.min(1, dt * 2);
+    const steer = Math.max(-1, Math.min(1, err * 2.4 + this.wobble));
+    // up or down to its height, easing off as it gets there
+    const pitch = Math.max(-1, Math.min(1, (alt - k.elev) * 0.25 - k.vz * 0.12));
+    // pace: its class's edge and pace, its own skill, and the rubber band
+    const gap = k.dist - player.dist;
+    k.pace = cls.aiPace * cls.aiSpeed * this.skill * (gap < -70 ? 1.06 : gap > 60 ? 0.93 : 1) * (k.staticT > 0 ? 0.95 : 1);
+    // pulled round a tight turn with the drift button, for the mini-turbo, as the class decides
+    this.airDriftCd -= dt;
+    const tight = Math.abs(track.curvature(track.ahead(k.idx, 6 + v * 0.3)));
+    if (this.airDrifting) {
+      if (tight < 1 / 80) this.airDrifting = false;
+    } else if (this.airDriftCd <= 0 && tight > 1 / 50 && v > 16 && Math.sign(steer) === Math.sign(kappa)) {
+      this.airDriftCd = 2.5;
+      this.airDrifting = this.rng.next() < 0.15 + 0.85 * cls.aiCorner;
+    }
+    return {
+      steer, throttle: 0, brake: 0, pitch, drift: this.airDrifting, hop: false,
+      item: this.itemButton(track, cls, others, items), back: this.backButton(cls, others),
+    };
+  }
+
   /** Hop at a ramp's lip (a tap of the drift button) for a trick, timed by skill. */
   private trick(cls: ClassParams): boolean {
     const k = this.kart;
@@ -251,7 +339,7 @@ export class RivalDriver {
     const k = this.kart;
     let best: number | null = null, bestD = range;
     for (const o of others) {
-      if (o === k || o.finished || o.phantom > 0) continue;
+      if (o === k || o.finished || o.phantom > 0 || !this.level(o)) continue;
       const dx = o.x - k.x, dy = o.y - k.y, d = Math.hypot(dx, dy);
       const off = Math.atan2(Math.sin(Math.atan2(dy, dx) - k.heading), Math.cos(Math.atan2(dy, dx) - k.heading));
       if (d < bestD && d > 3 && Math.abs(off) > Math.PI - AIM_MAX) {
@@ -268,7 +356,7 @@ export class RivalDriver {
     const k = this.kart;
     let best: number | null = null, bestD = range;
     for (const o of others) {
-      if (o === k || o.finished || o.phantom > 0) continue;
+      if (o === k || o.finished || o.phantom > 0 || !this.level(o)) continue;
       const dx = o.x - k.x, dy = o.y - k.y, d = Math.hypot(dx, dy);
       const off = Math.atan2(Math.sin(Math.atan2(dy, dx) - k.heading), Math.cos(Math.atan2(dy, dx) - k.heading));
       if (d < bestD && d > 3 && Math.abs(off) < AIM_MAX) {
@@ -277,6 +365,12 @@ export class RivalDriver {
       }
     }
     return best;
+  }
+
+  /** Whether a throw can reach ``o``: anywhere on the road; in the sky, only flying at about this
+   * plane's height (what is thrown there flies on level, race/items.ts). */
+  private level(o: Kart): boolean {
+    return !this.kart.plane || Math.abs(o.elev - this.kart.elev) < 2.6;
   }
 
   /** Race distance to the nearest kart ahead and behind. */
@@ -313,7 +407,7 @@ export class RivalDriver {
       case "triple":
       case "gold": {
         const straight = [10, 25, 40].every((m) => Math.abs(track.curvature(track.ahead(k.idx, m))) < 1 / 90);
-        return straight && k.v > 0.5 * cls.vmax && k.surface === "road";
+        return straight && k.v > 0.5 * cls.vmax && (k.surface === "road" || k.plane);
       }
       case "oil":
       case "oil3": return behind > 3 && behind < 28;
@@ -328,7 +422,7 @@ export class RivalDriver {
       case "static": return k.place > 1; // they find their targets by themselves
       case "horn": return this.threatened(items) || others.some((o) => o !== k && !o.finished &&
         Math.hypot(o.x - k.x, o.y - k.y) < 5) || k.itemAge > 14;
-      case "rocket": return k.surface === "road";
+      case "rocket": return k.surface === "road" || k.plane;
       default: return true; // prism, shock, grabber, jackpot, coin, phantom
     }
   }

@@ -4,12 +4,14 @@
 //
 // Touch races with one thumb on a joystick fixed low on the left (steer; push it all the way over
 // to drift, pull it back to brake) while the gas is automatic, and the other on DRIFT (which also
-// hops, for tricks), ITEM and BACK (the item thrown behind; R on a keyboard, X on a pad).
+// hops, for tricks), ITEM and BACK (the item thrown behind; R on a keyboard, X on a pad). In the
+// sky, where every kart flies, up and down climb and dive: the up and down keys, the stick (pushed
+// up or pulled down) and a pad's left stick.
 
 // "cancel" is the pad's B: back in menus, but not a pause in a race (there B brakes)
 export type MenuEvent = "up" | "down" | "left" | "right" | "confirm" | "back" | "cancel" | "pause";
 
-export interface DriveInput { steer: number; throttle: number; brake: number; drift: boolean; hop: boolean; item: boolean; back: boolean }
+export interface DriveInput { steer: number; throttle: number; brake: number; drift: boolean; hop: boolean; item: boolean; back: boolean; pitch: number }
 
 const DRIVE: Record<string, string> = {
   ArrowUp: "gas", KeyW: "gas", ArrowDown: "brake", KeyS: "brake",
@@ -190,7 +192,7 @@ export class GameInput {
     }
   }
 
-  private pollPad(): { steer: number; gas: number; brake: number; drift: boolean; item: boolean; back: boolean } | null {
+  private pollPad(): { steer: number; gas: number; brake: number; drift: boolean; item: boolean; back: boolean; pitch: number } | null {
     const pads = navigator.getGamepads?.() ?? [];
     for (const p of pads) {
       if (!p) continue;
@@ -214,6 +216,8 @@ export class GameInput {
         drift: !!(p.buttons[5]?.pressed || p.buttons[4]?.pressed),
         item: !!p.buttons[3]?.pressed, // Y
         back: !!p.buttons[2]?.pressed, // X: the item thrown behind
+        // (in the sky: the left stick up climbs, down dives; so does the d-pad)
+        pitch: Math.max(-1, Math.min(1, -(Math.abs(ay) > 0.15 ? ay : 0) + (p.buttons[12]?.pressed ? 1 : 0) - (p.buttons[13]?.pressed ? 1 : 0))),
       };
     }
     return null;
@@ -231,6 +235,7 @@ export class GameInput {
       // (tricks come from the drift key or button only: on touch, the stick pushed hard over drifts
       // too, and every hard turn before a jump was taken as a trick)
       hop: h.has("drift"),
+      pitch: (h.has("gas") ? 1 : 0) - (h.has("brake") ? 1 : 0),
     };
     if (this.touchMode) {
       const s = stickControls(this.stickVec[0], this.stickVec[1], this.stickDrift);
@@ -241,6 +246,9 @@ export class GameInput {
       k.drift ||= this.stickId !== null && s.drift;
       const gas = countdown ? (this.stickId !== null ? 1 : 0) : k.brake > 0 ? 0 : 1;
       k.throttle = Math.max(k.throttle, gas);
+      // (the stick up or down, past its dead zone: climb or dive)
+      const up = -this.stickVec[1];
+      if (this.stickId !== null && Math.abs(up) > DEAD) k.pitch = Math.max(-1, Math.min(1, (up - Math.sign(up) * DEAD) / (1 - DEAD)));
     }
     if (!pad) return k;
     return {
@@ -251,6 +259,7 @@ export class GameInput {
       hop: k.hop || pad.drift,
       item: k.item || pad.item,
       back: k.back || pad.back,
+      pitch: Math.abs(pad.pitch) > Math.abs(k.pitch) ? pad.pitch : k.pitch,
     };
   }
 

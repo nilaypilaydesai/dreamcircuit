@@ -1,6 +1,7 @@
-// How to play: four short pages instead of one wall of text: the keyboard, the gamepad and the
-// touch controls, each drawn as key caps (or the stick) beside a few words, and the tips, a line
-// apiece. Left and right turn the pages; any other key goes back.
+// How to play: five short pages instead of one wall of text: the keyboard, the gamepad and the
+// touch controls, each drawn as key caps (or the stick) beside a few words; flying, for the sky's
+// world (its controls are not the road's), and the tips, a line apiece. Left and right turn the
+// pages; any other key goes back.
 
 import type { PixelFont } from "../core/font";
 import { H, W, hex, type Screen } from "../core/gfx";
@@ -13,7 +14,7 @@ const DIM = hex("#8f87b8");
 const TEXT = hex("#f1eeff");
 const CAP = hex("#2a2350"), CAP_TOP = hex("#6a5cb0"), CAP_SIDE = hex("#16122c");
 
-export const HOWTO_PAGES = ["KEYS", "PAD", "TOUCH", "TIPS"];
+export const HOWTO_PAGES = ["KEYS", "PAD", "TOUCH", "FLY", "TIPS"];
 
 type Row = { caps: string[]; text: string };
 
@@ -46,6 +47,22 @@ const TOUCH: Row[] = [
   { caps: ["BACK"], text: "THROW IT BEHIND YOU" },
   { caps: ["II"], text: "PAUSE" },
 ];
+// the sky (SKY ISLES): the whole race on the wing
+const FLY: Row[] = [
+  { caps: ["^", "W"], text: "CLIMB. THE ENGINE RUNS BY ITSELF" },
+  { caps: ["v", "S"], text: "DIVE: DOWN IS FASTER, UP IS SLOWER" },
+  { caps: ["<", ">"], text: "BANK INTO A TURN" },
+  { caps: ["SHIFT"], text: "PULL ROUND TIGHT, LET GO: TURBO" },
+];
+// (a line apiece: the page holds the keys too)
+const FLY_TIPS: [string, string][] = [
+  ["STICK", "PAD/PHONE: UP CLIMBS, DOWN DIVES"],
+  ["RINGS", "THROUGH ONE: A BOOST. GOLD: MORE"],
+  ["UPDRAFT", "RISING AIR LIFTS YOU. DIVE OFF IT"],
+  ["TAIL", "BEHIND A PLANE: ITS SLIPSTREAM"],
+  ["JETS", "AIRLINERS CROSS: GO OVER OR UNDER"],
+  ["ITEMS", "THROWN LEVEL. OIL IS A SMOKE CLOUD"],
+];
 const TIPS: [string, string][] = [
   ["DRIFT", "HOLD IN A TURN, LET GO: MINI-TURBO"],
   ["START", "GAS JUST BEFORE GO: ROCKET START"],
@@ -55,6 +72,7 @@ const TIPS: [string, string][] = [
   ["COINS", "UP TO 10: EACH ADDS TOP SPEED"],
   ["FALLS", "OFF A BRIDGE, INTO LAVA OR A POND: A DRONE LIFTS YOU OUT"],
   ["MOON", "LOW GRAVITY: YOU FLOAT OVER CRESTS"],
+  ["TUNNEL", "HOVER PAD: RIDE WALLS AND THE ROOF"],
 ];
 
 /** A thumb stick, from above: a ring for its well and the knob in it, centred or pushed
@@ -112,6 +130,19 @@ function rows(scr: Screen, f: PixelFont, list: Row[], x: number, y: number, widt
   });
 }
 
+/** A label, then the tip in a line or two; the rows spread out to fill ``room`` px from y. */
+function tips(scr: Screen, f: PixelFont, list: [string, string][], x: number, y: number, width: number, room: number): void {
+  const textX = x + 64, textW = width - 64;
+  const wrapped = list.map(([, t]) => f.wrap(t, textW).slice(0, 2));
+  const used = wrapped.reduce((a, l) => a + l.length * 10, 0);
+  const gap = Math.max(1, Math.min(9, Math.floor((room - used) / (list.length - 1))));
+  list.forEach(([label], i) => {
+    f.draw(scr, label, x, y, { color: EDGE });
+    wrapped[i].forEach((line, j) => f.draw(scr, line, textX, y + j * 10, { color: TEXT }));
+    y += wrapped[i].length * 10 + gap;
+  });
+}
+
 /** Draw page ``page`` of how to play. */
 export function drawHowTo(scr: Screen, f: PixelFont, page: number, touch: boolean, now: number): void {
   const pw = Math.min(W - 16, 380), ph = H - 12, x0 = Math.round((W - pw) / 2), y0 = 6;
@@ -135,19 +166,12 @@ export function drawHowTo(scr: Screen, f: PixelFont, page: number, touch: boolea
   if (page === 0) rows(scr, f, KEYS, cx0, top, inner, 104, room);
   else if (page === 1) rows(scr, f, PAD, cx0, top, inner, 52, room);
   else if (page === 2) rows(scr, f, TOUCH, cx0, top, inner, 46, room);
-  else {
-    // a label, then the tip in a line or two; the rows spread out to fill the page
-    const textX = cx0 + 64, textW = inner - 64;
-    const wrapped = TIPS.map(([, t]) => f.wrap(t, textW).slice(0, 2));
-    const used = wrapped.reduce((a, l) => a + l.length * 10, 0);
-    const gap = Math.max(3, Math.min(9, Math.floor((room - used) / (TIPS.length - 1))));
-    let y = top;
-    TIPS.forEach(([label], i) => {
-      f.draw(scr, label, cx0, y, { color: EDGE });
-      wrapped[i].forEach((line, j) => f.draw(scr, line, textX, y + j * 10, { color: TEXT }));
-      y += wrapped[i].length * 10 + gap;
-    });
-  }
+  else if (page === 3) {
+    // the keys for flying, then the rest of it a line apiece
+    const keys = FLY.length * 13 + 3 * (FLY.length - 1);
+    rows(scr, f, FLY, cx0, top, inner, 56, keys);
+    tips(scr, f, FLY_TIPS, cx0, top + keys + 8, inner, room - keys - 8);
+  } else tips(scr, f, TIPS, cx0, top, inner, room);
   const foot = touch ? "TAP FOR THE NEXT PAGE" : "< > PAGES     ANY OTHER KEY: BACK";
   if (Math.floor(now * 2) % 2 === 0 || page > 0) f.draw(scr, foot, W / 2, y0 + ph - 13, { color: DIM, align: "center" });
 }

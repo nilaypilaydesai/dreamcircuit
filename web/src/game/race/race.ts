@@ -13,10 +13,11 @@ import { FIRST_SEG, HALF_WIDTH, type Layout, N, SPACING, Track } from "../world/
 import { TUBE_FLOOR, tubeAt } from "../world/tube";
 import { type Designer, LiveCircuit } from "../world/trackgen";
 import { RivalDriver } from "./ai";
+import { AirCourse, DRAFT_LIFT, DRAFT_RISE, GOLD_BOOST, RING_BOOST, SKY_BASE, SKY_ITEM_SPREAD, SKY_LANE } from "./air";
 import { Features, PAD_LEN, type Pad, RAMP_LEN, TUNNEL_LEN } from "./features";
 import { AIMED, AIM_MAX, AIM_RATE, type Field, type ItemKind, Items, ROCKET_TAIL, rocketPasses } from "./items";
 import { ALLEY_AT, ALLEY_DEPTH, type ObstacleSite, type ObstacleSound, Obstacles, alleyBlocks } from "./obstacles";
-import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, WALL_FALL_TILT, HOVER_TIME, collideKarts } from "./kart";
+import { CLASSES, type Controls, type Difficulty, FALL_SWAP, GRAVITY, Kart, SEA_CRASH, WALL_FALL_TILT, HOVER_TIME, collideKarts } from "./kart";
 import type { Standing } from "./odds";
 import { type Build, DEFAULT_BUILD, rivalBuild } from "./parts";
 import {
@@ -72,7 +73,10 @@ export type RaceEvent =
   | { kind: "lava" } // the player drove into the lava
   | { kind: "fell"; into: FallKind } // or into a hazard, or off the edge of raised road
   | { kind: "rescued" } // and was lifted out at the road (the camera cuts there)
-  | { kind: "obstacle"; sound: ObstacleSound; near: boolean }; // a cow, a police car, a geyser... (race/obstacles.ts)
+  | { kind: "obstacle"; sound: ObstacleSound; near: boolean } // a cow, a police car, a geyser... (race/obstacles.ts)
+  | { kind: "ring"; gold: boolean } // the player flew through a ring (the sky)
+  | { kind: "draft" } // and into an updraft
+  | { kind: "slip" }; // and has been in another plane's slipstream long enough for its pull
 
 export interface RaceSetup {
   rivals: number; // 0..7
@@ -148,6 +152,8 @@ export class Race {
   /** What gets in the way on the road in this world (cows, police, a wrecking ball...). */
   readonly obstacles: Obstacles;
   readonly features: Features;
+  /** The sky's rings and updrafts (race/air.ts); null in every other world. */
+  readonly air: AirCourse | null;
   readonly karts: Kart[] = [];
   readonly player: Kart;
   private readonly drivers: RivalDriver[] = [];
@@ -178,6 +184,7 @@ export class Race {
   private readonly hillRule: HillRule | null; // climbs: the track type's, or the world's
   private aimPhase = 0; // where the player's aiming arrow is in its sweep
   private hovered = false; // the player has hovered this race
+  private inDraft = false; // the sky: the player is in an updraft
   private hoverHint = -Infinity; // race clock when the player was last told the walls need hover
   private bridgesSeen = 0;
   /** How the player is driving lap 1 (smoothed), which sets the style of the road ahead. */
@@ -191,10 +198,13 @@ export class Race {
     this.type = trackType(setup.trackType);
     this.hillRule = this.type.hills ?? setup.theme.hills ?? null;
     this.nextHill = this.hillRule ? Math.max(60, this.hillRule.gap[1]) : Infinity;
+    // (in the sky no pads: rings instead; and no jumps, as nothing there is flat road)
     this.features = new Features({
-      tunnels: !!setup.theme.tunnels, ramps: this.type.ramps ?? DEFAULT_RAMPS, pads: this.type.pads ?? DEFAULT_PADS,
+      tunnels: !!setup.theme.tunnels, ramps: this.type.ramps ?? DEFAULT_RAMPS,
+      pads: setup.theme.sky ? { gap: Infinity, straights: false } : this.type.pads ?? DEFAULT_PADS,
       gravity: setup.theme.gravity ?? 1, tube: !!setup.theme.tube,
     });
+    this.air = setup.theme.sky ? new AirCourse() : null;
     this.cls = CLASSES[setup.difficulty];
     this.tex = new WorldTexture(setup.theme, setup.seed);
     this.scenery = new Scenery(setup.theme, setup.seed + 1, banner);
@@ -213,11 +223,17 @@ export class Race {
       this.items.spread = TUBE_FLOOR / HALF_WIDTH;
       this.items.edge = TUBE_FLOOR;
     }
+    if (setup.theme.sky) { // (in the air: rows of boxes wider across, and the wind's wall the edge)
+      this.items.aloft = true;
+      this.items.spread = SKY_ITEM_SPREAD;
+      this.items.edge = SKY_LANE;
+    }
     // a map is a layout: each world draws it at its own scale (the moon's are bigger)
     const scale = setup.theme.scale ?? 1;
     if (setup.replay) {
       this.live = null;
       this.track = new Track();
+      if (setup.theme.sky) this.track.base = SKY_BASE; // (the course flies over the sea)
       this.track.addKnown(Array.from({ length: N }, (_, j) => j), setup.replay.map((v) => v * scale));
       this.onCommit(0, this.track.count);
       this.onLock();
@@ -225,6 +241,7 @@ export class Race {
       if (!designer) throw new Error("the circuit designer is not loaded");
       this.live = new LiveCircuit(designer, new Rand(setup.seed + 2), setup.layout ?? this.type.layout, scale);
       this.track = this.live.track;
+      if (setup.theme.sky) this.track.base = SKY_BASE; // (the course flies over the sea)
       this.live.onCommit = (a, b) => this.onCommit(a, b);
       this.live.onRaise = (a, b) => this.onRaise(a, b);
       this.live.onLock = () => this.onLock();
@@ -248,6 +265,7 @@ export class Race {
     for (const k of this.karts) {
       k.gravity = this.items.gravity;
       k.tube = !!setup.theme.tube;
+      k.plane = !!setup.theme.sky;
       if (!k.isPlayer) k.pace = this.cls.aiPace;
     }
     this.standings = [...this.karts];
@@ -285,6 +303,7 @@ export class Race {
     this.scenery.onCommit(t, from, to);
     this.giveWay(from, to);
     this.items.onCommit(t, from, to);
+    this.air?.onCommit(t, from, to, blocked);
     const tunnels = this.features.tunnels.length;
     this.features.onCommit(t, from, to, blocked, () => this.rng.next());
     // (nor a building a new tunnel runs under where road dreamed before passes it)
@@ -296,7 +315,7 @@ export class Race {
     for (const tn of this.features.tunnels.slice(tunnels)) this.scenery.clearAlong(t, tn.start, tn.start + tn.n, HALF_WIDTH + 10);
     while (this.bridgesSeen < t.bridges.length) {
       const b = t.bridges[this.bridgesSeen++];
-      this.scenery.onBridge(t, b);
+      if (!this.setup.theme.sky) this.scenery.onBridge(t, b); // (in the sky one pass just flies over the other)
       // a ramp dreamed earlier on the road that now runs under the deck would launch karts into
       // it, and one on road that has just been lifted into the bridge would sit under the deck
       const under = t.s[b.lower];
@@ -575,6 +594,7 @@ export class Race {
       this.topUpHills(min.hills - t.hills.length, nearRows);
       this.items.relift(t);
     }
+    if (this.setup.theme.sky) return; // (in the sky no jumps and no pads: its rings and updrafts instead)
     // jumps want long straights clear of the item rows; failing that, next to a row, then on a
     // gentler bend (a 20 m flight there drifts 3 m: still on the road)
     for (const [where, bend] of [[free, 1 / 90], [nearRows, 1 / 90], [nearRows, 1 / 60]] as const) {
@@ -672,6 +692,7 @@ export class Race {
     this.placeObstacles(this.track.count);
     this.placeBanks(this.track.count);
     this.scenery.onLock(this.track);
+    if (this.setup.theme.sky) this.tex.addIsles(this.scenery.landforms);
     // (the land is dressed at the lock after the cuttings are set out: nothing it puts down stands
     // on a cutting's wall, or in any other building beside the road; on the moon a boulder stood on
     // a wall's land once its jumps, and so its cuttings, moved)
@@ -742,8 +763,9 @@ export class Race {
 
     for (const k of this.karts) this.surfaceUnder(k);
     const dangers = this.obstacles.dangers();
+    const before = this.air ? this.karts.map((k) => this.sOf(k)) : null; // (where each was: for the rings)
     this.drivers.forEach((d) => {
-      const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads);
+      const c = d.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads, this.air);
       const px = d.kart.x, py = d.kart.y;
       d.kart.update(dt, c, this.track, this.cls);
       this.offTheWall(d.kart);
@@ -769,6 +791,7 @@ export class Race {
     if (wasRocket && this.player.rocket <= 0) this.events.push({ kind: "rocketOver" });
     if (wasSunk && this.player.fall >= FALL_SWAP) this.events.push({ kind: "rescued" });
     this.hazardsUnder();
+    if (this.air && before) this.flying(dt, before);
     this.obstacles.update(dt, this.track, this.karts, this.player, this.phase === "racing");
     for (const ev of this.obstacles.events) {
       const near = ev.player || Math.hypot(ev.x - this.player.x, ev.y - this.player.y) < 70;
@@ -854,8 +877,50 @@ export class Race {
    * classics do, leaving its items alone (it had coasted on in a straight line, off the road). */
   private cooldown(dt: number, dangers: readonly { x: number; y: number; r: number }[]): Controls {
     this.cruise ??= new RivalDriver(new Rand(this.setup.seed + 61), this.player, 0);
-    const c = this.cruise.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads);
+    const c = this.cruise.act(dt, this.track, this.cls, this.player, this.karts, this.items, dangers, this.features.pads, this.air);
     return { ...c, item: false, back: false };
+  }
+
+  /** A kart's arc length along the road (between road points). */
+  private sOf(k: Kart): number {
+    return this.track.s[k.idx] + this.track.along(k.x, k.y, k.idx);
+  }
+
+  /** In the sky, after everyone has flown this frame: a plane into the sea goes in (the drone fishes
+   * it out at the course); one that flew through a ring gets its boost (a gold one, more); one in an
+   * updraft is lifted; and one flying on another's tail, close behind at its height, is pulled along
+   * in its slipstream (a little more speed, from a second on). ``before``: each kart's arc length
+   * before it moved. */
+  private flying(dt: number, before: number[]): void {
+    const air = this.air!, t = this.track, me = this.player;
+    this.karts.forEach((k, n) => {
+      if (!k.plane || k.falling) return;
+      if (k.elev < SEA_CRASH) {
+        k.ground = 0; // (into the sea, far below the course)
+        this.fall(k, "sea");
+        return;
+      }
+      const ring = air.through(t, k, before[n], this.sOf(k));
+      if (ring) {
+        k.boostTime = Math.max(k.boostTime, ring.gold ? GOLD_BOOST : RING_BOOST);
+        if (k === me) this.events.push({ kind: "ring", gold: ring.gold });
+      }
+      const lifted = air.inDraft(t, k);
+      if (lifted) {
+        k.vz = Math.min(DRAFT_RISE, k.vz + DRAFT_LIFT * dt);
+        if (k === me && !this.inDraft) this.events.push({ kind: "draft" });
+      }
+      if (k === me) this.inDraft = lifted;
+      const c = Math.cos(k.heading), sn = Math.sin(k.heading);
+      const tail = this.karts.some((o) => {
+        if (o === k || o.falling || !o.plane) return false;
+        const dx = o.x - k.x, dy = o.y - k.y, fwd = dx * c + dy * sn, lat = -dx * sn + dy * c;
+        return fwd > 2.5 && fwd < 14 && Math.abs(lat) < 2.4 && Math.abs(o.elev - k.elev) < 2.4;
+      });
+      const was = k.draft;
+      k.draft = tail ? Math.min(1.6, k.draft + dt) : Math.max(0, k.draft - dt * 1.5);
+      if (k === me && was < 1 && k.draft >= 1) this.events.push({ kind: "slip" });
+    });
   }
 
   /** GO: rocket starts (the player's from timing, the rivals' by chance) and burnouts. */
@@ -934,6 +999,12 @@ export class Race {
   /** The road surface under each kart: bridge decks and jump ramps, and how the road climbs and
    * crests there (measured over a few meters, so the steps between road points do not show). */
   private surfaceUnder(k: Kart): void {
+    // (a plane flown into the sea: the sea is under it until the drone has it; by the course's
+    // height, it sank 55 m up in the air)
+    if (k.plane && k.falling && k.fallKind === "sea" && k.fall < FALL_SWAP) {
+      k.ground = 0;
+      return;
+    }
     const t = this.track, r = this.features.rampUnder(t, k, t.along(k.x, k.y, k.idx));
     k.rampU = r.u;
     k.ground = t.heightAt(k.x, k.y, k.idx) + r.height;

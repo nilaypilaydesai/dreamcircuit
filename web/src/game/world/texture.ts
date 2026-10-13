@@ -10,8 +10,11 @@ import { hash2, hex, mix, shade, valueNoise } from "../core/gfx";
 import type { Theme } from "../themes";
 import { CRACK, CRUST, MOLTEN, PHASES, SHADOW, isLava, isMark, lavaColor, lavaMark } from "./lava";
 import { type Hazard, hazardColor } from "./hazards";
+import type { Landform } from "./landforms";
 import { HALF_WIDTH, MAX_FROM_START, type Track } from "./track";
 
+const SAND = hex("#ead7a0"), SURF = hex("#f2fbff"), SHALLOW = hex("#5fd3cf");
+const SHALLOWS = 1.45; // how far an island's shallows reach out, in its own radii
 const PUDDLE_NEON = [hex("#ff4f9a"), hex("#39d5ff"), hex("#ffb347"), hex("#9d6bff")]; // Tokyo's, in its puddles
 
 export const TEX = 2560; // texels across, in a world of the usual scale
@@ -60,6 +63,7 @@ export class WorldTexture {
   private readonly shaded = new Set<number>(); // raised road whose shadow is already painted
   private readonly relief: Float32Array | null; // the light on the ground's rises, every RELIEF_STEP texels
   private hazards: Hazard[] = []; // painted into the ground (world/hazards.ts), and again after any repaint
+  private isles: Landform[] = []; // the sky's islands: the shallows round each, painted into the sea (and again after any repaint)
   private readonly rows: Float64Array[]; // a row of each scale of noise, as it is painted
   constructor(readonly theme: Theme, readonly seed: number) {
     this.lava = !!theme.volcano;
@@ -120,6 +124,42 @@ export class WorldTexture {
       const x0 = Math.max(0, Math.floor(ax)), y0 = Math.max(0, Math.floor(ay)), x1 = Math.min(this.size, Math.ceil(bx)), y1 = Math.min(this.size, Math.ceil(by));
       this.paintHazards(x0, y0, x1, y1);
       this.buildMips(x0, y0, x1, y1);
+    }
+  }
+
+  /** The sky's islands were set out: round each, its beach under it and the shallows round that, pale
+   * water fading out into the deep, a line of surf where it meets the sand. */
+  addIsles(isles: readonly Landform[]): void {
+    this.isles.push(...isles);
+    for (const l of isles) {
+      const r = l.r * l.stretch * SHALLOWS + 1;
+      const [ax, ay] = this.texel(l.x - r, l.y + r), [bx, by] = this.texel(l.x + r, l.y - r);
+      const x0 = Math.max(0, Math.floor(ax)), y0 = Math.max(0, Math.floor(ay)), x1 = Math.min(this.size, Math.ceil(bx)), y1 = Math.min(this.size, Math.ceil(by));
+      this.paintIsles(x0, y0, x1, y1);
+      this.buildMips(x0, y0, x1, y1);
+    }
+  }
+
+  /** The islands' shallows over texels [x0, x1) x [y0, y1). */
+  private paintIsles(x0: number, y0: number, x1: number, y1: number): void {
+    if (!this.isles.length) return;
+    const tex = this.levels[0];
+    for (const l of this.isles) {
+      const c = Math.cos(l.rot), s = Math.sin(l.rot), far = l.r * l.stretch * SHALLOWS;
+      const [ax, ay] = this.texel(l.x - far, l.y + far), [bx, by] = this.texel(l.x + far, l.y - far);
+      for (let ty = Math.max(y0, Math.floor(ay)); ty < Math.min(y1, Math.ceil(by)); ty++) {
+        const wy = this.half - (ty + 0.5) * RES;
+        for (let tx = Math.max(x0, Math.floor(ax)); tx < Math.min(x1, Math.ceil(bx)); tx++) {
+          const wx = (tx + 0.5) * RES - this.half, dx = wx - l.x, dy = wy - l.y;
+          const u = (dx * c + dy * s) / (l.r * l.stretch), v = (-dx * s + dy * c) / l.r;
+          // (its outline a little ragged, as the island's is)
+          const q = Math.sqrt(u * u + v * v) * (1 + 0.06 * Math.sin(Math.atan2(v, u) * 5 + l.seed));
+          if (q >= SHALLOWS) continue;
+          const i = ty * this.size + tx;
+          tex[i] = q < 1 ? shade(SAND, 0.94 + 0.08 * hash2(tx, ty, 21))
+            : q < 1.07 ? SURF : mix(SHALLOW, tex[i], Math.min(1, ((q - 1) / (SHALLOWS - 1)) ** 0.8));
+        }
+      }
     }
   }
 
@@ -381,7 +421,7 @@ export class WorldTexture {
     for (let i = start; i < end; i++) {
       const j = track.wrap(i + 1);
       const hw = HALF_WIDTH;
-      if (Math.max(track.elev[i], track.elev[j]) > 0.25) {
+      if (Math.max(track.elev[i], track.elev[j]) - track.base > 0.25) {
         // raised road is drawn in 3D; on the ground it leaves a shadow (darkened only once)
         if (!this.shaded.has(i)) strip(i, j, -hw, hw, shadow);
         this.shaded.add(i);
@@ -405,7 +445,8 @@ export class WorldTexture {
       }
     }
     // Start/finish checkers and grid boxes once the start line exists.
-    if (track.startIndex >= start && track.startIndex < end + 1) this.paintStartLine(track, box);
+    // (the sky's start is a banner hung over the course: render/air.ts)
+    if (!t.sky && track.startIndex >= start && track.startIndex < end + 1) this.paintStartLine(track, box);
     if (box[2] > box[0]) this.buildMips(box[0], box[1], box[2], box[3]);
   }
 
@@ -422,6 +463,7 @@ export class WorldTexture {
     const bx0 = Math.floor(tx0), by0 = Math.floor(ty0), bx1 = Math.ceil(tx1), by1 = Math.ceil(ty1);
     this.paintTerrain(bx0, by0, bx1, by1);
     this.paintHazards(bx0, by0, bx1, by1);
+    this.paintIsles(bx0, by0, bx1, by1);
     for (let i = from; i < to; i++) this.shaded.delete(i);
     // every committed stretch that passes through the box (the road underneath, the bridge itself)
     const inside = (i: number) => track.xs[i] > x0 - pad && track.xs[i] < x1 + pad && track.ys[i] > y0 - pad && track.ys[i] < y1 + pad;

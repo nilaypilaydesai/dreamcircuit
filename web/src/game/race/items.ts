@@ -71,6 +71,10 @@ export const BOX_SPACING = 210; // m of road between rows of boxes
 const BOX_LANES = [-4.2, -1.4, 1.4, 4.2]; // lateral offsets across the road
 const BOX_RESPAWN = 4; // s
 const PICKUP_R = 1.6; // m
+// in the sky (``aloft``), where everything hangs in the air: boxes and coins a few meters over the
+// course (about where the rivals fly), and a plane gets them from further off, up or down and across
+const SKY_LIFT = 2.5, SKY_REACH = 3.4, SKY_PICKUP = 2.4;
+const SKY_SMOKE = 2.4; // m up or down from a cloud of smoke (the sky's oil) a plane flies into it
 export const COIN_SPACING = 210; // m between lines of coins (halfway between the rows of boxes)
 const COIN_RESPAWN = 10; // s
 export const ROULETTE = 1.2; // s the player's item slot spins before it settles
@@ -140,6 +144,7 @@ export interface Slick { x: number; y: number; elev: number; idx: number; ttl: n
 export interface Orb {
   idx: number; carry: number; x: number; y: number; offset: number; v: number; ttl: number;
   owner: Kart; target: Kart | null;
+  z?: number; // in the sky: how high it flies (from its thrower's height, to its target's)
 }
 /** A puck slides; a flare hops (z over the road, vz) and burns out sooner. */
 export interface Puck {
@@ -153,6 +158,7 @@ export interface Boomerang {
 export interface Bomb {
   idx: number; x: number; y: number; z: number; vx: number; vy: number; vz: number;
   age: number; landed: boolean; owner: Kart;
+  floor?: number; // in the sky: the height it falls back to and hangs at, waiting (its thrower's)
   target: Kart | null; // the racer one place ahead of the thrower; null: a waiting bomb
 }
 export interface Comet {
@@ -208,6 +214,10 @@ export class Items {
   spread = 1;
   /** m from the middle of the road to its edge, where a puck bounces back (the tube's floor is wider). */
   edge = HALF_WIDTH;
+  /** The sky: everything is in the air. Boxes and coins hang over the course; oil let go is a cloud of
+   * smoke at the plane's height; pucks, flares and orbs fly level from the thrower's height (an orb
+   * climbs or dives to its target's); a bomb dropped back hangs where it was let go. */
+  aloft = false;
   private nextRow = BOX_SPACING * 0.6; // first row a little after the start
   private nextCoins = BOX_SPACING * 0.6 + COIN_SPACING / 2;
   private readonly cooldown = new Map<ItemKind, number>();
@@ -226,7 +236,7 @@ export class Items {
         this.rowS.push(track.s[i]);
         for (const at of BOX_LANES) {
           const lane = at * this.spread;
-          this.boxes.push({ x: track.xs[i] - ty * lane, y: track.ys[i] + tx * lane, elev: track.elev[i], respawn: 0, idx: i });
+          this.boxes.push({ x: track.xs[i] - ty * lane, y: track.ys[i] + tx * lane, elev: track.elev[i] + this.lift, respawn: 0, idx: i });
         }
       } else if (s >= this.nextCoins) {
         // a short line of coins down one lane
@@ -237,7 +247,7 @@ export class Items {
           const j = i + Math.round((c * 3.2) / SPACING);
           if (j >= track.count) break;
           const [cx, cy] = track.tangent(j);
-          this.coins.push({ x: track.xs[j] - cy * lane, y: track.ys[j] + cx * lane, elev: track.elev[j], respawn: 0, idx: j });
+          this.coins.push({ x: track.xs[j] - cy * lane, y: track.ys[j] + cx * lane, elev: track.elev[j] + this.lift, respawn: 0, idx: j });
         }
       }
     }
@@ -246,13 +256,19 @@ export class Items {
   /** The road was lifted or lowered (a climb added or flattened, a bridge built): the boxes, coins
    * and oil on it go with it (left where they were, they hung in the air or sank into it). */
   relift(track: Track): void {
-    for (const b of this.boxes) b.elev = track.elev[b.idx] ?? b.elev;
-    for (const c of this.coins) c.elev = track.elev[c.idx] ?? c.elev;
+    for (const b of this.boxes) b.elev = (track.elev[b.idx] ?? b.elev - this.lift) + this.lift;
+    for (const c of this.coins) c.elev = (track.elev[c.idx] ?? c.elev - this.lift) + this.lift;
     for (const sl of this.slicks) {
+      if (this.aloft) break; // (smoke hangs in the air where it was let go, over whatever the course does)
       const now = track.elev[sl.idx] ?? 0;
       sl.elev += now - (sl.road ?? now);
       sl.road = now;
     }
+  }
+
+  /** m over the course the boxes and coins hang (the sky's). */
+  private get lift(): number {
+    return this.aloft ? SKY_LIFT : 0;
   }
 
   /** Whether something thrown or dropped hits a car at (x, y), z m up (a police car after the
@@ -422,8 +438,9 @@ export class Items {
       case "oil3": {
         // (on the road where it lands, behind the kart: at the kart's own height, off a jump's ramp
         // it hung in the air behind it)
-        const x = k.x - c * 3.4, y = k.y - s * 3.4, g = this.ground?.(x, y, k.idx);
-        this.slicks.push({ x, y, elev: g?.h ?? k.ground, idx: g?.idx ?? k.idx, ttl: 30, owner: k, armed: 1.0 });
+        const x = k.x - c * 3.4, y = k.y - s * 3.4, g = this.aloft ? null : this.ground?.(x, y, k.idx);
+        // (in the sky, a cloud of smoke where the plane let it go)
+        this.slicks.push({ x, y, elev: this.aloft ? k.elev : g?.h ?? k.ground, idx: g?.idx ?? k.idx, ttl: 30, owner: k, armed: 1.0 });
         break;
       }
       case "puck":
@@ -438,7 +455,7 @@ export class Items {
         }
         this.orbs.push({
           idx: k.idx, carry: 0, x: k.x + c * 2, y: k.y + s * 2, offset: k.offset, v: Math.max(k.v, 8) + ORB_SPEED,
-          ttl: 6, owner: k, target: this.targetAhead(k, karts),
+          ttl: 6, owner: k, target: this.targetAhead(k, karts), z: this.aloft ? k.elev : undefined,
         });
         break;
       case "comet": {
@@ -454,7 +471,7 @@ export class Items {
         const target = !back && k.place > 1 ? karts.find((o) => o.place === k.place - 1 && !o.finished) ?? null : null;
         this.bombs.push({ idx: k.idx, x: k.x + Math.cos(a) * 2, y: k.y + Math.sin(a) * 2, z: k.elev + 1.2, vx: Math.cos(a) * v,
                           vy: Math.sin(a) * v, vz: 7.5 * Math.sqrt(this.gravity / GRAVITY), age: 0, landed: false, owner: k,
-                          target });
+                          target, floor: this.aloft ? k.elev : undefined });
         break;
       }
       case "boomerang": {
@@ -526,7 +543,8 @@ export class Items {
     const a = k.heading + aim, v = Math.cos(aim) < 0 ? speed + 4 : Math.max(k.v, 8) + speed;
     const c = Math.cos(a), s = Math.sin(a);
     this.pucks.push({
-      kind, idx: k.idx, x: k.x + c * 2.2, y: k.y + s * 2.2, z: k.ground + (kind === "flare" ? 0.8 : kind === "orb" ? 0.45 : 0.35),
+      kind, idx: k.idx, x: k.x + c * 2.2, y: k.y + s * 2.2,
+      z: (this.aloft ? k.elev : k.ground) + (kind === "flare" ? 0.8 : kind === "orb" ? 0.45 : 0.35),
       vz: kind === "flare" ? 3 : 0, vx: Math.cos(a) * v, vy: Math.sin(a) * v, t: 0, bounces: 0, owner: k,
     });
   }
@@ -654,14 +672,15 @@ export class Items {
 
   /** Boxes hand out items (odds by how far behind the leader, race/odds.ts); coins are picked up. */
   private updateBoxes(dt: number, karts: Kart[], field: Field): void {
+    const reach = this.aloft ? SKY_REACH : 1.8, across = this.aloft ? SKY_PICKUP : PICKUP_R;
     for (const b of this.boxes) {
       if (b.respawn > 0) {
         b.respawn -= dt;
         continue;
       }
       for (const k of karts) {
-        if (k.finished || k.falling || Math.abs(k.elev - b.elev) > 1.8) continue;
-        if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > PICKUP_R * PICKUP_R) continue;
+        if (k.finished || k.falling || Math.abs(k.elev - b.elev) > reach) continue;
+        if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 > across * across) continue;
         b.respawn = BOX_RESPAWN;
         if (!k.item && k.roulette <= 0 && !k.loot) {
           this.grant(k, pickItem(itemOdds(field.standing(k), this.unavailable()), this.rng.next()));
@@ -680,8 +699,8 @@ export class Items {
         continue;
       }
       for (const k of karts) {
-        if (k.finished || k.falling || Math.abs(k.elev - c.elev) > 1.8) continue;
-        if ((k.x - c.x) ** 2 + (k.y - c.y) ** 2 > 1.3 * 1.3) continue;
+        if (k.finished || k.falling || Math.abs(k.elev - c.elev) > reach) continue;
+        if ((k.x - c.x) ** 2 + (k.y - c.y) ** 2 > (across - 0.3) ** 2) continue;
         c.respawn = COIN_RESPAWN;
         k.coins = Math.min(MAX_COINS, k.coins + 1);
         this.events.push({ kind: "coin", kart: k });
@@ -752,7 +771,7 @@ export class Items {
       if (sl.ttl <= 0) return false;
       for (const k of karts) {
         if (k === sl.owner && sl.armed > 0) continue;
-        if (k.spin > 0 || k.air || k.falling || k.phantom > 0 || Math.abs(k.elev - sl.elev) > 1.2) continue;
+        if (k.spin > 0 || k.air || k.falling || k.phantom > 0 || Math.abs(k.elev - sl.elev) > (this.aloft ? SKY_SMOKE : 1.2)) continue;
         if ((k.x - sl.x) ** 2 + (k.y - sl.y) ** 2 > SLICK_R * SLICK_R) continue;
         if (k.spinOut()) this.events.push({ kind: "spun", kart: k, by: "oil", owner: sl.owner });
         return false; // driven through (an invincible kart just splashes it away)
@@ -784,7 +803,8 @@ export class Items {
         o.x = track.xs[o.idx] - ty * o.offset;
         o.y = track.ys[o.idx] + tx * o.offset;
       }
-      const oz = track.elev[o.idx] ?? 0;
+      if (o.z !== undefined && t) o.z += (t.elev - o.z) * Math.min(1, dt * (near ? 4 : 1.5)); // (in the sky: up or down to it)
+      const oz = o.z ?? track.elev[o.idx] ?? 0;
       for (const k of karts) {
         if (k === o.owner || k.spin > 0 || k.falling || k.phantom > 0 || Math.abs(k.elev - oz) > 2.2) continue;
         if ((k.x - o.x) ** 2 + (k.y - o.y) ** 2 > ORB_R * ORB_R) continue;
@@ -806,8 +826,11 @@ export class Items {
       p.y += p.vy * dt;
       p.idx = track.nearest(p.x, p.y, p.idx);
       if (!track.locked && p.idx >= track.count - 2) return false; // into the dream mist
-      const ground = track.elev[p.idx] ?? 0;
-      if (flare) {
+      // (in the sky they fly on level, at the height they were thrown from)
+      const ground = this.aloft ? p.z - (flare ? 0.8 : p.kind === "orb" ? 0.45 : 0.35) : track.elev[p.idx] ?? 0;
+      if (this.aloft) {
+        // (level)
+      } else if (flare) {
         p.vz -= GRAVITY * 0.6 * dt;
         p.z += p.vz * dt;
         if (p.z <= ground + 0.25) {
@@ -833,7 +856,7 @@ export class Items {
         p.y -= ny * Math.sign(off) * back;
       }
       for (const k of karts) {
-        if (k.finished || k.spin > 0 || k.falling || k.phantom > 0 || Math.abs(k.elev - ground) > 1.6) continue;
+        if (k.finished || k.spin > 0 || k.falling || k.phantom > 0 || Math.abs(k.elev - ground) > (this.aloft ? 2.2 : 1.6)) continue;
         if (k === p.owner && p.t < 0.5) continue; // clear of its thrower first
         if ((k.x - p.x) ** 2 + (k.y - p.y) ** 2 > PUCK_R * PUCK_R) continue;
         this.strike(k, p.x, p.y, flare ? "flare" : p.kind === "orb" ? "orb" : "puck", p.owner, flare ? 0.8 : SPIN_TIME);
@@ -914,7 +937,7 @@ export class Items {
         bm.vz -= this.gravity * dt;
         bm.z += bm.vz * dt;
         bm.idx = track.nearest(bm.x, bm.y, bm.idx);
-        const ground = track.elev[bm.idx] ?? 0;
+        const ground = bm.floor ?? track.elev[bm.idx] ?? 0;
         if (bm.z <= ground && bm.vz < 0) {
           bm.z = ground;
           bm.landed = true;

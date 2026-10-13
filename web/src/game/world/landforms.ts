@@ -1,13 +1,13 @@
 // The land around a circuit, so that the ground is not one flat plane: knolls in the meadows,
 // buttes and dunes in the desert, cinder cones in the lava, heaps
 // of spoil on the building site, rocks crowned with coral on the reef and old crater rims on the
-// moon, and blocks of towers in Tokyo. Each is a solid of a few dozen faces (render/landforms.ts), set out
+// moon, blocks of towers in Tokyo, and islands in the sea under the sky's course. Each is a solid of a few dozen faces (render/landforms.ts), set out
 // when the circuit locks, always beyond the fence that keeps karts near the road, so nothing ever
 // drives into one.
 
 import { HALF_WIDTH } from "./track";
 
-export type LandformKind = "knoll" | "butte" | "dune" | "reefrock" | "cone" | "spoil" | "rim" | "block";
+export type LandformKind = "knoll" | "butte" | "dune" | "reefrock" | "cone" | "spoil" | "rim" | "block" | "isle";
 
 export interface Landform {
   kind: LandformKind;
@@ -30,7 +30,12 @@ export const LANDFORM_SIZE: Record<LandformKind, { r: [number, number]; h: [numb
   spoil: { r: [8, 15], h: [4, 8], stretch: [1, 1.6] },
   rim: { r: [24, 42], h: [4, 9], stretch: [1, 1.4] },
   block: { r: [9, 16], h: [26, 64], stretch: [1, 1.7] },
+  isle: { r: [24, 54], h: [12, 28], stretch: [1, 1.9] },
 };
+
+/** How far an island's foot keeps from the sky's course: past its wind wall (race/air.ts, 26 m out),
+ * and well past, so no plane, diving low beside the course, flies into one. */
+export const ISLE_CLEAR = 50;
 
 /** How far a landform's foot must stay from the road: past the fence karts cannot cross (17 m out
  * from the road's edge), with two meters to spare. (Set 4 m inside the fence, as it once was,

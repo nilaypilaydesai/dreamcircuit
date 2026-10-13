@@ -78,6 +78,11 @@ export const VALLEY_HILLS: HillRule = {
   len: [100, 160], h: [2.5, 4.5], gap: [60, 120], segs: [24, 186],
   kinds: [{ style: "meadow", shape: "sine", len: [100, 160], h: [2.5, 4.5] }],
 };
+/** The sky's: the course climbing high and diving back down (race/air.ts); nothing is built under it. */
+export const SKY_HILLS: HillRule = {
+  len: [170, 320], h: [12, 30], gap: [70, 190], segs: [24, 186],
+  kinds: [{ style: "air", shape: "sine", len: [170, 320], h: [12, 30] }],
+};
 /** The harbor tunnel's: the tube rising and dipping as it runs. */
 export const TUBE_HILLS: HillRule = {
   len: [90, 150], h: [3, 5.5], gap: [60, 120], segs: [24, 186],

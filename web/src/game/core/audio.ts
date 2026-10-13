@@ -125,6 +125,35 @@ export class Sound {
   /** It is running out, high on a wall: two short warning pips. */
   hoverLow(): void { [0, 0.15].forEach((at) => this.tone(1047, 0.08, "square", 0.06, at)); }
   bump(): void { this.noise(0.18, 0.22, 400); this.tone(90, 0.15, "triangle", 0.15); }
+  /** Through a ring (the sky): a bright chime, rising; a gold one rings out longer and higher. */
+  ring(gold: boolean): void {
+    (gold ? [1175, 1568, 1976, 2349] : [1319, 1760]).forEach((f, i) => this.tone(f, 0.14, "triangle", 0.08, i * 0.05));
+    this.noise(0.18, 0.03, 6000);
+  }
+  /** Into an updraft: a rush of wind, rising. */
+  updraft(): void { this.noise(0.9, 0.07, 1400); this.tone(220, 0.8, "sine", 0.05, 0, 660); }
+  /** In another plane's slipstream long enough to be pulled along: a soft whoosh. */
+  slipstream(): void { this.noise(0.4, 0.05, 2600); }
+  /** An airliner coming across the course: the far-off roar of its jets, swelling. */
+  jet(): void {
+    if (!this.ctx || !this.master) return;
+    const t0 = this.ctx.currentTime, len = 2.6;
+    const n = Math.floor(this.ctx.sampleRate * len), buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = this.ctx.createBufferSource(), f = this.ctx.createBiquadFilter(), g = this.ctx.createGain();
+    src.buffer = buf;
+    f.type = "lowpass";
+    f.frequency.setValueAtTime(300, t0);
+    f.frequency.exponentialRampToValueAtTime(1600, t0 + len * 0.7);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.12, t0 + len * 0.65);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + len);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t0);
+    src.stop(t0 + len + 0.05);
+  }
+  /** Clipped by an airliner: a thump and a clang, tumbling away. */
+  clipped(): void { this.noise(0.35, 0.2, 700); this.tone(300, 0.6, "sawtooth", 0.08, 0, 70); }
   locked(): void { [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, 0.3, "triangle", 0.09, i * 0.07)); }
   roll(): void { for (let i = 0; i < 12; i++) this.tone(520 + (i % 4) * 140, 0.05, "square", 0.045, i * 0.095); }
   itemGet(): void { [988, 1319].forEach((f, i) => this.tone(f, 0.12, "square", 0.1, i * 0.08)); }

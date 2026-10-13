@@ -2,7 +2,7 @@
 // its middle: rings of points from its foot up (each a little ragged), joined into faces lit by the
 // sun from the north-west, in its world's colours: bands of grass on a knoll, strata of sandstone
 // on a butte, a crown of coral on a reef rock, a crater of lava on a cinder cone,
-// floors of lit windows on a tower block.
+// floors of lit windows on a tower block, and on an island a beach, green slopes and a rocky top.
 
 import { hex, mix, shade } from "../core/gfx";
 import type { Theme } from "../themes";
@@ -28,6 +28,7 @@ const BLOCK_RINGS: [number, number][] = [
   [1, 0], ...Array.from({ length: 7 }, (_, f): [number, number][] => [[1, 0.04 + f * 0.137], [1, 0.12 + f * 0.137]]).flat(), [1, 1],
 ];
 const BLOCK_LIT = [hex("#ffd98a"), hex("#dfe8ff"), hex("#ffcf7a"), hex("#1b1e29"), hex("#9fd8ff")];
+const ISLE = [hex("#ead7a0"), hex("#68ad4c"), hex("#4f9442"), hex("#7b8466")]; // its beach, its slopes, its top
 
 const LOOKS: Record<LandformKind, Look> = {
   knoll: {
@@ -58,6 +59,11 @@ const LOOKS: Record<LandformKind, Look> = {
   rim: {
     sides: 12, profile: [[1, 0], [0.82, 0.35], [0.55, 0.72], [0.25, 0.94], [0, 1]], jitter: 0.06,
     band: (t, k) => shade(t.ground[0], 0.96 + 0.05 * k),
+  },
+  // an island: a low beach round its foot, wooded slopes, bare rock at the top
+  isle: {
+    sides: 12, profile: [[1, 0], [0.86, 0.06], [0.62, 0.42], [0.3, 0.86], [0, 1]], jitter: 0.1,
+    band: (_t, k) => ISLE[Math.min(k, ISLE.length - 1)],
   },
   // a tower block at night: floors of dark wall and bands of windows, lit or not side by side
   block: {

@@ -3,6 +3,7 @@
 // designer is dreaming for you, small pop-ups (tricks, rocket starts) and the big banners.
 
 import { TUBE_LOOP_SPEED, TUBE_WALL_SPEED } from "../world/tube";
+import { SKY_CEIL } from "../race/air";
 import type { PixelFont } from "../core/font";
 import { H, W, hex, mix, type Screen, type Sprite } from "../core/gfx";
 import { type Kart, HOVER_TIME } from "../race/kart";
@@ -140,6 +141,7 @@ export class Hud {
       }
     }
 
+    if (race.setup.theme.sky) this.altimeter(scr, race, now);
     this.minimap(scr, race, now);
     this.dreamStatus(scr, race, now);
     const mid = Math.round(H * 0.39); // the band the big messages use
@@ -211,6 +213,25 @@ export class Hud {
     if (b.sub) f.draw(scr, b.sub, W / 2, mid + th + 4, { color: WHITE, outline: INK, align: "center" });
   }
 
+  /** In the sky: how high the plane is, on a bar from the sea to the thin air over the course, the
+   * course's height marked across it (where its rings are); and low over the sea, PULL UP!. */
+  private altimeter(scr: Screen, race: Race, now: number): void {
+    const p = race.player, f = this.font;
+    if (p.falling) return;
+    // (beside the minimap, bottom right; on a phone, whose minimap is top left, under it there)
+    const x = this.touch ? 12 : W - 96, y0 = this.touch ? 124 : H - 72, h = this.touch ? 56 : 62, top = p.ground + SKY_CEIL;
+    const yOf = (z: number) => Math.round(y0 + h - (h * Math.max(0, Math.min(top, z))) / top);
+    scr.fillRect(x - 1, y0 - 1, 6, h + 2, INK);
+    scr.fillRect(x, y0, 4, h, hex("#24456e"));
+    scr.fillRect(x, yOf(SKY_CEIL * 0.12), 4, y0 + h - yOf(SKY_CEIL * 0.12), hex("#1a6aa8")); // (the sea)
+    scr.fillRect(x - 3, yOf(p.ground), 10, 1, GOLD); // the course
+    const py = yOf(p.elev);
+    scr.fillRect(x - 2, py - 1, 8, 3, WHITE);
+    f.draw(scr, "ALT", x + 2, y0 - 11, { color: SILVER, outline: INK, align: "center" });
+    const low = p.elev < 14 && p.vz < 1;
+    if (low && Math.floor(now * 5) % 2 === 0) f.draw(scr, "PULL UP!", W / 2, WARN_Y + 12, { scale: 2, color: RED, outline: INK, align: "center" });
+  }
+
   /** A draining bar under the item slot while a prism or a rocket lasts. */
   private meter(scr: Screen, label: string, frac: number, color: number): void {
     const x = W - 46, y = 96;
@@ -259,13 +280,40 @@ export class Hud {
     }
     const label = n > 0 ? String(n) : "GO!";
     this.font.draw(scr, label, W / 2, 76, { scale: 5, color: n > 0 ? WHITE : GREEN, outline: INK, align: "center" });
-    // the track type, and what it is sure to have, on a soft band
+    // in the sky, how to fly (the controls are not the road's); everywhere else the track type, and
+    // what it is sure to have, on a soft band
+    if (race.setup.theme.sky) {
+      this.flyingCard(scr);
+      return;
+    }
     const t = race.type;
     const promise = t.id === "classic" ? t.promise : `CONFIRMED: ${t.promise}`;
     const lines = this.font.wrap(promise, W - 40).slice(0, 2);
     scr.dimRect(0, 120, W, 16 + lines.length * 10, INK, 0.5);
     this.font.draw(scr, t.name, W / 2, 124, { color: GOLD, outline: INK, align: "center" });
     lines.forEach((line, i) => this.font.draw(scr, line, W / 2, 135 + i * 10, { color: WHITE, outline: INK, align: "center" }));
+  }
+
+  /** The sky's controls, on a card through the countdown: up and down climb and dive, the engine runs
+   * by itself, the drift button pulls a plane round tight for a mini-turbo; and how to go fast. */
+  private flyingCard(scr: Screen): void {
+    const f = this.font;
+    // (two to a row, kept short: the card sits over the race between the lights and the speedometer)
+    const pairs: [string, string][] = this.touch
+      ? [["STICK UP", "CLIMB"], ["STICK DOWN", "DIVE"], ["STICK SIDES", "TURN"], ["DRIFT", "PULL TIGHT"]]
+      : [["UP/W", "CLIMB"], ["DOWN/S", "DIVE"], ["LEFT/RIGHT", "TURN"], ["SHIFT", "PULL TIGHT"]];
+    const tips = "THE ENGINE RUNS BY ITSELF. DIVE FOR SPEED; RINGS, UPDRAFTS AND SLIPSTREAMS BOOST. AIRLINERS CROSS: GO OVER OR UNDER!";
+    const w = Math.min(W - 8, 376), x0 = Math.round(W / 2 - w / 2);
+    const lines = f.wrap(tips, w - 12).slice(0, 4);
+    const y0 = 120, rowH = 10, rows = Math.ceil(pairs.length / 2);
+    scr.dimRect(x0, y0 - 4, w, 15 + rows * rowH + 3 + lines.length * 9, INK, 0.72);
+    f.draw(scr, "HOW TO FLY", W / 2, y0, { color: GOLD, outline: INK, align: "center" });
+    pairs.forEach(([k, what], i) => {
+      const cx = Math.round(W / 2 + (i % 2 ? 1 : -1) * (w / 4)), y = y0 + 12 + Math.floor(i / 2) * rowH;
+      f.draw(scr, k, cx - 3, y, { color: hex("#63c8ff"), outline: INK, align: "right" });
+      f.draw(scr, what, cx + 3, y, { color: WHITE, outline: INK });
+    });
+    lines.forEach((line, i) => f.draw(scr, line, W / 2, y0 + 15 + rows * rowH + i * 9, { color: SILVER, outline: INK, align: "center" }));
   }
 
   private dreamStatus(scr: Screen, race: Race, now: number): void {

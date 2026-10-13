@@ -3,7 +3,8 @@
 // lights flashing, the alleys they come out of (two buildings facing the road, the alley between
 // them), geysers (a glowing vent, bubbling before it blows,
 // then a column of lava), the tunnel's traffic, a wrecking ball on its cable under a crane's jib,
-// and meteors falling at a slant onto the red ring that marks where each will land.
+// meteors falling at a slant onto the red ring that marks where each will land, and the sky's
+// airliners crossing the course, side on, nose the way they go.
 
 import { hex, mix, shade } from "../core/gfx";
 import {
@@ -12,6 +13,7 @@ import {
 } from "../race/obstacles";
 import { HALF_WIDTH, type Track } from "../world/track";
 import type { WorldSprite } from "./billboards";
+import { airlinerArt } from "./skyart";
 import type { Camera } from "./mode7";
 import { type P3, type Painter, face } from "./poly";
 import {
@@ -32,13 +34,14 @@ export interface ObstacleArt {
   ball: SceneryArt;
   meteor: { rock: SceneryArt; trail: SceneryArt };
   blast: SceneryArt[];
+  airliner: SceneryArt[][]; // each airline's, two frames (its beacon blinking)
 }
 
 export function obstacleArt(): ObstacleArt {
   return {
     cow: cowFrames(), tumbleweed: tumbleweedFrames(), jelly: jellyFrames(), police: policeFrames(),
     traffic: PAINTS.map(trafficArt), geyser: geyserArts(), ball: wreckingBallArt(), meteor: meteorArts(),
-    blast: blastFrames(2.4),
+    blast: blastFrames(2.4), airliner: airlinerArt(),
   };
 }
 
@@ -77,6 +80,12 @@ export function obstacleSprites(obs: Obstacles, track: Track, cam: Camera, now: 
       case "traffic":
         out.push({ x: o.x, y: o.y, art: art.traffic[o.look % art.traffic.length], base, idx: o.idx });
         break;
+      case "airliner": { // side on, its nose the way it is going (drawn nose to the right, flipped going left)
+        const going = [Math.cos(o.heading), Math.sin(o.heading)];
+        const set = art.airliner[o.look % art.airliner.length];
+        out.push({ x: o.x, y: o.y, art: set[Math.floor(now * 2) & 1], base: base + o.z - 4, flip: going[0] * rx + going[1] * ry < 0, idx: o.idx });
+        break;
+      }
       case "geyser": {
         const g = art.geyser;
         out.push({ x: o.x, y: o.y, art: o.state === GEYSER_WARN ? g.warn[Math.floor(now * 8) % 2] : g.vent, base, lift: 0.02 });

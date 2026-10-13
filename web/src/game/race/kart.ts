@@ -2,10 +2,13 @@
 // kart-to-kart bumps and a soft outer fence; road height (bridges) with guard rails; jumps off
 // ramps, with a trick for a well-timed hop; in the volcano, falling into the lava, out of which a
 // drone lifts the kart back onto the road; and in the harbor tunnel's tube, a hover pad's lift off the road,
-// to drive up its walls and over its roof (run out of them high up, and the kart falls off onto
-// its roof, and the drone sets it back on the floor). Tuned for fun, not for the research simulator.
+// to drive up its walls and over its roof (run out of it high up, and the kart falls off onto
+// its roof, and the drone sets it back on the floor); and in the sky, every kart a little plane,
+// flown, not driven (climb and dive, bank into the turns, a dive trading height for speed; into the
+// sea and the drone fishes it out). Tuned for fun, not for the research simulator.
 
 import type { FallKind } from "../world/hazards";
+import { SKY_CEIL, SKY_LANE } from "./air";
 import { HALF_WIDTH, SPACING, type Track } from "../world/track";
 import { TUBE_FLOOR, TUBE_LOOP_SPEED, TUBE_SQUEEZE, flatStretch, holdSpeed, tubeAt, wrapTube } from "../world/tube";
 import type { ItemKind } from "./odds";
@@ -53,6 +56,7 @@ export interface Controls {
   brake: number;
   drift: boolean;
   hop?: boolean; // held: a hop on the press (a trick at a ramp's lip); absent, the drift button hops
+  pitch?: number; // in the sky: + climbs, - dives (absent: the gas climbs and the brake dives)
   item?: boolean; // held: an item fires on the press
   back?: boolean; // held: the item goes out behind the kart on the press (R, the pad's X, BACK)
 }
@@ -88,6 +92,14 @@ const WALL_LAND = 0.6; // s: on its roof on the floor
 export const WALL_GRAB = 1.05; // s: the drone has it, and lifts it
 const WALL_LIFT = 1.45; // s: the right way up, over the middle of the floor, to be lowered from CARRY_HIGH
 const ON_ROOF = 1.15; // m off the floor its wheels are, lying on its roof
+// the sky (race/air.ts): every kart a little plane
+export const SKY_PACE = 1.15; // a plane cruises this much faster than its kart's top speed
+const CLIMB = 9, DIVE = 15; // m/s it climbs and dives at, full up and full down
+const TRADE = 0.32; // m/s^2 of speed per m/s of climb: a climb costs speed, a dive pays it back
+const STALL = 12; // m/s: the slowest a plane flies
+const SKY_TURN = 1.15; // rad/s a plane turns at, full over (banked: a turn about 30 m round at cruising speed)
+export const BANK = 0.62; // radians a plane banks into a full turn
+export const SEA_CRASH = 1.2; // m over the sea: into it
 
 export type TrickGrade = 0 | 1 | 2; // none, good, perfect
 
@@ -170,6 +182,9 @@ export class Kart {
   walled = false; // in a tunnel, between its walls (set by the race)
   tube = false; // racing inside the tunnel's tube: its offset is how far round the tube it is (world/tube.ts)
   slipping = false; // in the tube, too slow to hold on where it is (or its hover gone): sliding back down the wall
+  plane = false; // in the sky: a little plane, flown (glide)
+  bank = 0; // a plane's bank into its turn (radians, + to the left), as it is drawn
+  draft = 0; // s a plane has flown in another's slipstream (a little more speed, from a second on)
   hover = 0; // s left hovering, from a hover pad (in the tube: the walls and the roof are only for hovering karts)
   scraped = false; // this frame, without hover: stopped at the foot of the tube's wall
   trick: TrickGrade = 0; // pending: paid out as a boost on landing
@@ -283,6 +298,7 @@ export class Kart {
     this.scraped = false;
     if (this.rocket > 0) return this.fly(dt, track, cls);
     if (this.fall >= 0 && this.rescue(dt, track, input)) return { boosted: false, landed: -1 };
+    if (this.plane) return this.glide(dt, input, track, cls);
     const P = this.perf;
     // spun out: no control while the kart slides on, slowing, and the sprite turns
     let c = input;
@@ -640,6 +656,94 @@ export class Kart {
     return true;
   }
 
+  /** In the sky: flown, not driven. The engine holds a plane at its cruising speed (a little over its
+   * kart's top speed, more in another's slipstream, and boosted as a kart is); up climbs and down
+   * dives (``pitch``, or the gas and the brake), and a dive trades height for speed, a climb speed
+   * for height; steering banks it round, and the drift button pulls it round tighter, charging a
+   * mini-turbo as on the road. Thin air stops a climb SKY_CEIL m over the course, and a wall of wind
+   * SKY_LANE m either side of its middle turns a plane back in, slowing it; the sea is the race's to
+   * see to (a plane flown into it goes in, and the drone fishes it out). */
+  private glide(dt: number, input: Controls, track: Track, cls: ClassParams): { boosted: boolean; landed: -1 } {
+    const P = this.perf;
+    let c = input;
+    if (this.burnout > 0) this.burnout -= dt;
+    if (this.spin > 0) { // tumbling: no control, it drops and slows
+      this.spin -= dt;
+      this.spinAngle += dt * 13;
+      this.v *= Math.exp(-1.4 * dt);
+      c = { steer: 0, throttle: 0, brake: 0, drift: false, pitch: -0.5 };
+      if (this.spin <= 0) this.spinAngle = 0;
+    }
+    this.idx = track.nearest(this.x, this.y, this.idx);
+    this.offset = track.offset(this.x, this.y, this.idx);
+    this.ground = track.heightAt(this.x, this.y, this.idx); // (the course's height here)
+    this.surface = "air";
+    this.air = false;
+    this.safeIdx = this.idx;
+    let boosted = false;
+    const cruise = this.topSpeed(cls) * SKY_PACE * (1 + 0.06 * Math.min(1, this.draft));
+    const top = cruise * (this.boostTime > 0 ? 1.28 : 1);
+    // up climbs and down dives; thin air over the course stops a climb
+    const pitch = Math.max(-1, Math.min(1, c.pitch ?? (c.throttle - c.brake)));
+    let want = pitch >= 0 ? pitch * CLIMB : pitch * DIVE;
+    const over = this.elev - this.ground;
+    if (over > SKY_CEIL) want = Math.min(want, (SKY_CEIL - over) * 2);
+    this.vz += (want - this.vz) * Math.min(1, dt * 3.2);
+    // a dive pays speed, a climb costs it, and the engine brings it back to cruising speed (slowly,
+    // from over it, so a dive's speed lasts a while)
+    this.v -= TRADE * this.vz * dt;
+    this.v += (top - this.v) * Math.min(1, dt * (this.v < top ? 0.9 : 0.3));
+    if (this.boostTime > 0) {
+      this.boostTime -= dt;
+      this.v = Math.min(this.v + 14 * dt, top * 1.05);
+    }
+    this.v = Math.max(STALL, Math.min(cruise * 1.42, this.v));
+    // banked round the turns; the drift button pulls it round tighter, charging a mini-turbo
+    this.steer += (c.steer - this.steer) * Math.min(1, dt * 7);
+    const charge = (t: number) => t * (0.8 + 0.2 * P.turbo);
+    if (c.drift && !this.drifting && Math.abs(c.steer) > 0.3 && this.v > 14 && this.spin <= 0) {
+      this.drifting = true;
+      this.driftDir = Math.sign(c.steer);
+      this.driftTime = 0;
+    }
+    if (this.drifting && (!c.drift || this.v < 12 || this.spin > 0)) {
+      const ch = charge(this.driftTime);
+      if (ch > 0.7) {
+        this.boostTime = (ch > 1.6 ? 1.1 : 0.55) * P.turbo;
+        boosted = true;
+      }
+      this.drifting = false;
+      this.boostLevel = 0;
+    }
+    let steerEff = this.steer, gain = 1;
+    if (this.drifting) {
+      this.driftTime += dt;
+      const ch = charge(this.driftTime);
+      this.boostLevel = ch > 1.6 ? 2 : ch > 0.7 ? 1 : 0;
+      steerEff = this.driftDir * (0.6 + 0.4 * this.steer * this.driftDir);
+      gain = 1.35;
+    }
+    this.yawRate = steerEff * SKY_TURN * P.turn * gain;
+    this.heading += this.yawRate * dt;
+    this.bank += (steerEff * BANK * (this.drifting ? 1.25 : 1) - this.bank) * Math.min(1, dt * 6);
+    this.slip *= Math.exp(-6 * dt);
+    this.x += Math.cos(this.heading) * this.v * dt;
+    this.y += Math.sin(this.heading) * this.v * dt;
+    this.elev += this.vz * dt;
+    // the wind either side of the course turns a plane back in
+    const a = Math.abs(this.offset);
+    this.walled = a > SKY_LANE;
+    if (this.walled) {
+      const [tx, ty] = track.tangent(this.idx), sg = Math.sign(this.offset), push = Math.min(a - SKY_LANE, (4 + (a - SKY_LANE) * 3) * dt);
+      this.x += ty * sg * push;
+      this.y -= tx * sg * push;
+      this.v *= Math.exp(-dt * 0.9);
+      this.bumpTime = Math.max(this.bumpTime, 0.12);
+    }
+    if (this.bumpTime > 0) this.bumpTime -= dt;
+    return { boosted, landed: -1 };
+  }
+
   /** As a rocket the kart rides the road itself at rocket speed: along the centerline, easing
    * into the middle, over ramps and bridges at road height (it can neither cut a corner nor fall
    * off a deck), and comes out of it with a boost. */
@@ -669,7 +773,10 @@ export class Kart {
     this.air = false;
     this.vz = this.airTime = 0;
     this.trick = 0;
-    this.elev = this.ground;
+    if (this.plane) { // (a plane's rocket flies the course's line, easing down or up to just over it)
+      this.ground = track.elev[this.idx] ?? this.ground;
+      this.elev += (this.ground + 2 - this.elev) * Math.min(1, dt * 3);
+    } else this.elev = this.ground;
     if (this.rocket <= 0) {
       this.v = Math.min(this.v, this.topSpeed(cls) * 1.2);
       this.boostTime = Math.max(this.boostTime, 0.8);

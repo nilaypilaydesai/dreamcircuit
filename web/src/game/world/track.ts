@@ -44,7 +44,8 @@ export function bridgeLift(ds: number): number {
  * on concrete piers, or the ramp of a parking garage. */
 export type HillStyle =
   | "earth" | "foundation" | "girder" | "scaffold" | "crater" | "meadow"
-  | "mesa" | "dune" | "coral" | "basalt" | "expressway" | "garage";
+  | "mesa" | "dune" | "coral" | "basalt" | "expressway" | "garage"
+  | "air"; // the sky's: the course climbing through the air, with nothing built under it
 
 /** A climb: the road rises and falls back over ``len`` m from arc length ``s0``, as a smooth hump
  * ("sine") or up a ramp to a level top and down again ("plateau"). ``side``: which side a one-sided
@@ -102,6 +103,9 @@ export class Track {
   ys: number[] = [];
   s: number[] = []; // cumulative arc length
   elev: number[] = []; // road height (bridges), m
+  /** m the whole road is raised by (the sky's course flies this high over the sea): its bridges and
+   * climbs come on top. */
+  base = 0;
   segOf: number[] = [];
   bridges: Bridge[] = [];
   hills: Hill[] = [];
@@ -165,12 +169,12 @@ export class Track {
     return [from, this.count];
   }
 
-  /** Height of the road at arc length ``s`` (0 except on bridges and hills). */
+  /** Height of the road at arc length ``s`` (the base, 0 but in the sky, except on bridges and hills). */
   liftAt(s: number): number {
     let h = 0;
     for (const b of this.bridges) h = Math.max(h, bridgeLift(s - b.centerS));
     for (const hl of this.hills) h = Math.max(h, hillLift(s - hl.s0, hl.len, hl.h, hl.shape));
-    return h;
+    return this.base + h;
   }
 
   /** Height of bridges alone at dense index ``i`` (a hill is just the road climbing). */
